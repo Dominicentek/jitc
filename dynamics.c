@@ -64,6 +64,19 @@ string_t* str_new() {
     return str;
 }
 
+char* str_data(string_t* str) {
+    return str->data;
+}
+
+size_t str_length(string_t* str) {
+    return str->length;
+}
+
+void str_clear(string_t* str) {
+    str->length = 0;
+    str->data[0] = 0;
+}
+
 void str_append(string_t* str, char* other) {
     int len = strlen(other);
     int prev_cap = str->capacity;

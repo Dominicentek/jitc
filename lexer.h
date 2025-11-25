@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "dynamics.h"
+#include "jitc_internal.h"
 
 #define PROCESS_TOKENS(type) TOKENS(type##_KEYWORD, type##_SYMBOL, type##_SPECIAL)
 
@@ -80,7 +80,6 @@
     SYMBOL("?", QUESTION_MARK) \
     SYMBOL("++", DOUBLE_PLUS) \
     SYMBOL("--", DOUBLE_MINUS) \
-    SYMBOL("^^", DOUBLE_HAT) \
     SYMBOL("&&", DOUBLE_AMPERSAND) \
     SYMBOL("||", DOUBLE_PIPE) \
     SYMBOL("==", DOUBLE_EQUALS) \
@@ -100,7 +99,6 @@
     SYMBOL("&=", AMPERSAND_EQUALS) \
     SYMBOL("|=", PIPE_EQUALS) \
     SYMBOL("^=", HAT_EQUALS) \
-    SYMBOL("^^=", DOUBLE_HAT_EQUALS) \
     SYMBOL("<<=", DOUBLE_LESS_THAN_EQUALS) \
     SYMBOL(">>=", DOUBLE_GREATER_THAN_EQUALS) \
     SYMBOL("~", TILDE) \
@@ -109,25 +107,25 @@
 
 typedef enum: uint8_t {
     PROCESS_TOKENS(ENUM)
-} TokenKind;
+} jitc_token_type_t;
 
 static const char* token_table[] = {
     PROCESS_TOKENS(DECL)
 };
 static int num_token_table_entries = sizeof(token_table) / sizeof(*token_table);
 
-typedef struct {
-    int row, col;
-    TokenKind type;
+struct jitc_token_t {
+    jitc_token_type_t type;
     char* filename;
+    int row, col, flags;
     union {
         char* string;
         uint64_t integer;
         double floating;
     } value;
-} Token;
+};
 
-bool token_expect(queue_t* token_queue, TokenKind kind);
-queue_t* lex(jitc_context_t* context, const char* code, const char* filename);
+bool jitc_token_expect(queue_t* token_queue, jitc_token_type_t kind);
+queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filename);
 
 #endif

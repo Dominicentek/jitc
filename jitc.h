@@ -6,6 +6,7 @@
 
 typedef struct jitc_context_t jitc_context_t;
 typedef struct jitc_error_t jitc_error_t;
+typedef struct jitc_errors_t jitc_errors_t;
 
 jitc_context_t* jitc_create_context();
 void jitc_destroy(jitc_context_t* context);
@@ -14,8 +15,8 @@ void jitc_queue_file(jitc_context_t* context, const char* filename);
 bool jitc_get(jitc_context_t* context, const char* name, void* ptr);
 bool jitc_set(jitc_context_t* context, const char* name, void* ptr);
 
-bool jitc_parse();
-void jitc_report_errors(FILE* stream);
-void jitc_ignore_errors();
+jitc_errors_t* jitc_parse();
+void jitc_report_errors(jitc_errors_t* errors, FILE* stream);
+void jitc_ignore_errors(jitc_errors_t* errors);
 
 #endif

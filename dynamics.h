@@ -17,6 +17,9 @@ typedef struct bytewriter_t bytewriter_t;
 typedef struct bytereader_t bytereader_t;
 
 string_t* str_new();
+char* str_data(string_t* str);
+size_t str_length(string_t* str);
+void str_clear(string_t* str);
 void str_append(string_t* str, char* other);
 void str_delete(string_t* str);
 
