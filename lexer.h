@@ -125,7 +125,7 @@ struct jitc_token_t {
     } value;
 };
 
-bool jitc_token_expect(queue_t* token_queue, jitc_token_type_t kind);
+jitc_token_t* jitc_token_expect(queue_t* token_queue, jitc_token_type_t kind);
 queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filename);
 
 #endif

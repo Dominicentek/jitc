@@ -412,3 +412,9 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
     str_delete(state.buffer);
     return tokens;
 }
+
+jitc_token_t* jitc_token_expect(queue_t* token_queue, jitc_token_type_t kind) {
+    jitc_token_t* token = queue_peek_ptr(token_queue);
+    if (token->type == kind) return queue_pop_ptr(token_queue);
+    return NULL;
+}
