@@ -126,13 +126,17 @@ bool jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc_type_t*
 }
 
 bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc_type_t** type) {
+    typedef enum {
+        DeclID_InnerDeclaration,
+        DeclID_Function,
+        DeclID_Array
+    } decl_id_t;
+
     if (!*type) return NULL;
     if (queue_size(tokens) == 1) return true;
     bool lhs_flag = true;
     jitc_token_t* token = NULL;
-    smartptr(queue_t) inner_arr  = queue_new();
-    smartptr(queue_t) inner_func = queue_new();
-    smartptr(queue_t) inner_decl = NULL;
+    smartptr(stack_t) inner = stack_new();
     const char* name = NULL;
     while (true) {
         if ((token = jitc_token_expect(tokens, TOKEN_ASTERISK))) {
@@ -153,6 +157,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
             lhs_flag = false;
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_BRACKET_OPEN))) {
+            lhs_flag = false;
             size_t size = -1;
             if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) {
                 token = queue_peek_ptr(tokens);
@@ -161,12 +166,13 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
                 if (ast->node_type != AST_Integer) ERROR(token, "Expected integer constant");
                 size = ast->integer.value;
             }
-            queue_push_int(inner_arr, size);
+            stack_push_int(inner, size);
+            stack_push_int(inner, DeclID_Array);
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN))) {
             int depth = 0;
             jitc_token_t* start = token;
-            smartptr(queue_t) inner = queue_new();
+            smartptr(queue_t) func = queue_new();
             while (true) {
                 token = queue_pop_ptr(tokens);
                 if (token->type == TOKEN_END_OF_FILE) ERROR(token, "Unexpected EOF");
@@ -175,50 +181,65 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
                     depth--;
                     if (depth < 0) break;
                 }
-                queue_push_ptr(inner, token);
+                queue_push_ptr(func, token);
             }
             jitc_token_t* eof = malloc(sizeof(jitc_token_t));
             memcpy(eof, queue_peek_ptr(tokens), sizeof(jitc_token_t));
             eof->type = TOKEN_END_OF_FILE;
-            queue_push_ptr(inner, eof);
-
-            if (lhs_flag) inner_decl = move(inner);
-            else queue_push_ptr(inner_func, move(inner));
+            queue_push_ptr(func, eof);
+            stack_push_ptr(inner, move(func));
+            stack_push_int(inner, lhs_flag ? DeclID_InnerDeclaration : DeclID_Function);
             lhs_flag = false;
         }
         else break;
     }
-    while (queue_size(inner_arr) > 0) {
-        jitc_type_t* arr = malloc(sizeof(jitc_type_t));
-        arr->is_const = arr->is_unsigned = false;
-        arr->kind = Type_Array;
-        arr->arr.base = *type;
-        arr->arr.size = queue_pop_int(inner_arr);
-        arr->alignment = (*type)->alignment;
-        arr->size = arr->arr.size == -1 ? 0 : queue_pop_int(inner_arr) * (*type)->size;
-        *type = arr;
+    while (stack_size(inner) > 0) switch (stack_pop_int(inner)) {
+        case DeclID_Array: {
+            jitc_type_t* arr = malloc(sizeof(jitc_type_t));
+            arr->is_const = arr->is_unsigned = false;
+            arr->kind = Type_Array;
+            arr->arr.base = *type;
+            arr->arr.size = stack_pop_int(inner);
+            arr->alignment = (*type)->alignment;
+            arr->size = arr->arr.size == -1 ? 0 : arr->arr.size * (*type)->size;
+            *type = arr;
+        } break;
+        case DeclID_Function: {
+            smartptr(list_t) list = list_new();
+            smartptr(queue_t) queue = stack_pop_ptr(inner);
+            jitc_token_t* comma = NULL;
+            while (queue_size(queue) > 1) {
+                comma = NULL;
+                if (((jitc_token_t*)queue_peek_ptr(queue))->type == TOKEN_TRIPLE_DOT) {
+                    queue_pop(queue);
+                    jitc_type_t* varargs = malloc(sizeof(jitc_type_t));
+                    varargs->is_const = false; varargs->is_unsigned = false;
+                    varargs->alignment = 0; varargs->size = 0;
+                    varargs->kind = Type_Varargs;
+                    list_add_ptr(list, varargs);
+                    if (!jitc_token_expect(queue, TOKEN_END_OF_FILE)) ERROR(queue_pop_ptr(queue), "Expected ')'");
+                    break;
+                }
+                jitc_type_t* param_type = jitc_parse_type(context, queue, NULL);
+                if (!param_type) return NULL;
+                list_add_ptr(list, param_type);
+                comma = jitc_token_expect(queue, TOKEN_COMMA);
+            }
+            if (comma) ERROR(comma, "Expected type");
+            jitc_type_t* func = malloc(sizeof(jitc_type_t));
+            func->is_const = func->is_unsigned = false;
+            func->kind = Type_Function;
+            func->alignment = func->size = 8;
+            func->func.ret = *type;
+            func->func.params = move(list);
+            *type = func;
+        } break;
+        case DeclID_InnerDeclaration: {
+            queue_t* inner_tokens = stack_pop_ptr(inner);
+            if (queue_size(inner_tokens) == 1) ERROR(queue_pop_ptr(inner_tokens), "Unexpected ')'");
+            if (!jitc_parse_type_declarations(context, inner_tokens, type)) return false;
+        } break;
     }
-    while (queue_size(inner_func) > 0) {
-        smartptr(list_t) list = list_new();
-        smartptr(queue_t) queue = queue_pop_ptr(inner_func);
-        jitc_token_t* comma = NULL;
-        while (queue_size(queue) > 1) {
-            comma = NULL;
-            jitc_type_t* param_type = jitc_parse_type(context, queue, NULL);
-            if (!param_type) return NULL;
-            list_add_ptr(list, param_type);
-            comma = jitc_token_expect(queue, TOKEN_COMMA);
-        }
-        if (comma) ERROR(comma, "Expected type");
-        jitc_type_t* func = malloc(sizeof(jitc_type_t));
-        func->is_const = func->is_unsigned = false;
-        func->kind = Type_Function;
-        func->alignment = func->size = 8;
-        func->func.ret = *type;
-        func->func.params = move(list);
-        *type = func;
-    }
-    if (inner_decl) if (!jitc_parse_type_declarations(context, inner_decl, type)) return false;
     if (name) (*type)->name = name;
     return true;
 }

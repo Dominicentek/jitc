@@ -17,7 +17,7 @@ void __cleanup_string_t(void* str);
 void __cleanup_list_t(void* list);
 void __cleanup_map_t(void* map);
 void __cleanup_set_t(void* set);
-void __clenaup_stack_t(void* stack);
+void __cleanup_stack_t(void* stack);
 void __cleanup_queue_t(void* queue);
 void __cleanup_structwriter_t(void* writer);
 void __cleanup_bytewriter_t(void* writer);

@@ -50,12 +50,13 @@ void print_type(jitc_type_t* type, int indent) {
                 print_type(list_get(type->str.fields, i), indent + 2);
             }
             return;
+        case Type_Varargs: printf("varargs\n"); break;
         default: printf("unk\n");
     }
 }
 
 int main() {
-    FILE* f = fopen("test.txt", "r");
+    FILE* f = fopen("test/test.c", "r");
     fseek(f, 0, SEEK_END);
     size_t size = ftell(f);
     fseek(f, 0, SEEK_SET);
