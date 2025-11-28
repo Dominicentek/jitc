@@ -46,37 +46,8 @@ jitc_ast_t* mknode(jitc_ast_type_t type) {
     return ast;
 }
 
-void jitc_delete_type(jitc_type_t* type) {
-    switch (type->kind) {
-        case Type_Pointer:
-            jitc_delete_type(type->ptr.base);
-            break;
-        case Type_Array:
-            jitc_delete_type(type->arr.base);
-            break;
-        case Type_Function:
-            for (size_t i = 0; i < list_size(type->func.params); i++) {
-                jitc_delete_type(list_get_ptr(type->func.params, i));
-            }
-            list_delete(type->func.params);
-            jitc_delete_type(type->func.ret);
-            break;
-        case Type_Struct:
-        case Type_Union:
-            for (size_t i = 0; i < list_size(type->str.fields); i++) {
-                jitc_delete_type(list_get_ptr(type->str.fields, i));
-            }
-            list_delete(type->str.fields);
-            break;
-        default: break;
-    }
-    free(type);
-}
-
-bool jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc_type_t* type, jitc_decltype_t* decltype) {
-    type->is_const = false;
-    type->is_unsigned = false;
-    type->kind = Type_Void;
+jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype) {
+    bool is_const = false, is_unsigned = false;
     jitc_specifiers_t specs = 0;
     jitc_token_t* token = NULL;
     jitc_token_t* unsigned_token = NULL, *first_token = NULL;
@@ -87,8 +58,8 @@ bool jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc_type_t*
         if      ((token = jitc_token_expect(tokens, TOKEN_extern)))   decl = Decltype_Extern;
         else if ((token = jitc_token_expect(tokens, TOKEN_static)))   decl = Decltype_Static;
         else if ((token = jitc_token_expect(tokens, TOKEN_typedef)))  decl = Decltype_Typedef;
-        else if ((token = jitc_token_expect(tokens, TOKEN_const)))    type->is_const    = true;
-        else if ((token = jitc_token_expect(tokens, TOKEN_unsigned))) type->is_unsigned = true;
+        else if ((token = jitc_token_expect(tokens, TOKEN_const)))    is_const    = true;
+        else if ((token = jitc_token_expect(tokens, TOKEN_unsigned))) is_unsigned = true;
         else if ((token = jitc_token_expect(tokens, TOKEN_char)))     new_specs |= Spec_Char;
         else if ((token = jitc_token_expect(tokens, TOKEN_short)))    new_specs |= Spec_Short;
         else if ((token = jitc_token_expect(tokens, TOKEN_int)))      new_specs |= Spec_Int;
@@ -110,19 +81,23 @@ bool jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc_type_t*
     }
     if (!has_any) return false;
     int i = 0;
-    if (specs == 0 && type->is_unsigned) specs |= Spec_Int;
+    jitc_type_kind_t kind;
+    if (specs == 0 && is_unsigned) specs |= Spec_Int;
     for (; i < sizeof(types) / sizeof(*types); i++) {
         if (types[i].specifiers == specs) {
-            type->kind = types[i].type;
+            kind = types[i].type;
             break;
         }
     }
     if (i == sizeof(types) / sizeof(*types)) ERROR(first_token, "Invalid specifier combination");
-    if (type->is_unsigned && !(
-        type->kind == Type_Int8  || type->kind == Type_Int16 ||
-        type->kind == Type_Int32 || type->kind == Type_Int64
+    if (is_unsigned && !(
+        kind == Type_Int8  || kind == Type_Int16 ||
+        kind == Type_Int32 || kind == Type_Int64
     )) ERROR(unsigned_token, "Unsigned non-integer type");
-    return true;
+    jitc_type_t* type = jitc_typecache_primitive(context, kind);
+    if (is_const) type = jitc_typecache_const(context, type);
+    if (is_unsigned) type = jitc_typecache_unsigned(context, type);
+    return type;
 }
 
 bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc_type_t** type) {
@@ -141,16 +116,11 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
     while (true) {
         if ((token = jitc_token_expect(tokens, TOKEN_ASTERISK))) {
             if (!lhs_flag) ERROR(token, "Pointer declaration on right-hand-side of type");
-            jitc_type_t* ptr = malloc(sizeof(jitc_type_t));
-            ptr->is_const = ptr->is_unsigned = false;
-            ptr->kind = Type_Pointer;
-            ptr->alignment = ptr->size = 8;
-            ptr->ptr.base = *type;
-            *type = ptr;
+            *type = jitc_typecache_pointer(context, *type);
         }
         else if (jitc_token_expect(tokens, TOKEN_const)) {
             if (!lhs_flag) ERROR(token, "'const' declaration on right-hand-side of type");
-            (*type)->is_const = true;
+            *type = jitc_typecache_const(context, *type);
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
             name = token->value.string;
@@ -161,7 +131,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
             size_t size = -1;
             if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) {
                 token = queue_peek_ptr(tokens);
-                jitc_ast_t* ast = jitc_parse_ast(context, tokens);
+                smartptr(jitc_ast_t) ast = jitc_parse_expression(context, tokens);
                 if (!ast) return NULL;
                 if (ast->node_type != AST_Integer) ERROR(token, "Expected integer constant");
                 size = ast->integer.value;
@@ -175,18 +145,14 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
             smartptr(queue_t) func = queue_new();
             while (true) {
                 token = queue_pop_ptr(tokens);
+                queue_push_ptr(func, token);
                 if (token->type == TOKEN_END_OF_FILE) ERROR(token, "Unexpected EOF");
                 if (token->type == TOKEN_PARENTHESIS_OPEN)  depth++;
                 if (token->type == TOKEN_PARENTHESIS_CLOSE) {
                     depth--;
                     if (depth < 0) break;
                 }
-                queue_push_ptr(func, token);
             }
-            jitc_token_t* eof = malloc(sizeof(jitc_token_t));
-            memcpy(eof, queue_peek_ptr(tokens), sizeof(jitc_token_t));
-            eof->type = TOKEN_END_OF_FILE;
-            queue_push_ptr(func, eof);
             stack_push_ptr(inner, move(func));
             stack_push_int(inner, lhs_flag ? DeclID_InnerDeclaration : DeclID_Function);
             lhs_flag = false;
@@ -195,14 +161,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
     }
     while (stack_size(inner) > 0) switch (stack_pop_int(inner)) {
         case DeclID_Array: {
-            jitc_type_t* arr = malloc(sizeof(jitc_type_t));
-            arr->is_const = arr->is_unsigned = false;
-            arr->kind = Type_Array;
-            arr->arr.base = *type;
-            arr->arr.size = stack_pop_int(inner);
-            arr->alignment = (*type)->alignment;
-            arr->size = arr->arr.size == -1 ? 0 : arr->arr.size * (*type)->size;
-            *type = arr;
+            *type = jitc_typecache_array(context, *type, stack_pop_int(inner));
         } break;
         case DeclID_Function: {
             smartptr(list_t) list = list_new();
@@ -212,12 +171,8 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
                 comma = NULL;
                 if (((jitc_token_t*)queue_peek_ptr(queue))->type == TOKEN_TRIPLE_DOT) {
                     queue_pop(queue);
-                    jitc_type_t* varargs = malloc(sizeof(jitc_type_t));
-                    varargs->is_const = false; varargs->is_unsigned = false;
-                    varargs->alignment = 0; varargs->size = 0;
-                    varargs->kind = Type_Varargs;
-                    list_add_ptr(list, varargs);
-                    if (!jitc_token_expect(queue, TOKEN_END_OF_FILE)) ERROR(queue_pop_ptr(queue), "Expected ')'");
+                    list_add_ptr(list, jitc_typecache_primitive(context, Type_Varargs));
+                    if (!jitc_token_expect(queue, TOKEN_PARENTHESIS_CLOSE)) ERROR(queue_pop_ptr(queue), "Expected ')'");
                     break;
                 }
                 jitc_type_t* param_type = jitc_parse_type(context, queue, NULL);
@@ -226,16 +181,10 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
                 comma = jitc_token_expect(queue, TOKEN_COMMA);
             }
             if (comma) ERROR(comma, "Expected type");
-            jitc_type_t* func = malloc(sizeof(jitc_type_t));
-            func->is_const = func->is_unsigned = false;
-            func->kind = Type_Function;
-            func->alignment = func->size = 8;
-            func->func.ret = *type;
-            func->func.params = move(list);
-            *type = func;
+            *type = jitc_typecache_function(context, *type, list);
         } break;
         case DeclID_InnerDeclaration: {
-            queue_t* inner_tokens = stack_pop_ptr(inner);
+            smartptr(queue_t) inner_tokens = stack_pop_ptr(inner);
             if (queue_size(inner_tokens) == 1) ERROR(queue_pop_ptr(inner_tokens), "Unexpected ')'");
             if (!jitc_parse_type_declarations(context, inner_tokens, type)) return false;
         } break;
@@ -245,10 +194,14 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
 }
 
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype) {
-    smartptr(jitc_type_t) type = calloc(sizeof(jitc_type_t), 1);
-    if (!jitc_parse_base_type(context, tokens, type, decltype)) return NULL;
+    jitc_type_t* type = NULL;
+    if (!(type = jitc_parse_base_type(context, tokens, decltype))) return NULL;
     if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
-    return move(type);
+    return type;
+}
+
+jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens) {
+
 }
 
 jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens) {
@@ -275,11 +228,11 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens) {
 
     }
     else {
-        /*jitc_decltype_t decltype;
-        jitc_type_t* type = jitc_parse_type(context, tokens, &decltype);
+        jitc_decltype_t decltype;
+        smartptr(jitc_type_t) type = jitc_parse_type(context, tokens, &decltype);
         if (!type) {
-            jitc_ast_t* node = jitc_parse_expression(context, tokens, NULL);
-            if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) return node;
+            smartptr(jitc_ast_t) node = jitc_parse_expression(context, tokens);
+            if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) return move(node);
             ERROR(NEXT_TOKEN, "Expected ';'");
         }
         if (type->name) return NULL;
@@ -292,16 +245,55 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens) {
             }
             else if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) break;
             else ERROR(NEXT_TOKEN, "Expected '=', ';' or ','");
-        }*/
+        }
     }
     return NULL;
 }
 
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* tokens) {
-    jitc_ast_t* ast = mknode(AST_List);
+    smartptr(jitc_ast_t) ast = mknode(AST_List);
     ast->list.inner = list_new();
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
         list_add_ptr(ast->list.inner, jitc_parse_statement(context, tokens));
     }
-    return ast;
+    return move(ast);
+}
+
+void jitc_destroy_ast(jitc_ast_t* ast) {
+    if (!ast) return;
+    switch (ast->node_type) {
+        case AST_Unary:
+            jitc_destroy_ast(ast->unary.inner);
+            break;
+        case AST_Binary:
+            jitc_destroy_ast(ast->binary.left);
+            jitc_destroy_ast(ast->binary.right);
+            break;
+        case AST_Ternary:
+            jitc_destroy_ast(ast->ternary.when);
+            jitc_destroy_ast(ast->ternary.then);
+            jitc_destroy_ast(ast->ternary.otherwise);
+            break;
+        case AST_List:
+            for (size_t i = 0; i < list_size(ast->list.inner); i++) {
+                jitc_destroy_ast(list_get_ptr(ast->list.inner, i));
+            }
+            list_delete(ast->list.inner);
+            break;
+        case AST_Function:
+            jitc_destroy_ast(ast->function.body);
+            break;
+        case AST_Loop:
+            jitc_destroy_ast(ast->loop.cond);
+            jitc_destroy_ast(ast->loop.body);
+            break;
+        case AST_Return:
+            jitc_destroy_ast(ast->ret.expr);
+            break;
+        case AST_WalkStruct:
+            jitc_destroy_ast(ast->walk_struct.struct_ptr);
+            break;
+        default: break;
+    }
+    free(ast);
 }

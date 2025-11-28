@@ -24,5 +24,6 @@ void __cleanup_bytewriter_t(void* writer);
 void __cleanup_bytereader_t(void* reader);
 
 void __cleanup_jitc_type_t(void* type);
+void __cleanup_jitc_ast_t(void* type);
 
 #endif

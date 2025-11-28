@@ -242,7 +242,9 @@ void* map_get_ptr(map_t* map, void* value) {
             map->capacity *= 2;
             map->entries = realloc(map->entries, sizeof(kvpair_t) * map->capacity);
         }
-        map->entries[map->length++].key = value;
+        kvpair_t* entry = &map->entries[map->length++];
+        entry->key = value;
+        entry->value = NULL;
         qsort(map->entries, map->length, sizeof(kvpair_t), map->compare);
         ptr = bsearch(&value, map->entries, map->length, sizeof(kvpair_t), map->compare);
     }

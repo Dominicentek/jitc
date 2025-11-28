@@ -43,9 +43,7 @@ void print_type(jitc_type_t* type, int indent) {
             return;
         case Type_Struct:
         case Type_Union:
-            printf(type->kind == Type_Struct ? "struct" : "union");
-            if (type->str.name) printf(" %s", type->str.name);
-            printf("\n");
+            printf(type->kind == Type_Struct ? "struct\n" : "union\n");
             for (size_t i = 0; i < list_size(type->str.fields); i++) {
                 print_type(list_get(type->str.fields, i), indent + 2);
             }
