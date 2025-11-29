@@ -112,7 +112,10 @@ typedef enum: uint8_t {
     Binary_AssignBitshiftRight,
     Binary_AssignAnd,
     Binary_AssignOr,
-    Binary_AssignXor
+    Binary_AssignXor,
+    
+    Binary_Tern1,
+    Binary_Tern2,
 } jitc_binary_op_t;
 
 typedef struct jitc_type_t jitc_type_t;

@@ -10,6 +10,12 @@
     temp; \
 })
 
+#define try(x) ({ \
+    typeof(x) temp = (x); \
+    if (!temp) return NULL; \
+    temp; \
+})
+
 void __cleanup_alloc(void* ptr);
 
 void __cleanup_FILE(void* file);

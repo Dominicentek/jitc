@@ -131,7 +131,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
             size_t size = -1;
             if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) {
                 token = queue_peek_ptr(tokens);
-                smartptr(jitc_ast_t) ast = jitc_parse_expression(context, tokens);
+                smartptr(jitc_ast_t) ast = jitc_parse_expression(context, tokens, NULL);
                 if (!ast) return NULL;
                 if (ast->node_type != AST_Integer) ERROR(token, "Expected integer constant");
                 size = ast->integer.value;
@@ -200,8 +200,120 @@ jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decl
     return type;
 }
 
-jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens) {
+jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* tokens) {
+    jitc_token_t* token;
+    if ((token = jitc_token_expect(tokens, TOKEN_INTEGER))) {
+        jitc_ast_t* ast = mknode(AST_Integer);
+        ast->integer.is_unsigned = false;
+        ast->integer.type_kind = Type_Int32;
+        ast->integer.value = token->value.integer;
+        return ast;
+    }
+    else if ((token = jitc_token_expect(tokens, TOKEN_FLOAT))) {
+        jitc_ast_t* ast = mknode(AST_Floating);
+        ast->floating.is_single_precision = false;
+        ast->floating.value = token->value.floating;
+        return ast;
+    }
+    else if ((token = jitc_token_expect(tokens, TOKEN_STRING))) {
+        jitc_ast_t* ast = mknode(AST_StringLit);
+        ast->string.ptr = token->value.string;
+        return ast;
+    }
+    else if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
+        jitc_ast_t* ast = mknode(AST_Variable);
+        ast->variable.name = token->value.string;
+        return ast;
+    }
+    return NULL;
+}
 
+static struct {
+    bool rtl_assoc;
+    int precedence;
+    jitc_binary_op_t type;
+} op_info[] = {
+    [TOKEN_ASTERISK]                   = { false, 12, Binary_Multiplication },
+    [TOKEN_SLASH]                      = { false, 12, Binary_Division },
+    [TOKEN_PERCENT]                    = { false, 12, Binary_Modulo },
+    [TOKEN_PLUS]                       = { false, 11, Binary_Addition },
+    [TOKEN_MINUS]                      = { false, 11, Binary_Subtraction },
+    [TOKEN_DOUBLE_LESS_THAN]           = { false, 10, Binary_BitshiftLeft },
+    [TOKEN_DOUBLE_GREATER_THAN]        = { false, 10, Binary_BitshiftRight },
+    [TOKEN_LESS_THAN]                  = { false, 9,  Binary_LessThan },
+    [TOKEN_GREATER_THAN]               = { false, 9,  Binary_GreaterThan },
+    [TOKEN_LESS_THAN_EQUALS]           = { false, 9,  Binary_LessThanOrEqualTo },
+    [TOKEN_GREATER_THAN_EQUALS]        = { false, 9,  Binary_GreaterThanOrEqualTo },
+    [TOKEN_DOUBLE_EQUALS]              = { false, 8,  Binary_Equals },
+    [TOKEN_NOT_EQUALS]                 = { false, 8,  Binary_NotEquals },
+    [TOKEN_AMPERSAND]                  = { false, 7,  Binary_And },
+    [TOKEN_HAT]                        = { false, 6,  Binary_Xor },
+    [TOKEN_PIPE]                       = { false, 5,  Binary_Or },
+    [TOKEN_DOUBLE_AMPERSAND]           = { false, 4,  Binary_LogicAnd },
+    [TOKEN_DOUBLE_PIPE]                = { false, 3,  Binary_LogicOr },
+    [TOKEN_QUESTION_MARK]              = { true,  2,  Binary_Tern1 },
+    [TOKEN_COLON]                      = { true,  2,  Binary_Tern2 },
+    [TOKEN_EQUALS]                     = { true,  1,  Binary_Assignment },
+    [TOKEN_PLUS_EQUALS]                = { true,  1,  Binary_AssignAddition },
+    [TOKEN_MINUS_EQUALS]               = { true,  1,  Binary_AssignSubtraction },
+    [TOKEN_ASTERISK_EQUALS]            = { true,  1,  Binary_AssignMultiplication },
+    [TOKEN_SLASH_EQUALS]               = { true,  1,  Binary_AssignDivision },
+    [TOKEN_PERCENT_EQUALS]             = { true,  1,  Binary_AssignModulo },
+    [TOKEN_DOUBLE_LESS_THAN_EQUALS]    = { true,  1,  Binary_AssignBitshiftLeft },
+    [TOKEN_DOUBLE_GREATER_THAN_EQUALS] = { true,  1,  Binary_AssignBitshiftRight },
+    [TOKEN_AMPERSAND_EQUALS]           = { true,  1,  Binary_AssignAnd },
+    [TOKEN_PIPE_EQUALS]                = { true,  1,  Binary_AssignOr },
+    [TOKEN_HAT_EQUALS]                 = { true,  1,  Binary_AssignXor },
+};
+
+jitc_ast_t* jitc_shunting_yard(jitc_context_t* context, list_t* expr) {
+    #define reduce() { \
+        jitc_token_t* op = stack_pop_ptr(op_stack); \
+        jitc_ast_t* node  = mknode(AST_Binary); \
+        node->binary.left = stack_pop_ptr(node_stack); \
+        node->binary.right = stack_pop_ptr(node_stack); \
+        node->binary.operation = op_info[op->type].type; \
+        stack_push_ptr(node_stack, node); \
+    }
+    smartptr(stack_t) op_stack = stack_new();
+    smartptr(stack_t) node_stack = stack_new();
+    for (int i = 0; i < list_size(expr); i++) {
+        if (i % 2 == 0) {
+            stack_push_ptr(node_stack, list_get_ptr(expr, i));
+            continue;
+        }
+        jitc_token_t* op = list_get_ptr(expr, i);
+        while (stack_size(op_stack) > 0) {
+            jitc_token_t* top = stack_peek_ptr(op_stack);
+            if (top->type == TOKEN_QUESTION_MARK) break;
+            int top_precedence = op_info[top->type].precedence;
+            int cur_precedence = op_info[ op->type].precedence;
+            bool rtl_associativity = op_info[op->type].rtl_assoc;
+            if (( rtl_associativity && top_precedence <= cur_precedence) ||
+                (!rtl_associativity && top_precedence <  cur_precedence)
+            ) break;
+            reduce();
+        }
+        stack_push_ptr(op_stack, op);
+    }
+    while (stack_size(op_stack) > 0) reduce();
+    return stack_pop_ptr(node_stack);
+}
+
+jitc_ast_t* jitc_precompute(jitc_context_t* context, jitc_ast_t* ast, jitc_type_t** exprtype) {
+    return ast;
+}
+
+jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, jitc_type_t** exprtype) {
+    smartptr(list_t) expr = list_new();
+    while (true) {
+        jitc_ast_t* operand = try(jitc_parse_expression_operand(context, tokens));
+        jitc_token_t* token = queue_peek_ptr(tokens);
+        list_add_ptr(expr, operand);
+        if (op_info[token->type].precedence == 0) break;
+        list_add_ptr(expr, queue_pop_ptr(tokens));
+    }
+    return jitc_precompute(context, jitc_shunting_yard(context, expr), exprtype);
 }
 
 jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens) {
@@ -228,24 +340,9 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens) {
 
     }
     else {
-        jitc_decltype_t decltype;
-        smartptr(jitc_type_t) type = jitc_parse_type(context, tokens, &decltype);
-        if (!type) {
-            smartptr(jitc_ast_t) node = jitc_parse_expression(context, tokens);
-            if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) return move(node);
-            ERROR(NEXT_TOKEN, "Expected ';'");
-        }
-        if (type->name) return NULL;
-        jitc_declare_variable(context, type, decltype);
-        while (true) {
-            if (jitc_token_expect(tokens, TOKEN_EQUALS)) {
-            }
-            else if (jitc_token_expect(tokens, TOKEN_COMMA)) {
-                jitc_parse_type_declarations(context, tokens, &type);
-            }
-            else if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) break;
-            else ERROR(NEXT_TOKEN, "Expected '=', ';' or ','");
-        }
+        smartptr(jitc_ast_t) node = try(jitc_parse_expression(context, tokens, NULL));
+        if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) ERROR(NEXT_TOKEN, "Expected ';'");
+        return move(node);
     }
     return NULL;
 }
@@ -254,7 +351,7 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* tokens) {
     smartptr(jitc_ast_t) ast = mknode(AST_List);
     ast->list.inner = list_new();
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
-        list_add_ptr(ast->list.inner, jitc_parse_statement(context, tokens));
+        list_add_ptr(ast->list.inner, try(jitc_parse_statement(context, tokens)));
     }
     return move(ast);
 }
