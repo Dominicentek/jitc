@@ -118,6 +118,17 @@ typedef enum: uint8_t {
     Binary_Tern2,
 } jitc_binary_op_t;
 
+typedef enum {
+    TypePolicy_NoVoid = (1 << 0),
+    TypePolicy_NoUnkArrSize = (1 << 1),
+    TypePolicy_NoFunction = (1 << 2),
+    TypePolicy_NoArray = (1 << 3),
+    TypePolicy_NoUndefTags = (1 << 4),
+    
+    TypePolicy_NoDerived = TypePolicy_NoFunction | TypePolicy_NoArray,
+    TypePolicy_NoIncomplete = TypePolicy_NoVoid | TypePolicy_NoUnkArrSize | TypePolicy_NoUndefTags,
+} jitc_type_policy_t;
+
 typedef struct jitc_type_t jitc_type_t;
 struct jitc_type_t {
     jitc_type_kind_t kind;
@@ -174,12 +185,11 @@ struct jitc_ast_t {
         struct {
             jitc_decltype_t decltype;
             jitc_type_t* type;
-        } declaration;
+        } decl;
         struct {
-            const char* variable;
-            list_t* param_names;
+            jitc_type_t* variable;
             jitc_ast_t* body;
-        } function;
+        } func;
         struct {
             jitc_ast_t* cond;
             jitc_ast_t* body;
@@ -237,5 +247,7 @@ void jitc_error_set(jitc_context_t* context, jitc_error_t* error);
 
 void jitc_report_error(jitc_error_t* error, FILE* file);
 void jitc_free_error(jitc_error_t* error);
+
+bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 
 #endif

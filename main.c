@@ -54,6 +54,10 @@ void print_type(jitc_type_t* type, int indent) {
 }
 
 void print_ast(jitc_ast_t* ast, int indent) {
+    if (!ast) {
+        printf("%*s%s", indent, "", "(null)");
+        return;
+    }
     printf("%*s%s", indent, "", (const char*[]){
         "unary",
         "binary",
@@ -158,6 +162,33 @@ void print_ast(jitc_ast_t* ast, int indent) {
             printf("\n");
             print_type(ast->type.type, indent + 2);
             break;
+        case AST_Declaration:
+            printf(": %s %s\n", (const char*[]){
+                "variable",
+                "static",
+                "extern",
+                "typedef"
+            }[ast->decl.decltype], ast->decl.type->name);
+            print_type(ast->decl.type, indent + 2);
+            break;
+        case AST_Function:
+            printf("\n");
+            print_type(ast->func.variable, indent + 2);
+            print_ast(ast->func.body, indent + 2);
+            break;
+        case AST_Loop:
+            printf("\n");
+            print_ast(ast->loop.cond, indent + 2);
+            print_ast(ast->loop.body, indent + 2);
+            break;
+        case AST_Return:
+            printf("\n");
+            print_ast(ast->ret.expr, indent + 2);
+            break;
+        case AST_WalkStruct:
+            printf(": %s\n", ast->walk_struct.field_name);
+            print_ast(ast->walk_struct.struct_ptr, indent + 2);
+            break;
         default: printf("\n");
     }
 }
@@ -173,7 +204,7 @@ int main() {
     fclose(f);
 
     jitc_context_t* context = jitc_create_context();
-    queue_t* tokens = jitc_lex(context, data, "test.txt");
+    queue_t* tokens = jitc_lex(context, data, "test/test.c");
     if (!tokens) jitc_report_error(context->error, stderr);
     else {
         jitc_ast_t* ast = jitc_parse_ast(context, tokens);

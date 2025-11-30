@@ -220,25 +220,16 @@ jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name) {
     return jitc_register_type(context, &ref);
 }
 
-jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const char* str, ...) {
-    jitc_error_t* error = malloc(sizeof(jitc_error_t));
-    error->msg = FORMAT(str);
-    error->file = filename;
-    error->row = row;
-    error->col = col;
-    return error;
-}
-
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype) {
-
+    return true;
 }
 
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type) {
-
+    return true;
 }
 
 bool jitc_declare_enum_item(jitc_context_t* context, jitc_type_t* type, const char* name, uint64_t value) {
-
+    return true;
 }
 
 void jitc_push_function_scope(jitc_context_t* context) {
@@ -251,6 +242,15 @@ void jitc_push_scope(jitc_context_t* context) {
 
 void jitc_pop_scope(jitc_context_t* context) {
 
+}
+
+jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const char* str, ...) {
+    jitc_error_t* error = malloc(sizeof(jitc_error_t));
+    error->msg = FORMAT(str);
+    error->file = filename;
+    error->row = row;
+    error->col = col;
+    return error;
 }
 
 jitc_error_t* jitc_error_parser(jitc_token_t* token, const char* str, ...) {
@@ -269,6 +269,18 @@ void jitc_error_set(jitc_context_t* context, jitc_error_t* error) {
 
 void jitc_report_error(jitc_error_t* error, FILE* file) {
     fprintf(file, "Error: %s (in %s at %d:%d)\n", error->msg, error->file, error->row, error->col);
+}
+
+bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
+    if ((policy & TypePolicy_NoArray) && type->kind == Type_Array) return false;
+    if ((policy & TypePolicy_NoFunction) && type->kind == Type_Function) return false;
+    if ((policy & TypePolicy_NoVoid) && type->kind == Type_Void) return false;
+    if ((policy & TypePolicy_NoUnkArrSize) && (type->kind == Type_Array && type->arr.size == -1)) return false;
+    if ((policy & TypePolicy_NoUndefTags)) {
+        // todo
+        return true;
+    }
+    return true;
 }
 
 static int compare_string(const void* a, const void* b) {
