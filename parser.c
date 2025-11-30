@@ -323,10 +323,11 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
             if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) ERROR(NEXT_TOKEN, "Expected ']'");
             op = mknode(AST_Unary);
             op->unary.operation = Unary_Dereference;
-            op->unary.inner = addition;
+            op->unary.inner = move(addition);
         }
         else if (jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) {
             smartptr(jitc_ast_t) list = mknode(AST_List);
+            list->list.inner = list_new();
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) while (true) {
                 list_add_ptr(list->list.inner, try(jitc_parse_expression(context, tokens, NULL)));
                 if (jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) break;
