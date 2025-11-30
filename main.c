@@ -33,6 +33,7 @@ void print_ast(jitc_ast_t* ast, int indent) {
                 "sufdec",
                 "preinc",
                 "predec",
+                "arithplus",
                 "arithneg",
                 "logicneg",
                 "binaryneg",
@@ -47,7 +48,6 @@ void print_ast(jitc_ast_t* ast, int indent) {
             printf(": %s\n", (const char*[]){
                 "cast",
                 "compexpr",
-                "array",
                 "funccall",
                 "addition",
                 "subtraction",

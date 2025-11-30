@@ -70,6 +70,7 @@ typedef enum: uint8_t {
     Unary_SuffixDecrement,
     Unary_PrefixIncrement,
     Unary_PrefixDecrement,
+    Unary_ArithPlus,
     Unary_ArithNegate,
     Unary_LogicNegate,
     Unary_BinaryNegate,
@@ -82,7 +83,6 @@ typedef enum: uint8_t {
 typedef enum: uint8_t {
     Binary_Cast,
     Binary_CompoundExpr,
-    Binary_ArraySubscript,
     Binary_FunctionCall,
     Binary_Addition,
     Binary_Subtraction,
@@ -113,7 +113,7 @@ typedef enum: uint8_t {
     Binary_AssignAnd,
     Binary_AssignOr,
     Binary_AssignXor,
-    
+
     Binary_Tern1,
     Binary_Tern2,
 } jitc_binary_op_t;

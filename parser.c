@@ -1,4 +1,5 @@
 #include "dynamics.h"
+#include "jitc.h"
 #include "jitc_internal.h"
 #include "lexer.h"
 #include "parser.h"
@@ -67,6 +68,12 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
         else if ((token = jitc_token_expect(tokens, TOKEN_double)))   new_specs |= Spec_Double;
         else if ((token = jitc_token_expect(tokens, TOKEN_void)))     new_specs |= Spec_Void;
         else if ((token = jitc_token_expect(tokens, TOKEN_long)))     new_specs |= specs & Spec_Long1 ? Spec_Long2 : Spec_Long1;
+        else if (
+            jitc_token_expect(tokens, TOKEN_volatile) ||
+            jitc_token_expect(tokens, TOKEN_register) ||
+            jitc_token_expect(tokens, TOKEN_restrict) ||
+            jitc_token_expect(tokens, TOKEN_inline)
+        ) (void)0; // no-op, maybe implement later?
         else break;
         has_any = true;
         if ((specs & new_specs) != 0) ERROR(token, "Duplicate specifier");
@@ -200,32 +207,146 @@ jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decl
     return type;
 }
 
+bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
+    jitc_token_t* token = queue_peek_ptr(tokens);
+    switch (token->type) {
+        case TOKEN_extern:
+        case TOKEN_static:
+        case TOKEN_typedef:
+        case TOKEN_const:
+        case TOKEN_unsigned:
+        case TOKEN_char:
+        case TOKEN_short:
+        case TOKEN_int:
+        case TOKEN_float:
+        case TOKEN_double:
+        case TOKEN_void:
+        case TOKEN_long:
+        case TOKEN_volatile:
+        case TOKEN_register:
+        case TOKEN_restrict:
+        case TOKEN_inline:
+            return true;
+        case TOKEN_IDENTIFIER:
+            // todo: check typedefs
+            return false;
+        default: return false;
+    }
+}
+
 jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* tokens) {
     jitc_token_t* token;
-    if ((token = jitc_token_expect(tokens, TOKEN_INTEGER))) {
-        jitc_ast_t* ast = mknode(AST_Integer);
-        ast->integer.is_unsigned = false;
-        ast->integer.type_kind = Type_Int32;
-        ast->integer.value = token->value.integer;
-        return ast;
+    bool force_parse_parentheses = false;
+    smartptr(stack_t) unary_stack = stack_new();
+    smartptr(jitc_ast_t) node = NULL;
+    while (true) {
+        smartptr(jitc_ast_t) node = NULL;
+        if (jitc_token_expect(tokens, TOKEN_PLUS)) (node = mknode(AST_Unary))->unary.operation = Unary_ArithPlus;
+        else if (jitc_token_expect(tokens, TOKEN_MINUS)) (node = mknode(AST_Unary))->unary.operation = Unary_ArithNegate;
+        else if (jitc_token_expect(tokens, TOKEN_TILDE)) (node = mknode(AST_Unary))->unary.operation = Unary_BinaryNegate;
+        else if (jitc_token_expect(tokens, TOKEN_EXCLAMATION_MARK)) (node = mknode(AST_Unary))->unary.operation = Unary_LogicNegate;
+        else if (jitc_token_expect(tokens, TOKEN_ASTERISK)) (node = mknode(AST_Unary))->unary.operation = Unary_Dereference;
+        else if (jitc_token_expect(tokens, TOKEN_AMPERSAND)) (node = mknode(AST_Unary))->unary.operation = Unary_AddressOf;
+        else if (jitc_token_expect(tokens, TOKEN_DOUBLE_PLUS)) (node = mknode(AST_Unary))->unary.operation = Unary_PrefixIncrement;
+        else if (jitc_token_expect(tokens, TOKEN_DOUBLE_MINUS)) (node = mknode(AST_Unary))->unary.operation = Unary_PrefixDecrement;
+        else if (jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) {
+            if (!jitc_peek_type(context, tokens)) {
+                force_parse_parentheses = true;
+                break;
+            }
+            smartptr(jitc_ast_t) type = mknode(AST_Type);
+            type->type.type = try(jitc_parse_type(context, tokens, NULL));
+            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
+            node = mknode(AST_Binary);
+            node->binary.operation = Binary_Cast;
+            node->binary.right = move(type);
+            // binary.left is filled later, its the same as unary.inner
+        }
+        else break;
+        stack_push_ptr(unary_stack, move(node));
+    }
+    if (force_parse_parentheses || jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) {
+        node = jitc_parse_expression(context, tokens, NULL);
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
+    }
+    else if ((token = jitc_token_expect(tokens, TOKEN_INTEGER))) {
+        node = mknode(AST_Integer);
+        node->integer.is_unsigned = false;
+        node->integer.type_kind = Type_Int32;
+        node->integer.value = token->value.integer;
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_FLOAT))) {
-        jitc_ast_t* ast = mknode(AST_Floating);
-        ast->floating.is_single_precision = false;
-        ast->floating.value = token->value.floating;
-        return ast;
+        node = mknode(AST_Floating);
+        node->floating.is_single_precision = false;
+        node->floating.value = token->value.floating;
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_STRING))) {
-        jitc_ast_t* ast = mknode(AST_StringLit);
-        ast->string.ptr = token->value.string;
-        return ast;
+        node = mknode(AST_StringLit);
+        node->string.ptr = token->value.string;
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
-        jitc_ast_t* ast = mknode(AST_Variable);
-        ast->variable.name = token->value.string;
-        return ast;
+        node = mknode(AST_Variable);
+        node->variable.name = token->value.string;
     }
-    return NULL;
+    while (true) {
+        smartptr(jitc_ast_t) op = NULL;
+        if (jitc_token_expect(tokens, TOKEN_DOUBLE_PLUS)) {
+            op = mknode(AST_Unary);
+            op->unary.operation = Unary_SuffixIncrement;
+            op->unary.inner = move(node);
+        }
+        else if (jitc_token_expect(tokens, TOKEN_DOUBLE_MINUS)) {
+            op = mknode(AST_Unary);
+            op->unary.operation = Unary_SuffixDecrement;
+            op->unary.inner = move(node);
+        }
+        else if (jitc_token_expect(tokens, TOKEN_DOT)) {
+            if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) ERROR(NEXT_TOKEN, "Expected identifier");
+            op = mknode(AST_WalkStruct);
+            op->walk_struct.struct_ptr = move(node);
+            op->walk_struct.field_name = token->value.string;
+        }
+        else if (jitc_token_expect(tokens, TOKEN_ARROW)) {
+            if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) ERROR(NEXT_TOKEN, "Expected identifier");
+            jitc_ast_t* deref = mknode(AST_Unary);
+            deref->unary.operation = Unary_Dereference;
+            deref->unary.inner = move(node);
+            op = mknode(AST_WalkStruct);
+            op->walk_struct.struct_ptr = deref;
+            op->walk_struct.field_name = token->value.string;
+        }
+        else if (jitc_token_expect(tokens, TOKEN_BRACKET_OPEN)) {
+            smartptr(jitc_ast_t) addition = mknode(AST_Binary);
+            addition->binary.operation = Binary_Addition;
+            addition->binary.left = move(node);
+            addition->binary.right = try(jitc_parse_expression(context, tokens, NULL));
+            if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) ERROR(NEXT_TOKEN, "Expected ']'");
+            op = mknode(AST_Unary);
+            op->unary.operation = Unary_Dereference;
+            op->unary.inner = addition;
+        }
+        else if (jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) {
+            smartptr(jitc_ast_t) list = mknode(AST_List);
+            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) while (true) {
+                list_add_ptr(list->list.inner, try(jitc_parse_expression(context, tokens, NULL)));
+                if (jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) break;
+                if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+                ERROR(NEXT_TOKEN, "Expected ')' or ','");
+            }
+            op = mknode(AST_Binary);
+            op->binary.operation = Binary_FunctionCall;
+            op->binary.left = move(node);
+            op->binary.right = move(list);
+        }
+        else break;
+        node = move(op);
+    }
+    while (stack_size(unary_stack) > 0) {
+        jitc_ast_t* op = stack_pop_ptr(unary_stack);
+        op->unary.inner = move(node);
+        node = op;
+    }
+    return move(node);
 }
 
 static struct {
