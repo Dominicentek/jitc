@@ -232,6 +232,7 @@ jitc_type_t* jitc_typecache_enum(jitc_context_t* context, jitc_type_t* base);
 jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name);
+jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name);
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type);

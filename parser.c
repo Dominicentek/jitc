@@ -206,7 +206,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
             if (!jitc_parse_type_declarations(context, inner_tokens, type)) return false;
         } break;
     }
-    if (name) (*type)->name = name;
+    if (name) (*type) = jitc_typecache_named(context, *type, name);
     return true;
 }
 
@@ -529,27 +529,68 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
     if (jitc_peek_type(context, tokens)) {
         if (!(allowed & ParseType_Declaration)) ERROR(NEXT_TOKEN, "Declaration not allowed here");
         token = queue_peek_ptr(tokens);
-        smartptr(jitc_ast_t) node = mknode(AST_Declaration);
-        node->decl.type = try(jitc_parse_type(context, tokens, &node->decl.decltype));
-        if (node->decl.decltype != Decltype_Typedef && !jitc_validate_type(node->decl.type, TypePolicy_NoIncomplete))
-            ERROR(token, "Declaration of incomplete type");
-        if (!jitc_declare_variable(context, node->decl.type, node->decl.decltype)) ERROR(token, "Variable '%s' already defined", node->decl.type->name);
-        return move(node);
+        smartptr(jitc_ast_t) list = mknode(AST_List);
+        jitc_decltype_t decltype;
+        jitc_type_t* base_type = try(jitc_parse_base_type(context, tokens, &decltype));
+        while (true) {
+            jitc_type_t* type = base_type;
+            smartptr(jitc_ast_t) node = mknode(AST_Declaration);
+            if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
+            node->decl.type = type;
+            node->decl.decltype = decltype;
+            if (node->decl.decltype != Decltype_Typedef && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
+                ERROR(token, "Declaration of incomplete type");
+            if (!jitc_declare_variable(context, type, decltype)) ERROR(token, "Symbol '%s' already defined", type->name);
+            list_add_ptr(list->list.inner, move(node));
+
+            if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
+                if (type->kind != Type_Function) ERROR(token, "Cannot attach code to a non-function");
+                smartptr(jitc_ast_t) func = mknode(AST_Function);
+                smartptr(jitc_ast_t) body = mknode(AST_List);
+                func->func.variable = type;
+                while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
+                    list_add_ptr(body->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
+                } 
+                func->func.body = move(body);
+                list_add_ptr(list->list.inner, move(func));
+                break;
+            }
+            if ((token = jitc_token_expect(tokens, TOKEN_EQUALS))) {
+                if (type->kind == Type_Function) ERROR(token, "Assigning to a function");
+                if (!type->name) ERROR(token, "Assigning to unnamed declaration");
+                smartptr(jitc_ast_t) assign = mknode(AST_Binary);
+                smartptr(jitc_ast_t) variable = mknode(AST_Variable);
+                variable->variable.name = type->name;
+                assign->binary.operation = Binary_Assignment;
+                assign->binary.right = try(jitc_parse_expression(context, tokens, NULL));
+                assign->binary.left = move(variable);
+                list_add_ptr(list->list.inner, move(assign));
+            }
+            if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+            if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) break;
+            ERROR(NEXT_TOKEN, "Expected ',' or ';'");
+        }
+        return move(list);
     }
     if (allowed & ParseType_Expression) {
         smartptr(jitc_ast_t) node = try(jitc_parse_expression(context, tokens, NULL));
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) ERROR(NEXT_TOKEN, "Expected ';'");
         return move(node);
     }
-    else ERROR(NEXT_TOKEN, "Expression not allowed here");
-    return NULL;
+    ERROR(NEXT_TOKEN, "Invalid statement");
 }
 
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* tokens) {
     smartptr(jitc_ast_t) ast = mknode(AST_List);
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
         if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
-        list_add_ptr(ast->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Declaration)));
+        jitc_ast_t* node = try(jitc_parse_statement(context, tokens, ParseType_Declaration));
+        if (node->node_type == AST_List) {
+            for (size_t i = 0; i < list_size(node->list.inner); i++)
+                list_add_ptr(ast->list.inner, list_get_ptr(node->list.inner, i));
+            free(node);
+        }
+        else list_add_ptr(ast->list.inner, node);
     }
     return move(ast);
 }

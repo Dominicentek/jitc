@@ -220,6 +220,13 @@ jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name) {
     return jitc_register_type(context, &ref);
 }
 
+jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name) {
+    jitc_type_t type = *base;
+    type.name = name;
+    type.hash = 0;
+    return jitc_register_type(context, &type);
+}
+
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype) {
     return true;
 }

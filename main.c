@@ -55,7 +55,7 @@ void print_type(jitc_type_t* type, int indent) {
 
 void print_ast(jitc_ast_t* ast, int indent) {
     if (!ast) {
-        printf("%*s%s", indent, "", "(null)");
+        printf("%*s%s", indent, "", "(null)\n");
         return;
     }
     printf("%*s%s", indent, "", (const char*[]){

@@ -20,5 +20,4 @@ cleanup_func(structwriter_t, structwriter_delete)
 cleanup_func(bytewriter_t, bytewriter_delete)
 cleanup_func(bytereader_t, bytereader_delete)
 
-cleanup_func(jitc_type_t, free)
 cleanup_func(jitc_ast_t, jitc_destroy_ast)
