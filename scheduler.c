@@ -1,4 +1,4 @@
-#include "scheduler.h"
+#include "jitc_internal.h"
 
 #include <stdbool.h>
 #include <stdlib.h>

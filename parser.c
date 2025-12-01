@@ -1,10 +1,9 @@
 #include "dynamics.h"
 #include "jitc.h"
 #include "jitc_internal.h"
-#include "lexer.h"
-#include "parser.h"
 #include "cleanups.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -517,7 +516,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
     }
     if (jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) {
         if (!(allowed & ParseType_Command)) ERROR(token, "Code block not allowed here");
-        smartptr(jitc_ast_t) node = mknode(AST_List);
+        smartptr(jitc_ast_t) node = mknode(AST_Scope);
         jitc_push_scope(context);
         while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
             if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
@@ -540,17 +539,18 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             node->decl.decltype = decltype;
             if (node->decl.decltype != Decltype_Typedef && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
                 ERROR(token, "Declaration of incomplete type");
-            if (!jitc_declare_variable(context, type, decltype)) ERROR(token, "Symbol '%s' already defined", type->name);
-            list_add_ptr(list->list.inner, move(node));
+            if (!jitc_declare_variable(context, type, decltype, 0)) ERROR(token, "Symbol '%s' already declared as different type", type->name);
+            if (!jitc_get_variable(context, type->name)) list_add_ptr(list->list.inner, move(node));
 
             if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
                 if (type->kind != Type_Function) ERROR(token, "Cannot attach code to a non-function");
+                if (!jitc_set_defined(context, type->name)) ERROR(token, "Symbol already defined");
                 smartptr(jitc_ast_t) func = mknode(AST_Function);
                 smartptr(jitc_ast_t) body = mknode(AST_List);
                 func->func.variable = type;
                 while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
                     list_add_ptr(body->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
-                } 
+                }
                 func->func.body = move(body);
                 list_add_ptr(list->list.inner, move(func));
                 break;
@@ -558,6 +558,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             if ((token = jitc_token_expect(tokens, TOKEN_EQUALS))) {
                 if (type->kind == Type_Function) ERROR(token, "Assigning to a function");
                 if (!type->name) ERROR(token, "Assigning to unnamed declaration");
+                if (!jitc_set_defined(context, type->name)) ERROR(token, "Symbol already defined");
                 smartptr(jitc_ast_t) assign = mknode(AST_Binary);
                 smartptr(jitc_ast_t) variable = mknode(AST_Variable);
                 variable->variable.name = type->name;
@@ -584,13 +585,7 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* tokens) {
     smartptr(jitc_ast_t) ast = mknode(AST_List);
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
         if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
-        jitc_ast_t* node = try(jitc_parse_statement(context, tokens, ParseType_Declaration));
-        if (node->node_type == AST_List) {
-            for (size_t i = 0; i < list_size(node->list.inner); i++)
-                list_add_ptr(ast->list.inner, list_get_ptr(node->list.inner, i));
-            free(node);
-        }
-        else list_add_ptr(ast->list.inner, node);
+        list_add_ptr(ast->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Declaration)));
     }
     return move(ast);
 }

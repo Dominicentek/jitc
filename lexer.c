@@ -1,4 +1,4 @@
-#include "lexer.h"
+#include "jitc_internal.h"
 #include "dynamics.h"
 
 #include <math.h>

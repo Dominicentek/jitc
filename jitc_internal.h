@@ -6,16 +6,18 @@
 
 typedef struct jitc_token_t jitc_token_t;
 
+typedef void*(*job_func_t)(void* ctx);
+
 struct jitc_error_t {
     const char* msg;
     const char* file;
     int row, col;
-} ;
+};
 
 struct jitc_context_t {
     set_t* strings;
-    map_t* symbols;
     map_t* typecache;
+    list_t* scopes;
     jitc_error_t* error;
 };
 
@@ -48,6 +50,7 @@ typedef enum: uint8_t {
     AST_Declaration,
     AST_Function,
     AST_Loop,
+    AST_Scope,
     AST_Break,
     AST_Continue,
     AST_Return,
@@ -62,7 +65,8 @@ typedef enum: uint8_t {
     Decltype_None,
     Decltype_Static,
     Decltype_Extern,
-    Decltype_Typedef
+    Decltype_Typedef,
+    Decltype_EnumItem,
 } jitc_decltype_t;
 
 typedef enum: uint8_t {
@@ -124,10 +128,18 @@ typedef enum {
     TypePolicy_NoFunction = (1 << 2),
     TypePolicy_NoArray = (1 << 3),
     TypePolicy_NoUndefTags = (1 << 4),
-    
+
     TypePolicy_NoDerived = TypePolicy_NoFunction | TypePolicy_NoArray,
     TypePolicy_NoIncomplete = TypePolicy_NoVoid | TypePolicy_NoUnkArrSize | TypePolicy_NoUndefTags,
 } jitc_type_policy_t;
+
+typedef struct {
+    map_t* variables;
+    map_t* structs;
+    map_t* unions;
+    map_t* enums;
+    bool is_function;
+} jitc_scope_t;
 
 typedef struct jitc_type_t jitc_type_t;
 struct jitc_type_t {
@@ -147,10 +159,12 @@ struct jitc_type_t {
         } arr;
         struct {
             jitc_type_t* ret;
-            list_t* params;
+            jitc_type_t** params;
+            size_t num_params;
         } func;
         struct {
-            list_t* fields;
+            jitc_type_t** fields;
+            size_t num_fields;
         } str;
         struct {
             const char* name;
@@ -161,6 +175,7 @@ struct jitc_type_t {
 typedef struct jitc_ast_t jitc_ast_t;
 struct jitc_ast_t {
     jitc_ast_type_t node_type;
+    jitc_token_t* token;
     union {
         struct {
             jitc_unary_op_t operation;
@@ -219,6 +234,138 @@ struct jitc_ast_t {
     };
 };
 
+typedef struct {
+    jitc_type_t* type;
+    jitc_decltype_t decltype;
+    bool defined;
+    uint64_t value;
+} jitc_variable_t;
+
+#define PROCESS_TOKENS(type) TOKENS(type##_KEYWORD, type##_SYMBOL, type##_SPECIAL)
+
+#define ENUM_KEYWORD(x) TOKEN_##x,
+#define ENUM_SPECIAL(x) TOKEN_##x,
+#define ENUM_SYMBOL(x, y) TOKEN_##y,
+#define DECL_KEYWORD(x) #x,
+#define DECL_SPECIAL(x) NULL,
+#define DECL_SYMBOL(x, y) x,
+
+#define TOKENS(KEYWORD, SYMBOL, SPECIAL) \
+    SPECIAL(END_OF_FILE) \
+    KEYWORD(alignas) \
+    KEYWORD(alignof) \
+    KEYWORD(auto) \
+    KEYWORD(bool) \
+    KEYWORD(break) \
+    KEYWORD(case) \
+    KEYWORD(char) \
+    KEYWORD(const) \
+    KEYWORD(continue) \
+    KEYWORD(default) \
+    KEYWORD(do) \
+    KEYWORD(double) \
+    KEYWORD(else) \
+    KEYWORD(enum) \
+    KEYWORD(extern) \
+    KEYWORD(false) \
+    KEYWORD(float) \
+    KEYWORD(for) \
+    KEYWORD(goto) \
+    KEYWORD(if) \
+    KEYWORD(inline) \
+    KEYWORD(int) \
+    KEYWORD(long) \
+    KEYWORD(nullptr) \
+    KEYWORD(register) \
+    KEYWORD(restrict) \
+    KEYWORD(return) \
+    KEYWORD(short) \
+    KEYWORD(sizeof) \
+    KEYWORD(static) \
+    KEYWORD(struct) \
+    KEYWORD(switch) \
+    KEYWORD(true) \
+    KEYWORD(typedef) \
+    KEYWORD(typeof) \
+    KEYWORD(union) \
+    KEYWORD(unsigned) \
+    KEYWORD(void) \
+    KEYWORD(volatile) \
+    KEYWORD(while) \
+    SPECIAL(IDENTIFIER) \
+    SPECIAL(STRING) \
+    SPECIAL(INTEGER) \
+    SPECIAL(FLOAT) \
+    SYMBOL("(", PARENTHESIS_OPEN) \
+    SYMBOL(")", PARENTHESIS_CLOSE) \
+    SYMBOL("[", BRACKET_OPEN) \
+    SYMBOL("]", BRACKET_CLOSE) \
+    SYMBOL("{", BRACE_OPEN) \
+    SYMBOL("}", BRACE_CLOSE) \
+    SYMBOL("->", ARROW) \
+    SYMBOL(",", COMMA) \
+    SYMBOL(":", COLON) \
+    SYMBOL(";", SEMICOLON) \
+    SYMBOL(".", DOT) \
+    SYMBOL("+", PLUS) \
+    SYMBOL("-", MINUS) \
+    SYMBOL("/", SLASH) \
+    SYMBOL("%", PERCENT) \
+    SYMBOL("*", ASTERISK) \
+    SYMBOL("^", HAT) \
+    SYMBOL("&", AMPERSAND) \
+    SYMBOL("|", PIPE) \
+    SYMBOL("?", QUESTION_MARK) \
+    SYMBOL("++", DOUBLE_PLUS) \
+    SYMBOL("--", DOUBLE_MINUS) \
+    SYMBOL("&&", DOUBLE_AMPERSAND) \
+    SYMBOL("||", DOUBLE_PIPE) \
+    SYMBOL("==", DOUBLE_EQUALS) \
+    SYMBOL("!=", NOT_EQUALS) \
+    SYMBOL("<", LESS_THAN) \
+    SYMBOL(">", GREATER_THAN) \
+    SYMBOL("<=", LESS_THAN_EQUALS) \
+    SYMBOL(">=", GREATER_THAN_EQUALS) \
+    SYMBOL("<<", DOUBLE_LESS_THAN) \
+    SYMBOL(">>", DOUBLE_GREATER_THAN) \
+    SYMBOL("=", EQUALS) \
+    SYMBOL("+=", PLUS_EQUALS) \
+    SYMBOL("-=", MINUS_EQUALS) \
+    SYMBOL("*=", ASTERISK_EQUALS) \
+    SYMBOL("/=", SLASH_EQUALS) \
+    SYMBOL("%=", PERCENT_EQUALS) \
+    SYMBOL("&=", AMPERSAND_EQUALS) \
+    SYMBOL("|=", PIPE_EQUALS) \
+    SYMBOL("^=", HAT_EQUALS) \
+    SYMBOL("<<=", DOUBLE_LESS_THAN_EQUALS) \
+    SYMBOL(">>=", DOUBLE_GREATER_THAN_EQUALS) \
+    SYMBOL("~", TILDE) \
+    SYMBOL("!", EXCLAMATION_MARK) \
+    SYMBOL("...", TRIPLE_DOT) \
+
+typedef enum: uint8_t {
+    PROCESS_TOKENS(ENUM)
+} jitc_token_type_t;
+
+static const char* token_table[] = {
+    PROCESS_TOKENS(DECL)
+};
+static int num_token_table_entries = sizeof(token_table) / sizeof(*token_table);
+
+struct jitc_token_t {
+    jitc_token_type_t type;
+    char* filename;
+    int row, col, flags;
+    union {
+        char* string;
+        uint64_t integer;
+        double floating;
+    } value;
+};
+
+jitc_token_t* jitc_token_expect(queue_t* token_queue, jitc_token_type_t kind);
+queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filename);
+
 jitc_type_t* jitc_typecache_primitive(jitc_context_t* context, jitc_type_kind_t kind);
 jitc_type_t* jitc_typecache_unsigned(jitc_context_t* context, jitc_type_t* base);
 jitc_type_t* jitc_typecache_const(jitc_context_t* context, jitc_type_t* base);
@@ -234,9 +381,12 @@ jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name);
 
-bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype);
+bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type);
-bool jitc_declare_enum_item(jitc_context_t* context, jitc_type_t* type, const char* name, uint64_t value);
+bool jitc_set_defined(jitc_context_t* context, const char* name);
+
+jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
+jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
 
 void jitc_push_scope(jitc_context_t* context);
 void jitc_push_function_scope(jitc_context_t* context);
@@ -250,5 +400,13 @@ void jitc_report_error(jitc_error_t* error, FILE* file);
 void jitc_free_error(jitc_error_t* error);
 
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
+
+jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype);
+jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, jitc_type_t** exprtype);
+jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
+
+void jitc_destroy_ast(jitc_ast_t* ast);
+
+void jitc_schedule_job(list_t* jobs, list_t* ctx);
 
 #endif

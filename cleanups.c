@@ -1,5 +1,5 @@
 #include "cleanups.h"
-#include "parser.h"
+#include "jitc_internal.h"
 
 #include <stdlib.h>
 #include <stdio.h>

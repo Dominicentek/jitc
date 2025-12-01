@@ -1,8 +1,7 @@
 #include "dynamics.h"
 #include "jitc.h"
 #include "jitc_internal.h"
-#include "lexer.h"
-#include "parser.h"
+#include "cleanups.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,15 +36,15 @@ void print_type(jitc_type_t* type, int indent) {
             printf("%*sthat returns\n", indent + 2, "");
             print_type(type->func.ret, indent + 4);
             printf("%*sand has params\n", indent + 2, "");
-            for (size_t i = 0; i < list_size(type->func.params); i++) {
-                print_type(list_get_ptr(type->func.params, i), indent + 4);
+            for (size_t i = 0; i < type->func.num_params; i++) {
+                print_type(type->func.params[i], indent + 4);
             }
             return;
         case Type_Struct:
         case Type_Union:
             printf(type->kind == Type_Struct ? "struct\n" : "union\n");
-            for (size_t i = 0; i < list_size(type->str.fields); i++) {
-                print_type(list_get(type->str.fields, i), indent + 2);
+            for (size_t i = 0; i < type->str.num_fields; i++) {
+                print_type(type->str.fields[i], indent + 2);
             }
             return;
         case Type_Varargs: printf("varargs\n"); break;
@@ -67,6 +66,7 @@ void print_ast(jitc_ast_t* ast, int indent) {
         "decl",
         "func",
         "loop",
+        "scope",
         "break",
         "continue",
         "return",
@@ -141,6 +141,7 @@ void print_ast(jitc_ast_t* ast, int indent) {
             print_ast(ast->ternary.otherwise, indent + 2);
             break;
         case AST_List:
+        case AST_Scope:
             printf("\n");
             for (size_t i = 0; i < list_size(ast->list.inner); i++) {
                 print_ast(list_get_ptr(ast->list.inner, i), indent + 2);
@@ -205,12 +206,26 @@ int main() {
 
     jitc_context_t* context = jitc_create_context();
     queue_t* tokens = jitc_lex(context, data, "test/test.c");
+    queue_t* tokens1 = queue_new();
+    queue_t* tokens2 = queue_new();
+    while (queue_size(tokens) > 0) {
+        jitc_token_t* token = queue_pop_ptr(tokens);
+        queue_push_ptr(tokens1, token);
+        queue_push_ptr(tokens2, token);
+    }
+    queue_delete(tokens);
     if (!tokens) jitc_report_error(context->error, stderr);
     else {
-        jitc_ast_t* ast = jitc_parse_ast(context, tokens);
+        jitc_push_scope(context);
+        smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens1);
         if (!ast) jitc_report_error(context->error, stderr);
         else print_ast(ast, 0);
     }
+    while (queue_size(tokens2) > 0) free(queue_pop_ptr(tokens2));
+    free(context->error);
+    queue_delete(tokens1);
+    queue_delete(tokens2);
+    jitc_destroy_context(context);
 
     free(data);
 }

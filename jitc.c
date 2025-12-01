@@ -1,11 +1,14 @@
+#include "jitc.h"
 #include "dynamics.h"
 #include "jitc_internal.h"
-#include "lexer.h"
+#include "cleanups.h"
+#include "compares.h"
 
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+
 
 #define FORMAT(fmt) ({ \
     va_list args1, args2; \
@@ -56,13 +59,13 @@ static uint64_t hash_type(jitc_type_t* type) {
             break;
         case Type_Function:
             hash = hash_mix(hash, hash_ptr(type->func.ret));
-            for (size_t i = 0; i < list_size(type->func.params); i++)
-                hash = hash_mix(hash, hash_ptr(list_get_ptr(type->func.params, i)));
+            for (size_t i = 0; i < type->func.num_params; i++)
+                hash = hash_mix(hash, hash_ptr(type->func.params[i]));
             break;
         case Type_Struct:
         case Type_Union:
-            for (size_t i = 0; i < list_size(type->str.fields); i++)
-                hash = hash_mix(hash, hash_ptr(list_get_ptr(type->str.fields, i)));
+            for (size_t i = 0; i < type->str.num_fields; i++)
+                hash = hash_mix(hash, hash_ptr(type->str.fields[i]));
             break;
         case Type_StructRef:
         case Type_UnionRef:
@@ -74,7 +77,7 @@ static uint64_t hash_type(jitc_type_t* type) {
     return type->hash = hash;
 }
 
-jitc_type_t* jitc_register_type(jitc_context_t* context, jitc_type_t* type) {
+static jitc_type_t* jitc_register_type(jitc_context_t* context, jitc_type_t* type) {
     uint64_t hash = hash_type(type);
     jitc_type_t** t = map_get_int(context->typecache, hash);
     if (!*t) {
@@ -83,10 +86,23 @@ jitc_type_t* jitc_register_type(jitc_context_t* context, jitc_type_t* type) {
         *t = copy;
     }
     else {
-        if (type->kind == Type_Struct || type->kind == Type_Union) list_delete(type->str.fields);
-        if (type->kind == Type_Function) list_delete(type->func.params);
+        if (type->kind == Type_Struct || type->kind == Type_Union) free(type->str.fields);
+        if (type->kind == Type_Function) free(type->func.params);
     }
     return *t;
+}
+
+static jitc_type_t jitc_copy_type(jitc_type_t* type) {
+    jitc_type_t copy = *type;
+    if (copy.kind == Type_Struct || copy.kind == Type_Union) {
+        copy.str.fields = malloc(sizeof(jitc_type_t*) * copy.str.num_fields);
+        memcpy(copy.str.fields, type->str.fields, sizeof(jitc_type_t*) * copy.str.num_fields);
+    }
+    if (copy.kind == Type_Function) {
+        copy.func.params = malloc(sizeof(jitc_type_t*) * copy.func.num_params);
+        memcpy(copy.func.params, type->func.params, sizeof(jitc_type_t*) * copy.func.num_params);
+    }
+    return copy;
 }
 
 jitc_type_t* jitc_typecache_primitive(jitc_context_t* context, jitc_type_kind_t kind) {
@@ -102,21 +118,21 @@ jitc_type_t* jitc_typecache_primitive(jitc_context_t* context, jitc_type_kind_t 
 }
 
 jitc_type_t* jitc_typecache_unsigned(jitc_context_t* context, jitc_type_t* base) {
-    jitc_type_t type = *base;
+    jitc_type_t type = jitc_copy_type(base);
     type.is_unsigned = true;
     type.hash = 0;
     return jitc_register_type(context, &type);
 }
 
 jitc_type_t* jitc_typecache_const(jitc_context_t* context, jitc_type_t* base) {
-    jitc_type_t type = *base;
+    jitc_type_t type = jitc_copy_type(base);
     type.is_const = true;
     type.hash = 0;
     return jitc_register_type(context, &type);
 }
 
 jitc_type_t* jitc_typecache_align(jitc_context_t* context, jitc_type_t* base, uint64_t new_align) {
-    jitc_type_t type = *base;
+    jitc_type_t type = jitc_copy_type(base);
     type.alignment = new_align;
     type.hash = 0;
     return jitc_register_type(context, &type);
@@ -142,21 +158,21 @@ jitc_type_t* jitc_typecache_array(jitc_context_t* context, jitc_type_t* base, si
 
 jitc_type_t* jitc_typecache_function(jitc_context_t* context, jitc_type_t* ret, list_t* params) {
     jitc_type_t func = {};
-    list_t* copy = list_new();
-    for (size_t i = 0; i < list_size(params); i++) list_add_ptr(copy, list_get_ptr(params, i));
     func.kind = Type_Function;
-    func.func.params = copy;
+    func.func.num_params = list_size(params);
+    func.func.params = malloc(sizeof(jitc_type_t*) * list_size(params));
     func.func.ret = ret;
     func.size = func.alignment = 8;
+    for (size_t i = 0; i < list_size(params); i++) func.func.params[i] = list_get_ptr(params, i);
     return jitc_register_type(context, &func);
 }
 
 jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields) {
     jitc_type_t str = {};
-    list_t* copy = list_new();
-    for (size_t i = 0; i < list_size(fields); i++) list_add_ptr(copy, list_get_ptr(fields, i));
     str.kind = Type_Struct;
-    str.str.fields = copy;
+    str.str.num_fields = list_size(fields);
+    str.str.fields = malloc(sizeof(jitc_type_t*) * list_size(fields));
+    for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get_ptr(fields, i);
     size_t max_alignment = 1;
     size_t ptr = 0;
     for (int i = 0; i < list_size(fields); i++) {
@@ -174,10 +190,10 @@ jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields) {
 
 jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* fields) {
     jitc_type_t str = {};
-    list_t* copy = list_new();
-    for (size_t i = 0; i < list_size(fields); i++) list_add_ptr(copy, list_get_ptr(fields, i));
     str.kind = Type_Union;
-    str.str.fields = copy;
+    str.str.num_fields = list_size(fields);
+    str.str.fields = malloc(sizeof(jitc_type_t*) * list_size(fields));
+    for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get_ptr(fields, i);
     size_t max_alignment = 1;
     size_t max_size = 0;
     for (int i = 0; i < list_size(fields); i++) {
@@ -221,34 +237,104 @@ jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name) {
 }
 
 jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name) {
-    jitc_type_t type = *base;
+    jitc_type_t type = jitc_copy_type(base);
     type.name = name;
     type.hash = 0;
     return jitc_register_type(context, &type);
 }
 
-bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype) {
+bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value) {
+    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
+    autofree jitc_variable_t* var = malloc(sizeof(jitc_variable_t));
+    var->type = type;
+    var->decltype = decltype;
+    var->value = value;
+    if ((map_find_ptr(scope->variables, (void*)type->name))) {
+        if (((jitc_variable_t*)map_as_ptr(scope->variables))->type == type) return true;
+        return false;
+    }
+    map_get_ptr(scope->variables, (void*)type->name);
+    map_store_ptr(scope->variables, move(var));
     return true;
 }
 
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type) {
+    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
+    map_t* map = NULL;
+    if (type->kind == Type_Struct) map = scope->structs;
+    if (type->kind == Type_Union) map = scope->unions;
+    if (type->kind == Type_Enum) map = scope->enums;
+    if (!map) return false;
+    if (map_find_ptr(map, (void*)type->name)) return false;
+    map_get_ptr(map, (void*)type->name);
+    map_store_ptr(map, type);
     return true;
 }
 
-bool jitc_declare_enum_item(jitc_context_t* context, jitc_type_t* type, const char* name, uint64_t value) {
-    return true;
+bool jitc_set_defined(jitc_context_t* context, const char* name) {
+    jitc_variable_t* variable = jitc_get_variable(context, name);
+    if (!variable) return false;
+    bool defined = variable->defined;
+    variable->defined = true;
+    return !defined;
+}
+
+jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
+    bool outside_of_function = false;
+    for (size_t i = list_size(context->scopes) - 1; i >= 0; i--) {
+        if (i != 0 && outside_of_function) continue;
+        jitc_scope_t* scope = list_get_ptr(context->scopes, i);
+        if (!map_find_ptr(scope->variables, (void*)name)) continue;
+        return map_as_ptr(scope->variables);
+    }
+    return NULL;
+}
+
+jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name) {
+    bool outside_of_function = false;
+    for (size_t i = list_size(context->scopes) - 1; i >= 0; i--) {
+        if (i != 0 && outside_of_function) continue;
+        jitc_scope_t* scope = list_get_ptr(context->scopes, i);
+        map_t* map = NULL;
+        if (scope->is_function) outside_of_function = true;
+        if (kind == Type_StructRef || kind == Type_Struct) map = scope->structs;
+        if (kind == Type_UnionRef || kind == Type_Union) map = scope->unions;
+        if (kind == Type_EnumRef || kind == Type_Enum) map = scope->enums;
+        if (!map) return NULL;
+        if (!map_find_ptr(map, (void*)name)) continue;
+        return map_as_ptr(map);
+    }
+    return NULL;
 }
 
 void jitc_push_function_scope(jitc_context_t* context) {
-
+    jitc_push_scope(context);
+    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
+    scope->is_function = true;
 }
 
 void jitc_push_scope(jitc_context_t* context) {
-
+    jitc_scope_t* scope = malloc(sizeof(jitc_scope_t));
+    scope->is_function = false;
+    scope->variables = map_new(compare_string);
+    scope->structs = map_new(compare_string);
+    scope->unions = map_new(compare_string);
+    scope->enums = map_new(compare_string);
+    list_add_ptr(context->scopes, scope);
 }
 
 void jitc_pop_scope(jitc_context_t* context) {
-
+    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
+    list_remove(context->scopes, list_size(context->scopes) - 1);
+    for (size_t i = 0; i < map_size(scope->variables); i++) {
+        map_index(scope->variables, i);
+        free(map_as_ptr(scope->variables));
+    }
+    map_delete(scope->variables);
+    map_delete(scope->structs);
+    map_delete(scope->unions);
+    map_delete(scope->enums);
+    free(scope);
 }
 
 jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const char* str, ...) {
@@ -290,19 +376,29 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
     return true;
 }
 
-static int compare_string(const void* a, const void* b) {
-    return strcmp(*(char**)a, *(char**)b);
-}
-
-static int compare_int64(const void* a, const void* b) {
-    return *(uint64_t**)b - *(uint64_t**)a;
-}
-
 jitc_context_t* jitc_create_context() {
     jitc_context_t* context = malloc(sizeof(jitc_context_t));
     context->strings = set_new(compare_string);
-    context->symbols = map_new(compare_string);
     context->typecache = map_new(compare_int64);
+    context->scopes = list_new();
     context->error = NULL;
     return context;
+}
+
+void jitc_destroy_context(jitc_context_t* context) {
+    for (size_t i = 0; i < set_size(context->strings); i++) {
+        free(set_get_ptr(context->strings, i));
+    }
+    set_delete(context->strings);
+    for (size_t i = 0; i < map_size(context->typecache); i++) {
+        map_index(context->typecache, i);
+        jitc_type_t* type = map_as_ptr(context->typecache);
+        if (type->kind == Type_Function) free(type->func.params);
+        if (type->kind == Type_Struct || type->kind == Type_Union) free(type->str.fields);
+        free(type);
+    }
+    map_delete(context->typecache);
+    while (list_size(context->scopes) > 0) jitc_pop_scope(context);
+    list_delete(context->scopes);
+    free(context);
 }

@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "compares.h"
+
 typedef struct {
     void* key;
     void* value;
@@ -310,6 +312,7 @@ void set_add_float(set_t* set, double item) {
 }
 
 void set_add_ptr(set_t* set, void* item) {
+    if (set_find_ptr(set, item)) return;
     if (set->length == set->capacity) {
         set->capacity *= 2;
         set->list = realloc(set->list, sizeof(void*) * set->capacity);
