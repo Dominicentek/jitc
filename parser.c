@@ -52,6 +52,9 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
     jitc_specifiers_t specs = 0;
     jitc_token_t* token = NULL;
     jitc_token_t* unsigned_token = NULL, *first_token = NULL;
+    jitc_type_t* type = NULL;
+    const char* varname = NULL;
+    size_t align = -1;
     while (true) {
         jitc_decltype_t decl = Decltype_None;
         jitc_specifiers_t new_specs = 0;
@@ -73,6 +76,21 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
             jitc_token_expect(tokens, TOKEN_restrict) ||
             jitc_token_expect(tokens, TOKEN_inline)
         ) (void)0; // no-op, maybe implement later?
+        else if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
+            jitc_variable_t* variable = jitc_get_variable(context, token->value.string);
+            if (specs != 0 || !variable || variable->decltype != Decltype_Typedef) {
+                varname = token->value.string;
+                break;
+            }
+            type = jitc_typecache_named(context, variable->type, NULL);
+        }
+        else if ((token = jitc_token_expect(tokens, TOKEN_alignas))) {
+            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
+            smartptr(jitc_ast_t) ast = try(jitc_parse_expression(context, tokens, NULL));
+            if (ast->node_type != AST_Integer) ERROR(token, "Expected integer constant");
+            align = ast->integer.value;
+            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
+        }
         else {
             if (!first_token) ERROR(NEXT_TOKEN, "Expected type");
             break;
@@ -87,23 +105,27 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
         if (token->type == TOKEN_unsigned && !unsigned_token) unsigned_token = token;
         if (!first_token) first_token = token;
     }
-    int i = 0;
-    jitc_type_kind_t kind;
-    if (specs == 0 && is_unsigned) specs |= Spec_Int;
-    for (; i < sizeof(types) / sizeof(*types); i++) {
-        if (types[i].specifiers == specs) {
-            kind = types[i].type;
-            break;
+    if (!type) {
+        int i = 0;
+        jitc_type_kind_t kind;
+        if (specs == 0 && is_unsigned) specs |= Spec_Int;
+        for (; i < sizeof(types) / sizeof(*types); i++) {
+            if (types[i].specifiers == specs) {
+                kind = types[i].type;
+                break;
+            }
         }
+        if (i == sizeof(types) / sizeof(*types)) ERROR(first_token, "Invalid specifier combination");
+        if (is_unsigned && !(
+            kind == Type_Int8  || kind == Type_Int16 ||
+            kind == Type_Int32 || kind == Type_Int64
+        )) ERROR(unsigned_token, "Unsigned non-integer type");
+        type = jitc_typecache_primitive(context, kind);
     }
-    if (i == sizeof(types) / sizeof(*types)) ERROR(first_token, "Invalid specifier combination");
-    if (is_unsigned && !(
-        kind == Type_Int8  || kind == Type_Int16 ||
-        kind == Type_Int32 || kind == Type_Int64
-    )) ERROR(unsigned_token, "Unsigned non-integer type");
-    jitc_type_t* type = jitc_typecache_primitive(context, kind);
     if (is_const) type = jitc_typecache_const(context, type);
     if (is_unsigned) type = jitc_typecache_unsigned(context, type);
+    if (align != -1) type = jitc_typecache_align(context, type, align);
+    if (varname) type = jitc_typecache_named(context, type, varname);
     return type;
 }
 
@@ -235,10 +257,13 @@ bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
         case TOKEN_register:
         case TOKEN_restrict:
         case TOKEN_inline:
+        case TOKEN_alignas:
             return true;
-        case TOKEN_IDENTIFIER:
-            // todo: check typedefs
-            return false;
+        case TOKEN_IDENTIFIER: {
+            jitc_variable_t* var = jitc_get_variable(context, token->value.string);
+            if (var == NULL) return false;
+            return var->decltype == Decltype_Typedef;
+        }
         default: return false;
     }
 }
@@ -529,7 +554,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         if (!(allowed & ParseType_Declaration)) ERROR(NEXT_TOKEN, "Declaration not allowed here");
         token = queue_peek_ptr(tokens);
         smartptr(jitc_ast_t) list = mknode(AST_List);
-        jitc_decltype_t decltype;
+        jitc_decltype_t decltype = Decltype_None;
         jitc_type_t* base_type = try(jitc_parse_base_type(context, tokens, &decltype));
         while (true) {
             jitc_type_t* type = base_type;
@@ -539,8 +564,9 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             node->decl.decltype = decltype;
             if (node->decl.decltype != Decltype_Typedef && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
                 ERROR(token, "Declaration of incomplete type");
+            if (decltype != Decltype_Typedef && !jitc_get_variable(context, type->name))
+                list_add_ptr(list->list.inner, move(node));
             if (!jitc_declare_variable(context, type, decltype, 0)) ERROR(token, "Symbol '%s' already declared as different type", type->name);
-            if (!jitc_get_variable(context, type->name)) list_add_ptr(list->list.inner, move(node));
 
             if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
                 if (type->kind != Type_Function) ERROR(token, "Cannot attach code to a non-function");

@@ -244,6 +244,7 @@ jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, co
 }
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value) {
+    if (!type->name) return true;
     jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
     autofree jitc_variable_t* var = malloc(sizeof(jitc_variable_t));
     var->type = type;
@@ -261,6 +262,7 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
 }
 
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type) {
+    if (!type->name) return true;
     jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
     map_t* map = NULL;
     if (type->kind == Type_Struct) map = scope->structs;
@@ -274,6 +276,7 @@ bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type) {
 }
 
 bool jitc_set_defined(jitc_context_t* context, const char* name) {
+    if (!name) return true;
     jitc_variable_t* variable = jitc_get_variable(context, name);
     if (!variable) return false;
     bool defined = variable->defined;
@@ -282,8 +285,9 @@ bool jitc_set_defined(jitc_context_t* context, const char* name) {
 }
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
+    if (!name) return NULL;
     bool outside_of_function = false;
-    for (size_t i = list_size(context->scopes) - 1; i >= 0; i--) {
+    for (size_t i = list_size(context->scopes) - 1; i < list_size(context->scopes) /* rely on underflow */; i--) {
         if (i != 0 && outside_of_function) continue;
         jitc_scope_t* scope = list_get_ptr(context->scopes, i);
         if (!map_find_ptr(scope->variables, (void*)name)) continue;
@@ -293,8 +297,9 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
 }
 
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name) {
+    if (!name) return NULL;
     bool outside_of_function = false;
-    for (size_t i = list_size(context->scopes) - 1; i >= 0; i--) {
+    for (size_t i = list_size(context->scopes) - 1; i < list_size(context->scopes) /* rely on underflow */; i--) {
         if (i != 0 && outside_of_function) continue;
         jitc_scope_t* scope = list_get_ptr(context->scopes, i);
         map_t* map = NULL;
