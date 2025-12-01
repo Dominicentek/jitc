@@ -7,4 +7,4 @@ int main() {
     printf("%d\n", fib(5));
 }
 
-int main();
+typedef int main();

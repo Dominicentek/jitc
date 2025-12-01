@@ -250,7 +250,9 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     var->decltype = decltype;
     var->value = value;
     if ((map_find_ptr(scope->variables, (void*)type->name))) {
-        if (((jitc_variable_t*)map_as_ptr(scope->variables))->type == type) return true;
+        jitc_variable_t* var = map_as_ptr(scope->variables);
+        if (decltype != var->decltype) return false;
+        if (var->type == type) return true;
         return false;
     }
     map_get_ptr(scope->variables, (void*)type->name);
