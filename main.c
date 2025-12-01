@@ -173,7 +173,7 @@ void print_ast(jitc_ast_t* ast, int indent) {
             print_type(ast->decl.type, indent + 2);
             break;
         case AST_Function:
-            printf("\n");
+            printf(": %s\n", ast->func.variable->name);
             print_type(ast->func.variable, indent + 2);
             print_ast(ast->func.body, indent + 2);
             break;

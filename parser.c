@@ -43,7 +43,7 @@ static struct {
 static jitc_ast_t* mknode(jitc_ast_type_t type) {
     jitc_ast_t* ast = calloc(sizeof(jitc_ast_t), 1);
     ast->node_type = type;
-    if (type == AST_List) ast->list.inner = list_new();
+    if (type == AST_List || type == AST_Scope) ast->list.inner = list_new();
     return ast;
 }
 
@@ -53,7 +53,6 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
     jitc_token_t* token = NULL;
     jitc_token_t* unsigned_token = NULL, *first_token = NULL;
     jitc_type_t* type = NULL;
-    const char* varname = NULL;
     size_t align = -1;
     while (true) {
         jitc_decltype_t decl = Decltype_None;
@@ -76,13 +75,11 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
             jitc_token_expect(tokens, TOKEN_restrict) ||
             jitc_token_expect(tokens, TOKEN_inline)
         ) (void)0; // no-op, maybe implement later?
-        else if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
+        else if (((token = (jitc_token_t*)queue_peek_ptr(tokens))->type = TOKEN_IDENTIFIER)) {
             jitc_variable_t* variable = jitc_get_variable(context, token->value.string);
-            if (specs != 0 || !variable || variable->decltype != Decltype_Typedef) {
-                varname = token->value.string;
-                break;
-            }
+            if (specs != 0 || !variable || variable->decltype != Decltype_Typedef) break;
             type = jitc_typecache_named(context, variable->type, NULL);
+            queue_pop(tokens);
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_alignas))) {
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
@@ -125,7 +122,6 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
     if (is_const) type = jitc_typecache_const(context, type);
     if (is_unsigned) type = jitc_typecache_unsigned(context, type);
     if (align != -1) type = jitc_typecache_align(context, type, align);
-    if (varname) type = jitc_typecache_named(context, type, varname);
     return type;
 }
 
@@ -266,6 +262,43 @@ bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
         }
         default: return false;
     }
+}
+
+jitc_ast_t* jitc_precompute(jitc_context_t* context, jitc_ast_t* ast, jitc_type_t** exprtype) {
+    return ast;
+}
+
+jitc_ast_t* jitc_flatten_ast(jitc_ast_t* ast, list_t* list) {
+    if (ast->node_type != AST_List && ast->node_type != AST_Scope) return ast;
+    if (list && list_size(ast->list.inner) == 0) {
+        free(ast);
+        return NULL;
+    }
+    if (list_size(ast->list.inner) == 1) {
+        jitc_ast_t* inner = list_get_ptr(ast->list.inner, 0);
+        if (inner->node_type == AST_Scope) {
+            jitc_ast_t* flattened = jitc_flatten_ast(inner, NULL);
+            flattened->node_type = ast->node_type;
+            free(ast);
+            return flattened;
+        }
+    }
+    if (ast->node_type == AST_List && list) {
+        for (size_t i = 0; i < list_size(ast->list.inner); i++) {
+            jitc_ast_t* child = jitc_flatten_ast(list_get_ptr(ast->list.inner, i), list);
+            if (child) list_add_ptr(list, child);
+        }
+        free(ast);
+        return NULL;
+    }
+    list_t* new_list = list_new();
+    for (size_t i = 0; i < list_size(ast->list.inner); i++) {
+        jitc_ast_t* child = jitc_flatten_ast(list_get_ptr(ast->list.inner, i), new_list);
+        if (child) list_add_ptr(new_list, child);
+    }
+    list_delete(ast->list.inner);
+    ast->list.inner = new_list;
+    return ast;
 }
 
 jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* tokens) {
@@ -456,10 +489,6 @@ jitc_ast_t* jitc_shunting_yard(jitc_context_t* context, list_t* expr) {
     return stack_pop_ptr(node_stack);
 }
 
-jitc_ast_t* jitc_precompute(jitc_context_t* context, jitc_ast_t* ast, jitc_type_t** exprtype) {
-    return ast;
-}
-
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, jitc_type_t** exprtype) {
     smartptr(list_t) expr = list_new();
     while (true) {
@@ -548,7 +577,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             list_add_ptr(node->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
         }
         jitc_pop_scope(context);
-        return move(node);
+        return jitc_flatten_ast(move(node), NULL);
     }
     if (jitc_peek_type(context, tokens)) {
         if (!(allowed & ParseType_Declaration)) ERROR(NEXT_TOKEN, "Declaration not allowed here");
@@ -577,7 +606,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
                     list_add_ptr(body->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
                 }
-                func->func.body = move(body);
+                func->func.body = jitc_flatten_ast(move(body), NULL);
                 list_add_ptr(list->list.inner, move(func));
                 break;
             }
@@ -608,12 +637,12 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
 }
 
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* tokens) {
-    smartptr(jitc_ast_t) ast = mknode(AST_List);
+    jitc_ast_t* ast = mknode(AST_List);
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
         if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
         list_add_ptr(ast->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Declaration)));
     }
-    return move(ast);
+    return jitc_flatten_ast(move(ast), NULL);
 }
 
 void jitc_destroy_ast(jitc_ast_t* ast) {

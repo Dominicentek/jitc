@@ -1,3 +1,16 @@
-typedef int hi;
-hi hello;
-typedef int hi;
+int main() {
+    {
+        {
+            int foo;
+            {
+                {
+                    int bar;
+                    {
+                        {
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
