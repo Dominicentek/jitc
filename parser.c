@@ -47,6 +47,37 @@ static jitc_ast_t* mknode(jitc_ast_type_t type, jitc_token_t* token) {
     return ast;
 }
 
+bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
+    jitc_token_t* token = queue_peek_ptr(tokens);
+    switch (token->type) {
+        case TOKEN_extern:
+        case TOKEN_static:
+        case TOKEN_typedef:
+        case TOKEN_const:
+        case TOKEN_unsigned:
+        case TOKEN_char:
+        case TOKEN_short:
+        case TOKEN_int:
+        case TOKEN_float:
+        case TOKEN_double:
+        case TOKEN_void:
+        case TOKEN_long:
+        case TOKEN_volatile:
+        case TOKEN_register:
+        case TOKEN_restrict:
+        case TOKEN_inline:
+        case TOKEN_alignas:
+        case TOKEN_typeof:
+            return true;
+        case TOKEN_IDENTIFIER: {
+            jitc_variable_t* var = jitc_get_variable(context, token->value.string);
+            if (var == NULL) return false;
+            return var->decltype == Decltype_Typedef;
+        }
+        default: return false;
+    }
+}
+
 jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype) {
     bool is_const = false, is_unsigned = false;
     jitc_specifiers_t specs = 0;
@@ -75,11 +106,21 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
             jitc_token_expect(tokens, TOKEN_restrict) ||
             jitc_token_expect(tokens, TOKEN_inline)
         ) (void)0; // no-op, maybe implement later?
+        else if ((token = jitc_token_expect(tokens, TOKEN_bool))) {
+            new_specs |= Spec_Char;
+            is_unsigned = true;
+        }
         else if ((token = (jitc_token_t*)queue_peek_ptr(tokens))->type == TOKEN_IDENTIFIER) {
             jitc_variable_t* variable = jitc_get_variable(context, token->value.string);
             if (specs != 0 || !variable || variable->decltype != Decltype_Typedef) break;
             type = jitc_typecache_named(context, variable->type, NULL);
             queue_pop(tokens);
+        }
+        else if ((token = jitc_token_expect(tokens, TOKEN_typeof))) {
+            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
+            if (jitc_peek_type(context, tokens)) type = try(jitc_parse_type(context, tokens, NULL));
+            else jitc_destroy_ast(try(jitc_parse_expression(context, tokens, &type)));
+            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_alignas))) {
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
@@ -232,36 +273,6 @@ jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decl
     if (!(type = jitc_parse_base_type(context, tokens, decltype))) return NULL;
     if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
     return type;
-}
-
-bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
-    jitc_token_t* token = queue_peek_ptr(tokens);
-    switch (token->type) {
-        case TOKEN_extern:
-        case TOKEN_static:
-        case TOKEN_typedef:
-        case TOKEN_const:
-        case TOKEN_unsigned:
-        case TOKEN_char:
-        case TOKEN_short:
-        case TOKEN_int:
-        case TOKEN_float:
-        case TOKEN_double:
-        case TOKEN_void:
-        case TOKEN_long:
-        case TOKEN_volatile:
-        case TOKEN_register:
-        case TOKEN_restrict:
-        case TOKEN_inline:
-        case TOKEN_alignas:
-            return true;
-        case TOKEN_IDENTIFIER: {
-            jitc_variable_t* var = jitc_get_variable(context, token->value.string);
-            if (var == NULL) return false;
-            return var->decltype == Decltype_Typedef;
-        }
-        default: return false;
-    }
 }
 
 static bool is_integer(jitc_type_t* type) {
@@ -693,6 +704,35 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
     else if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
         node = mknode(AST_Variable, token);
         node->variable.name = token->value.string;
+    }
+    else if ((token = jitc_token_expect(tokens, TOKEN_true))) {
+        node = mknode(AST_Integer, token);
+        node->integer.is_unsigned = true;
+        node->integer.type_kind = Type_Int8;
+        node->integer.value = true;
+    }
+    else if ((token = jitc_token_expect(tokens, TOKEN_false))) {
+        node = mknode(AST_Integer, token);
+        node->integer.is_unsigned = true;
+        node->integer.type_kind = Type_Int8;
+        node->integer.value = false;
+    }
+    else if ((token = jitc_token_expect(tokens, TOKEN_nullptr))) {
+        node = mknode(AST_Integer, token);
+        node->integer.is_unsigned = true;
+        node->integer.type_kind = Type_Int64;
+        node->integer.value = 0;
+    }
+    else if ((token = jitc_token_expect(tokens, TOKEN_sizeof)) || (token = jitc_token_expect(tokens, TOKEN_alignof))) {
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
+        jitc_type_t* type = NULL;
+        if (jitc_peek_type(context, tokens)) type = try(jitc_parse_type(context, tokens, NULL));
+        else jitc_destroy_ast(try(jitc_parse_expression(context, tokens, &type)));
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
+        node = mknode(AST_Integer, token);
+        node->integer.is_unsigned = true;
+        node->integer.type_kind = Type_Int64;
+        node->integer.value = token->type == TOKEN_sizeof ? type->size : type->alignment;
     }
     else ERROR(NEXT_TOKEN, "Expected expression");
     while (true) {

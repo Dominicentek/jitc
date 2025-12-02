@@ -1,1 +1,1 @@
-int test = 256;
+typeof(void(*)())* testing = (void*)(sizeof(testing) + true);
