@@ -303,6 +303,10 @@ static bool is_function(jitc_type_t* type) {
     return type->kind == Type_Function || (type->kind == Type_Pointer && type->ptr.base->kind == Type_Function);
 }
 
+static bool is_decayed_pointer(jitc_type_t* type) {
+    return type->kind == Type_Function || type->kind == Type_Array;
+}
+
 static jitc_type_t* as_function(jitc_type_t* type) {
     if (type->kind == Type_Function) return type;
     if (type->kind == Type_Pointer && type->ptr.base->kind == Type_Function) return type->ptr.base;
@@ -469,11 +473,10 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     node = inner;
                 }
                 break;
-            case Unary_LogicNegate:
             case Unary_BinaryNegate:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
                 if (!is_integer(node->exprtype)) ERROR(node->token, "Operand must be an integer type");
-                if (node->unary.inner->node_type == AST_Integer) {
+                if (is_constant(node->unary.inner)) {
                     jitc_ast_t* inner = node->unary.inner;
                     inner->integer.value = node->unary.operation == Unary_LogicNegate
                         ? !inner->integer.value
@@ -481,6 +484,23 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     free(node);
                     node = inner;
                 }
+                break;
+            case Unary_LogicNegate:
+                node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
+                if (is_struct(node->exprtype)) ERROR(node->token, "Negating a non-scalar type");
+                if (is_constant(node->unary.inner)) {
+                    jitc_ast_t* inner = node->unary.inner;
+                    node->node_type = AST_Integer;
+                    node->integer.value = !(is_decayed_pointer(node->exprtype) ? 1 : node->unary.inner->node_type == AST_Floating
+                        ? inner->floating.value
+                        : inner->integer.value
+                    );
+                    node->integer.type_kind = Type_Int8;
+                    node->integer.is_unsigned = true;
+                    jitc_destroy_ast(inner);
+                }
+                node->exprtype = jitc_typecache_primitive(context, Type_Int8);
+                node->exprtype = jitc_typecache_unsigned(context, node->exprtype);
                 break;
         } break;
         case AST_Binary: switch (node->binary.operation) {
@@ -517,16 +537,18 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->binary.left = try(jitc_cast(context, node->binary.left, node->exprtype, false, node->token)); \
                 node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false, node->token)); \
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
+                    smartptr(jitc_ast_t) left = node->binary.left; \
+                    smartptr(jitc_ast_t) right = node->binary.right; \
                     if (is_floating(node->exprtype)) { \
                         node->node_type = AST_Floating; \
                         node->floating.is_single_precision = node->exprtype->kind == Type_Float32; \
-                        node->floating.value = node->binary.left->floating.value op node->binary.right->floating.value; \
+                        node->floating.value = left->floating.value op right->floating.value; \
                     } \
                     else { \
                         node->node_type = AST_Integer; \
                         node->integer.type_kind = node->exprtype->kind; \
                         node->integer.is_unsigned = node->exprtype->is_unsigned; \
-                        node->integer.value = node->binary.left->integer.value op node->binary.right->integer.value; \
+                        node->integer.value = left->integer.value op right->integer.value; \
                     } \
                 } \
                 break
@@ -538,10 +560,12 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->binary.left = try(jitc_cast(context, node->binary.left, node->exprtype, false, node->token)); \
                 node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false, node->token)); \
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
+                    smartptr(jitc_ast_t) left = node->binary.left; \
+                    smartptr(jitc_ast_t) right = node->binary.right; \
                     node->node_type = AST_Integer; \
                     node->integer.type_kind = node->exprtype->kind; \
                     node->integer.is_unsigned = node->exprtype->is_unsigned; \
-                    node->integer.value = node->binary.left->integer.value op node->binary.right->integer.value; \
+                    node->integer.value = left->integer.value op right->integer.value; \
                 } \
                 break
             #define COMPARE(op) { \
@@ -551,22 +575,51 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->binary.left = try(jitc_cast(context, node->binary.left, type, false, node->token)); \
                 node->binary.right = try(jitc_cast(context, node->binary.right, type, false, node->token)); \
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
+                    smartptr(jitc_ast_t) left = node->binary.left; \
+                    smartptr(jitc_ast_t) right = node->binary.right; \
                     node->exprtype = jitc_typecache_primitive(context, Type_Int8); \
                     node->exprtype = jitc_typecache_unsigned(context, node->exprtype); \
                     node->node_type = AST_Integer; \
                     node->integer.type_kind = Type_Int8; \
                     node->integer.is_unsigned = true; \
                     if (type->kind == Type_Float32 || type->kind == Type_Float64) \
-                        node->integer.value = node->binary.left->floating.value op node->binary.right->floating.value; \
+                        node->integer.value = left->floating.value op node->binary.right->floating.value; \
                     else { \
-                        bool lneg = !node->binary.left ->integer.is_unsigned && ((node->binary.left ->integer.value >> 63) & 1); \
-                        bool rneg = !node->binary.right->integer.is_unsigned && ((node->binary.right->integer.value >> 63) & 1); \
+                        bool lneg = !left ->integer.is_unsigned && ((left ->integer.value >> 63) & 1); \
+                        bool rneg = !right->integer.is_unsigned && ((right->integer.value >> 63) & 1); \
                         if (lneg != rneg) node->integer.value = rneg op lneg; \
-                        else node->integer.value = node->binary.left->integer.value op node->binary.right->integer.value; \
+                        else node->integer.value = left->integer.value op right->integer.value; \
                     } \
                 } \
             } break
-            #define LOGIC(op, shortcircuit) break
+            #define LOGIC(op, shortcircuit) { \
+                node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL)); \
+                node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
+                bool lval = false, lconst = is_constant(node->binary.left); \
+                bool rval = false, rconst = is_constant(node->binary.right); \
+                if (is_struct(node->binary.left->exprtype) || is_struct(node->binary.right->exprtype)) \
+                    ERROR(node->token, "Performing logic on a non-scalar type"); \
+                if (is_decayed_pointer(node->binary.right->exprtype)) lconst = lval = true; \
+                else if (lconst) lval = !(node->node_type == AST_Floating \
+                    ? !node->binary.left->floating.value \
+                    : !node->binary.left->integer.value \
+                ); \
+                if (is_decayed_pointer(node->binary.right->exprtype)) rconst = rval = true; \
+                else if (rconst) rval = !(node->node_type == AST_Floating \
+                    ? !node->binary.right->floating.value \
+                    : !node->binary.right->integer.value \
+                ); \
+                if ((lval == shortcircuit && lconst) || (rval == shortcircuit && rconst) || (lconst && rconst)) { \
+                    smartptr(jitc_ast_t) left = node->binary.left; \
+                    smartptr(jitc_ast_t) right = node->binary.right; \
+                    node->node_type = AST_Integer; \
+                    node->integer.value = lval op rval; \
+                    node->integer.type_kind = Type_Int8; \
+                    node->integer.is_unsigned = true; \
+                } \
+                node->exprtype = jitc_typecache_primitive(context, Type_Int8); \
+                node->exprtype = jitc_typecache_unsigned(context, node->exprtype); \
+            } break
             #define ASSIGNMENT(check, errmsg) \
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, &node->exprtype)); \
                 if (!( \
@@ -610,8 +663,22 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Binary_AssignXor: ASSIGNMENT(is_integer(node->exprtype), "Bitwise operation on a non-integer");
             default: break;
         } break;
-        case AST_Ternary:
-            break;
+        case AST_Ternary: {
+            node->ternary.when = try(jitc_process_ast(context, node->ternary.when, NULL));
+            node->ternary.then = try(jitc_process_ast(context, node->ternary.then, NULL));
+            node->ternary.otherwise = try(jitc_process_ast(context, node->ternary.otherwise, NULL));
+            if (is_struct(node->ternary.when->exprtype)) ERROR(node->token, "Condition must be a scalar value");
+            if (is_constant(node->ternary.when)) {
+                bool cond = is_decayed_pointer(node->ternary.when->exprtype) ? 1 : node->unary.inner->node_type == AST_Floating
+                    ? node->ternary.when->floating.value
+                    : node->ternary.when->integer.value;
+                jitc_ast_t* result = cond ? node->ternary.then : node->ternary.otherwise;
+                jitc_destroy_ast(node->ternary.when);
+                jitc_destroy_ast(cond ? node->ternary.otherwise : node->ternary.then);
+                free(node);
+                node = result;
+            }
+        } break;
         default: break;
     }
     if (exprtype) *exprtype = node->exprtype;
@@ -905,7 +972,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             node->ternary.otherwise = try(jitc_parse_statement(context, tokens, ParseType_Any));
             jitc_pop_scope(context);
         }
-        return move(node);
+        return jitc_process_ast(context, move(node), NULL);
     }
     if ((token = jitc_token_expect(tokens, TOKEN_while))) {
         if (!(allowed & ParseType_Command)) ERROR(token, "'while' not allowed here");
