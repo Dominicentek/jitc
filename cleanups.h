@@ -5,15 +5,23 @@
 #define autofree __attribute__((cleanup(__cleanup_alloc)))
 
 #define move(ptr) ({ \
-    typeof(ptr) temp = (ptr); \
-    (ptr) = NULL; \
-    temp; \
+    typeof(ptr)* _ptr = &(ptr); \
+    typeof(ptr) _tmp = *_ptr; \
+    *_ptr = NULL; \
+    _tmp; \
 })
 
 #define try(x) ({ \
-    typeof(x) temp = (x); \
-    if (!temp) return NULL; \
-    temp; \
+    typeof(x) _tmp = (x); \
+    if (!_tmp) return NULL; \
+    _tmp; \
+})
+
+#define replace(x) *({ \
+    typeof(x)* _tmp = &(x); \
+    free(*_tmp); \
+    *_tmp = NULL; \
+    _tmp; \
 })
 
 void __cleanup_alloc(void* ptr);

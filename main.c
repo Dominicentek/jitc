@@ -6,6 +6,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+void print_token(jitc_token_t* token) {
+    printf("(%s %d:%d) ", token->filename, token->row, token->col);
+    switch (token->type) {
+        case TOKEN_END_OF_FILE: printf("eof\n"); break;
+        case TOKEN_IDENTIFIER: printf("id (%s)\n", token->value.string); break;
+        case TOKEN_INTEGER: printf("int (%ld)\n", token->value.integer); break;
+        case TOKEN_FLOAT: printf("float (%f)\n", token->value.floating); break;
+        case TOKEN_STRING: printf("str (%s)\n", token->value.string); break;
+        default: printf("%s\n", token_table[token->type]);
+    }
+}
+
 void print_type(jitc_type_t* type, int indent) {
     printf("%*s%s%s", indent, "",
         type->is_const ? "const " : "",
@@ -148,7 +160,7 @@ void print_ast(jitc_ast_t* ast, int indent) {
             }
             break;
         case AST_Integer:
-            printf(": %lu\n", ast->integer.value);
+            printf(ast->integer.is_unsigned ? ": %lu\n" : ": %ld\n", ast->integer.value);
             break;
         case AST_Floating:
             printf(": %f\n", ast->floating.value);
@@ -208,14 +220,15 @@ int main() {
     queue_t* tokens = jitc_lex(context, data, "test/test.c");
     queue_t* tokens1 = queue_new();
     queue_t* tokens2 = queue_new();
-    while (queue_size(tokens) > 0) {
-        jitc_token_t* token = queue_pop_ptr(tokens);
-        queue_push_ptr(tokens1, token);
-        queue_push_ptr(tokens2, token);
-    }
-    queue_delete(tokens);
     if (!tokens) jitc_report_error(context->error, stderr);
     else {
+        while (queue_size(tokens) > 0) {
+            jitc_token_t* token = queue_pop_ptr(tokens);
+            queue_push_ptr(tokens1, token);
+            queue_push_ptr(tokens2, token);
+            print_token(token);
+        }
+        queue_delete(tokens);
         jitc_push_scope(context);
         smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens1);
         if (!ast) jitc_report_error(context->error, stderr);

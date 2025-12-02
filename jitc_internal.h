@@ -80,8 +80,6 @@ typedef enum: uint8_t {
     Unary_BinaryNegate,
     Unary_AddressOf,
     Unary_Dereference,
-    Unary_Sizeof,
-    Unary_Alignof,
 } jitc_unary_op_t;
 
 typedef enum: uint8_t {
@@ -176,6 +174,7 @@ typedef struct jitc_ast_t jitc_ast_t;
 struct jitc_ast_t {
     jitc_ast_type_t node_type;
     jitc_token_t* token;
+    jitc_type_t* exprtype;
     union {
         struct {
             jitc_unary_op_t operation;
@@ -252,6 +251,10 @@ typedef struct {
 
 #define TOKENS(KEYWORD, SYMBOL, SPECIAL) \
     SPECIAL(END_OF_FILE) \
+    SPECIAL(IDENTIFIER) \
+    SPECIAL(STRING) \
+    SPECIAL(INTEGER) \
+    SPECIAL(FLOAT) \
     KEYWORD(alignas) \
     KEYWORD(alignof) \
     KEYWORD(auto) \
@@ -292,10 +295,6 @@ typedef struct {
     KEYWORD(void) \
     KEYWORD(volatile) \
     KEYWORD(while) \
-    SPECIAL(IDENTIFIER) \
-    SPECIAL(STRING) \
-    SPECIAL(INTEGER) \
-    SPECIAL(FLOAT) \
     SYMBOL("(", PARENTHESIS_OPEN) \
     SYMBOL(")", PARENTHESIS_CLOSE) \
     SYMBOL("[", BRACKET_OPEN) \
@@ -380,6 +379,7 @@ jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name)
 jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name);
+bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type);

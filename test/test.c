@@ -1,16 +1,1 @@
-int main() {
-    {
-        {
-            int foo;
-            {
-                {
-                    int bar;
-                    {
-                        {
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+int test = 256;

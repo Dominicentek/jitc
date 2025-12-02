@@ -243,6 +243,10 @@ jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, co
     return jitc_register_type(context, &type);
 }
 
+bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
+    return jitc_typecache_named(context, a, NULL) == jitc_typecache_named(context, b, NULL);
+}
+
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value) {
     if (!type->name) return true;
     jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
