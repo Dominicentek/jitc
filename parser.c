@@ -354,9 +354,9 @@ bool jitc_can_cast(jitc_type_t* from, jitc_type_t* to, bool explicit) {
     return true;
 }
 
-jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* type, bool explicit) {
+jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* type, bool explicit, jitc_token_t* cast_token) {
     if (jitc_typecmp(context, node->exprtype, type)) return node;
-    if (!jitc_can_cast(node->exprtype, type, explicit)) ERROR(node->token, "Unable to perform cast");
+    if (!jitc_can_cast(node->exprtype, type, explicit)) ERROR(cast_token, "Unable to perform cast");
     switch (node->node_type) {
         case AST_Integer:
             if (is_floating(type)) {
@@ -488,7 +488,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Binary_Cast: {
                 replace(node) = try(jitc_cast(context,
                     try(jitc_process_ast(context, node->binary.left, NULL)),
-                    node->binary.right->type.type, true
+                    node->binary.right->type.type, true, node->binary.right->token
                 ));
             } break;
             case Binary_FunctionCall:
@@ -505,7 +505,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     jitc_ast_t** param = list_get(list, i);
                     *param = try(jitc_cast(context,
                         try(jitc_process_ast(context, *param, NULL)),
-                        func->func.params[i], false
+                        func->func.params[i], false, (*param)->token
                     ));
                 }
                 break;
@@ -514,8 +514,8 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
                 node->exprtype = jitc_type_promotion(context, node->binary.left->exprtype, node->binary.right->exprtype); \
                 if (!is_number(node->exprtype)) ERROR(node->token, "Bitwise operation on a non-number"); \
-                node->binary.left = try(jitc_cast(context, node->binary.left, node->exprtype, false)); \
-                node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false)); \
+                node->binary.left = try(jitc_cast(context, node->binary.left, node->exprtype, false, node->token)); \
+                node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false, node->token)); \
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
                     if (is_floating(node->exprtype)) { \
                         node->node_type = AST_Floating; \
@@ -535,8 +535,8 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
                 node->exprtype = jitc_type_promotion(context, node->binary.left->exprtype, node->binary.right->exprtype); \
                 if (!is_integer(node->exprtype)) ERROR(node->token, "Bitwise operation on a non-integer"); \
-                node->binary.left = try(jitc_cast(context, node->binary.left, node->exprtype, false)); \
-                node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false)); \
+                node->binary.left = try(jitc_cast(context, node->binary.left, node->exprtype, false, node->token)); \
+                node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false, node->token)); \
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
                     node->node_type = AST_Integer; \
                     node->integer.type_kind = node->exprtype->kind; \
@@ -548,8 +548,8 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL)); \
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
                 jitc_type_t* type = jitc_type_promotion(context, node->binary.left->exprtype, node->binary.right->exprtype); \
-                node->binary.left = try(jitc_cast(context, node->binary.left, type, false)); \
-                node->binary.right = try(jitc_cast(context, node->binary.right, type, false)); \
+                node->binary.left = try(jitc_cast(context, node->binary.left, type, false, node->token)); \
+                node->binary.right = try(jitc_cast(context, node->binary.right, type, false, node->token)); \
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
                     node->exprtype = jitc_typecache_primitive(context, Type_Int8); \
                     node->exprtype = jitc_typecache_unsigned(context, node->exprtype); \
@@ -576,7 +576,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 if (!(check)) ERROR(node->token, errmsg); \
                 node->binary.right = try(jitc_cast(context, \
                     try(jitc_process_ast(context, node->binary.right, NULL)), \
-                    node->exprtype, false \
+                    node->exprtype, false, node->token \
                 )); \
                 break
             case Binary_Addition: ARITHMETIC(+);
@@ -947,7 +947,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         if (retvar->type->kind != Type_Void) {
             node->ret.expr = try(jitc_cast(context,
                 try(jitc_parse_expression(context, tokens, NULL)),
-                retvar->type, false
+                retvar->type, false, token
             ));
         }
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) ERROR(NEXT_TOKEN, "Expected ';'");
@@ -1011,7 +1011,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 assign->binary.operation = Binary_Assignment;
                 assign->binary.right = try(jitc_parse_expression(context, tokens, NULL));
                 assign->binary.left = move(variable);
-                list_add_ptr(list->list.inner, move(assign));
+                list_add_ptr(list->list.inner, try(jitc_process_ast(context, move(assign), NULL)));
             }
             if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
             if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) break;

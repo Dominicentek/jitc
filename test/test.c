@@ -1,1 +1,1 @@
-typeof(void(*)())* testing = (void*)(sizeof(testing) + true);
+int test = (float)1.5;
