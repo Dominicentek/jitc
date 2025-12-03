@@ -372,8 +372,10 @@ jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* ty
                 node->node_type = AST_Floating;
             }
             else {
+                bool is_negative = !node->integer.is_unsigned && ((node->integer.value >> 63) & 1);
                 node->integer.type_kind = is_pointer(type) ? Type_Int64 : type->kind;
                 node->integer.is_unsigned = is_pointer(type) ? true : type->is_unsigned;
+                memset((char*)&node->integer.value + type->size, is_negative ? 0xFF : 0x00, 8 - type->size);
             }
             break;
         case AST_Floating:
@@ -757,13 +759,13 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_INTEGER))) {
         node = mknode(AST_Integer, token);
-        node->integer.is_unsigned = false;
-        node->integer.type_kind = Type_Int32;
+        node->integer.is_unsigned = token->flags.int_flags.is_unsigned;
+        node->integer.type_kind = token->flags.int_flags.type_kind;
         node->integer.value = token->value.integer;
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_FLOAT))) {
         node = mknode(AST_Floating, token);
-        node->floating.is_single_precision = false;
+        node->floating.is_single_precision = token->flags.float_flags.is_single_precision;
         node->floating.value = token->value.floating;
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_STRING))) {

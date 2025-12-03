@@ -69,13 +69,15 @@ static int decode_utf8(char* seq, int* out) {
     return 0;
 }
 
-static bool try_parse_int(string_t* string, uint64_t* out) {
+int hi = 1LLU;
+
+static bool try_parse_int(string_t* string, uint64_t* out, jitc_token_flags_t* flags) {
     int base = 10;
     int ptr = 0;
     if (str_data(string)[0] == '0') {
         ptr = 2;
         switch (str_data(string)[1]) {
-            case 0:             *out = 0;  return true;
+            case 0:             ptr = 0;   break;
             case 'x': case 'X': base = 16; break;
             case 'b': case 'B': base = 2;  break;
             case '0'...'7':     base = 8; ptr = 1; break;
@@ -83,25 +85,45 @@ static bool try_parse_int(string_t* string, uint64_t* out) {
         }
     }
     if (str_data(string)[ptr] == 0) return false;
-    bool suffix_end = false;
+    char last_suffix = 0;
+    bool is_unsigned = false;
+    int longs = 0;
     *out = 0;
     for (; str_data(string)[ptr]; ptr++) {
         int digit;
-        if (suffix_end) return false;
+        if (str_data(string)[ptr] == 'U' || str_data(string)[ptr] == 'u') {
+            if (is_unsigned) return false;
+            last_suffix = str_data(string)[ptr];
+            is_unsigned = true;
+            continue;
+        }
+        if (str_data(string)[ptr] == 'L' || str_data(string)[ptr] == 'l') {
+            if ((last_suffix == 'u' || last_suffix == 'U') && longs == 1) return false;
+            if (longs == 2) return false;
+            last_suffix = str_data(string)[ptr];
+            longs++;
+            continue;
+        }
+        if (is_unsigned || longs != 0) return false;
         if (!get_hexadecimal(str_data(string)[ptr], &digit)) return false;
         if (digit >= base) return false;
         *out = *out * base + digit;
     }
+    if (flags) {
+        flags->int_flags.is_unsigned = is_unsigned;
+        flags->int_flags.type_kind = longs != 0 ? Type_Int64 : Type_Int32;
+    }
     return true;
 }
 
-static bool try_parse_flt(string_t* string, double* out) {
+static bool try_parse_flt(string_t* string, double* out, jitc_token_flags_t* flags) {
     int base = 10;
     int ptr = 0;
     int exp = 0;
     int frac = 0;
     bool neg_exp = false;
     bool hex = false;
+    bool is_float = false;
     enum {
         Integer,
         Fraction,
@@ -117,8 +139,13 @@ static bool try_parse_flt(string_t* string, double* out) {
     if (str_data(string)[ptr] == 0) return false;
     *out = 0;
     for (; str_data(string)[ptr]; ptr++) {
+        if (is_float) return false;
         int digit = 0;
         bool valid = get_hexadecimal(str_data(string)[ptr], &digit) && digit < base;
+        if ((str_data(string)[ptr] == 'f' || str_data(string)[ptr] == 'F') && ((hex && state != Integer && state != Fraction) || !hex)) {
+            is_float = true;
+            continue;
+        }
         switch (state) {
             case Integer:
                 if (str_data(string)[ptr] == '.') state = Fraction;
@@ -152,6 +179,7 @@ static bool try_parse_flt(string_t* string, double* out) {
         }
     }
     *out *= pow(hex ? 2 : 10, neg_exp ? -exp : exp);
+    if (flags) flags->float_flags.is_single_precision = is_float;
     return (!hex && (state == Integer || state == Fraction || state == Exponent)) || (hex && state == Exponent);
 }
 
@@ -256,7 +284,9 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                     else if (c == '\'' && state.parse_state == ParsingCharLiteral) {
                         char* data = str_data(state.buffer);
                         jitc_token_t* token = mktoken(tokens, TOKEN_INTEGER, file, state.row, state.col);
+                        token->flags.int_flags.type_kind = Type_Int32;
                         data += decode_utf8(str_data(state.buffer), (int*)&token->value.integer);
+                        memset((char*)&token->value.integer + 1, (token->value.integer & (1 << 7)) ? 0xFF : 0x00, 7);
                         if (*data != 0) { jitc_error_set(context, jitc_error_syntax(file, row, col, "Multiple characters in char literal")); goto error; }
                         state.parse_state = Idle;
                     }
@@ -329,9 +359,11 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             }
             else {
                 jitc_token_t* token = mktoken(tokens, TOKEN_END_OF_FILE, file, state.row, state.col);
-                if      (try_parse_int(state.buffer, &token->value.integer))  token->type = TOKEN_INTEGER;
-                else if (try_parse_flt(state.buffer, &token->value.floating)) token->type = TOKEN_FLOAT;
+                if      (try_parse_int(state.buffer, &token->value.integer,  &token->flags)) token->type = TOKEN_INTEGER;
+                else if (try_parse_flt(state.buffer, &token->value.floating, &token->flags)) token->type = TOKEN_FLOAT;
                 else {
+                    if (is_numeric(str_data(state.buffer)[0]) || str_data(state.buffer)[0] == '.')
+                        { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid number")); goto error; }
                     token->type = TOKEN_IDENTIFIER;
                     for (int i = 0; i < num_token_table_entries; i++) {
                         if (!token_table[i]) continue;

@@ -22,7 +22,6 @@ struct jitc_context_t {
 };
 
 typedef enum: uint8_t {
-    Type_Void,
     Type_Int8,
     Type_Int16,
     Type_Int32,
@@ -38,6 +37,7 @@ typedef enum: uint8_t {
     Type_StructRef,
     Type_UnionRef,
     Type_EnumRef,
+    Type_Void,
     Type_Varargs,
 } jitc_type_kind_t;
 
@@ -279,6 +279,7 @@ typedef struct {
     KEYWORD(int) \
     KEYWORD(long) \
     KEYWORD(nullptr) \
+    KEYWORD(offsetof) \
     KEYWORD(register) \
     KEYWORD(restrict) \
     KEYWORD(return) \
@@ -351,10 +352,22 @@ static const char* token_table[] = {
 };
 static int num_token_table_entries = sizeof(token_table) / sizeof(*token_table);
 
+typedef union {
+    struct {
+        bool is_unsigned : 1;
+        jitc_type_kind_t type_kind : 2;
+        // there are 4 integer types: 8-bit, 16-bit, 32-bit, 64-bit; fits within 2 bits
+    } int_flags;
+    struct {
+        bool is_single_precision : 1;
+    } float_flags;
+} jitc_token_flags_t;
+
 struct jitc_token_t {
-    jitc_token_type_t type;
     char* filename;
-    int row, col, flags;
+    jitc_token_type_t type;
+    jitc_token_flags_t flags;
+    int row, col;
     union {
         char* string;
         uint64_t integer;
