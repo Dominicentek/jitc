@@ -395,7 +395,7 @@ jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, co
 bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value);
-bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type);
+bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name);
 bool jitc_set_defined(jitc_context_t* context, const char* name);
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);

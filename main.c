@@ -23,6 +23,7 @@ void print_type(jitc_type_t* type, int indent) {
         type->is_const ? "const " : "",
         type->is_unsigned ? "uns " : ""
     );
+    if (type->name) printf("%s: ", type->name);
     switch (type->kind) {
         case Type_Void:    printf("void\n"); return;
         case Type_Int8:    printf("int8\n"); return;
@@ -60,6 +61,9 @@ void print_type(jitc_type_t* type, int indent) {
             }
             return;
         case Type_Varargs: printf("varargs\n"); break;
+        case Type_StructRef: printf("structref %s\n", type->ref.name); break;
+        case Type_UnionRef: printf("unionref %s\n", type->ref.name); break;
+        case Type_EnumRef: printf("enumref %s\n", type->ref.name); break;
         default: printf("unk\n");
     }
 }

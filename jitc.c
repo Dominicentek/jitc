@@ -265,7 +265,7 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     return true;
 }
 
-bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type) {
+bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name) {
     if (!type->name) return true;
     jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
     map_t* map = NULL;
@@ -273,8 +273,8 @@ bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type) {
     if (type->kind == Type_Union) map = scope->unions;
     if (type->kind == Type_Enum) map = scope->enums;
     if (!map) return false;
-    if (map_find_ptr(map, (void*)type->name)) return false;
-    map_get_ptr(map, (void*)type->name);
+    if (map_find_ptr(map, (void*)name)) return false;
+    map_get_ptr(map, (void*)name);
     map_store_ptr(map, type);
     return true;
 }
