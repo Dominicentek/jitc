@@ -285,6 +285,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                         char* data = str_data(state.buffer);
                         jitc_token_t* token = mktoken(tokens, TOKEN_INTEGER, file, state.row, state.col);
                         token->flags.int_flags.type_kind = Type_Int32;
+                        token->flags.int_flags.is_unsigned = false;
                         data += decode_utf8(str_data(state.buffer), (int*)&token->value.integer);
                         memset((char*)&token->value.integer + 1, (token->value.integer & (1 << 7)) ? 0xFF : 0x00, 7);
                         if (*data != 0) { jitc_error_set(context, jitc_error_syntax(file, row, col, "Multiple characters in char literal")); goto error; }

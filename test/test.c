@@ -1,1 +1,6 @@
-typeof('h') x = 100;
+int main() {
+    int test = 0;
+    for (;;) {
+        int hi;
+    }
+}

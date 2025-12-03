@@ -372,6 +372,7 @@ jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* ty
                 node->node_type = AST_Floating;
             }
             else {
+                printf("converting to pointer constant\n");
                 bool is_negative = !node->integer.is_unsigned && ((node->integer.value >> 63) & 1);
                 node->integer.type_kind = is_pointer(type) ? Type_Int64 : type->kind;
                 node->integer.is_unsigned = is_pointer(type) ? true : type->is_unsigned;
@@ -409,23 +410,23 @@ jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* ty
 jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type_t** exprtype) {
     jitc_ast_t* node = ast;
     switch (node->node_type) {
-        case AST_Integer: {
+        case AST_Integer: if (!node->exprtype) {
             node->exprtype = jitc_typecache_primitive(context, node->integer.type_kind);
             if (node->integer.is_unsigned) node->exprtype = jitc_typecache_unsigned(context, node->exprtype);
         } break;
-        case AST_Floating: {
+        case AST_Floating: if (!node->exprtype) {
             node->exprtype = jitc_typecache_primitive(context,
                 node->floating.is_single_precision
                 ? Type_Float32
                 : Type_Float64
             );
         } break;
-        case AST_StringLit: {
+        case AST_StringLit: if (!node->exprtype) {
             node->exprtype = jitc_typecache_primitive(context, Type_Int8);
             node->exprtype = jitc_typecache_const(context, node->exprtype);
             node->exprtype = jitc_typecache_pointer(context, node->exprtype);
         } break;
-        case AST_Variable: {
+        case AST_Variable: if (!node->exprtype) {
             jitc_variable_t* variable = jitc_get_variable(context, node->variable.name);
             if (!variable) ERROR(node->token, "Undefined variable '%s'", node->variable.name);
             if (variable->decltype == Decltype_EnumItem) {
@@ -455,6 +456,9 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Unary_Dereference:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
                 if (!is_pointer(node->exprtype)) ERROR(node->token, "Operand must be a pointer type");
+                if (is_function(node->exprtype)) ERROR(node->token, "Cannot dereference a function");
+                if (node->exprtype->ptr.base->kind == Type_Void) ERROR(node->token, "Dereferencing void pointer");
+                node->exprtype = node->exprtype->ptr.base;
                 break;
             case Unary_ArithPlus:
             case Unary_ArithNegate:
@@ -690,7 +694,19 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
 }
 
 jitc_ast_t* jitc_flatten_ast(jitc_ast_t* ast, list_t* list) {
-    if (ast->node_type != AST_List && ast->node_type != AST_Scope) return ast;
+    if (!ast) return NULL;
+    if (ast->node_type != AST_List && ast->node_type != AST_Scope) {
+        if (ast->node_type == AST_Loop) {
+            ast->loop.cond = jitc_flatten_ast(ast->loop.cond, NULL);
+            ast->loop.body = jitc_flatten_ast(ast->loop.body, NULL);
+        }
+        else if (ast->node_type == AST_Ternary) {
+            ast->ternary.when = jitc_flatten_ast(ast->ternary.when, NULL);
+            ast->ternary.then = jitc_flatten_ast(ast->ternary.then, NULL);
+            ast->ternary.otherwise = jitc_flatten_ast(ast->ternary.otherwise, NULL);
+        }
+        return ast;
+    }
     if (list && list_size(ast->list.inner) == 0) {
         free(ast);
         return NULL;
@@ -818,18 +834,18 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
             op->unary.operation = Unary_SuffixDecrement;
             op->unary.inner = move(node);
         }
-        else if ((token = jitc_token_expect(tokens, TOKEN_DOT))) {
+        else if ((token = jitc_token_expect(tokens, TOKEN_ARROW))) {
             jitc_token_t* dot = token;
             if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) ERROR(NEXT_TOKEN, "Expected identifier");
             op = mknode(AST_WalkStruct, dot);
             op->walk_struct.struct_ptr = move(node);
             op->walk_struct.field_name = token->value.string;
         }
-        else if ((token = jitc_token_expect(tokens, TOKEN_ARROW))) {
+        else if ((token = jitc_token_expect(tokens, TOKEN_DOT))) {
             jitc_token_t* arrow = token;
             if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) ERROR(NEXT_TOKEN, "Expected identifier");
             jitc_ast_t* deref = mknode(AST_Unary, arrow);
-            deref->unary.operation = Unary_Dereference;
+            deref->unary.operation = Unary_AddressOf;
             deref->unary.inner = move(node);
             op = mknode(AST_WalkStruct, arrow);
             op->walk_struct.struct_ptr = deref;
@@ -991,11 +1007,55 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
     }
     if (jitc_token_expect(tokens, TOKEN_do)) {
         if (!(allowed & ParseType_Command)) ERROR(token, "'do' not allowed here");
-        // todo
+        smartptr(jitc_ast_t) node = mknode(AST_Scope, token);
+        smartptr(jitc_ast_t) loop = mknode(AST_Loop, token);
+        smartptr(jitc_ast_t) scope = mknode(AST_Scope, token);
+        if (!jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) ERROR(NEXT_TOKEN, "Expected '{'");
+        jitc_push_scope(context);
+        while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
+            if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
+            list_add_ptr(scope->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
+        }
+        jitc_pop_scope(context);
+        if (!jitc_token_expect(tokens, TOKEN_while)) ERROR(NEXT_TOKEN, "Expected 'while'");
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN))  ERROR(NEXT_TOKEN, "Expected '('");
+        smartptr(jitc_ast_t) condition = try(jitc_parse_expression(context, tokens, NULL));
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
+        if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) ERROR(NEXT_TOKEN, "Expected ';'");
+        smartptr(jitc_ast_t) ternary = mknode(AST_Ternary, token);
+        ternary->ternary.when = move(condition);
+        ternary->ternary.then = mknode(AST_List, token);
+        ternary->ternary.otherwise = mknode(AST_Break, token);
+        list_add_ptr(scope->list.inner, try(jitc_process_ast(context, move(ternary), NULL)));
+        ternary = NULL;
+        loop->loop.body = move(scope);
+        list_add_ptr(node->list.inner, move(loop));
+        return move(node);
     }
     if (jitc_token_expect(tokens, TOKEN_for)) {
         if (!(allowed & ParseType_Command)) ERROR(token, "'for' not allowed here");
-        // todo
+        smartptr(jitc_ast_t) node = mknode(AST_Scope, token);
+        smartptr(jitc_ast_t) loop = mknode(AST_Loop, token);
+        smartptr(jitc_ast_t) body = mknode(AST_List, token);
+        smartptr(jitc_ast_t) init;
+        smartptr(jitc_ast_t) cond;
+        smartptr(jitc_ast_t) expr;
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
+        if (!jitc_token_expect(tokens, TOKEN_SEMICOLON))
+            init = try(jitc_parse_statement(context, tokens, ParseType_Expression | ParseType_Declaration));
+        if (!jitc_token_expect(tokens, TOKEN_SEMICOLON))
+            cond = try(jitc_parse_statement(context, tokens, ParseType_Expression));
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) {
+            expr = try(jitc_parse_expression(context, tokens, NULL));
+            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
+        }
+        list_add_ptr(body->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
+        if (expr) list_add_ptr(body->list.inner, move(expr));
+        if (init) list_add_ptr(node->list.inner, move(init));
+        loop->loop.body = move(body);
+        loop->loop.cond = move(cond);
+        list_add_ptr(node->list.inner, move(loop));
+        return move(node);
     }
     if (jitc_token_expect(tokens, TOKEN_switch)) {
         if (!(allowed & ParseType_Command)) ERROR(token, "'switch' not allowed here");
