@@ -342,7 +342,7 @@ jitc_type_t* jitc_type_promotion(jitc_context_t* context, jitc_type_t* left, jit
     return type;
 }
 
-bool jitc_can_cast(jitc_type_t* from, jitc_type_t* to, bool explicit) {
+bool jitc_can_cast(jitc_type_t* from, jitc_type_t* to, bool explicit, bool is_zero) {
     if (from->kind == Type_Void || to->kind == Type_Void) return false;
     if (from == to) return true;
     if (
@@ -353,14 +353,16 @@ bool jitc_can_cast(jitc_type_t* from, jitc_type_t* to, bool explicit) {
     ) return false;
     if (is_floating(from) && is_pointer(to)) return false;
     if (is_floating(to) && is_pointer(from)) return false;
-    if (!explicit && is_integer(from) && is_pointer(to)) return false;
-    if (!explicit && is_integer(to) && is_pointer(from)) return false;
+    if (!explicit && is_integer(from) && is_pointer(to) && from->kind != Type_Int64 && !is_zero) return false;
+    if (!explicit && is_integer(to) && is_pointer(from) &&   to->kind != Type_Int64 && !is_zero) return false;
     return true;
 }
 
 jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* type, bool explicit, jitc_token_t* cast_token) {
     if (jitc_typecmp(context, node->exprtype, type)) return node;
-    if (!jitc_can_cast(node->exprtype, type, explicit)) ERROR(cast_token, "Unable to perform cast");
+    bool is_zero = node->node_type == AST_Integer && node->integer.value == 0;
+    if (!jitc_can_cast(node->exprtype, type, explicit, is_zero)) ERROR(cast_token, "Unable to perform cast");
+    node->exprtype = type;
     switch (node->node_type) {
         case AST_Integer:
             if (is_floating(type)) {
