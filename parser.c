@@ -286,6 +286,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
                     while (true) {
                         field_type = jitc_typecache_named(context, field_type, NULL);
                         try(jitc_parse_type_declarations(context, tokens, &field_type));
+                        if (!jitc_validate_type(field_type, TypePolicy_NoIncomplete)) ERROR(NEXT_TOKEN, "Field has incomplete type");
                         if (field_type->name) for (size_t i = 0; i < list_size(list); i++) {
                             jitc_type_t* type = list_get_ptr(list, i);
                             if (strcmp(field_type->name, type->name) == 0) ERROR(NEXT_TOKEN, "Duplicate field '%s'", field_type->name);
@@ -301,7 +302,10 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
                     ERROR(name_token, "%s '%s' already defined", token->type == TOKEN_struct ? "Struct" : "Union", name_token->value.string);
             }
             else if (!name_token) ERROR(NEXT_TOKEN, "Expected identifier or '{'");
-            else type = (token->type == TOKEN_struct ? jitc_typecache_structref : jitc_typecache_unionref)(context, name_token->value.string);
+            else {
+                type = jitc_get_tagged_type(context, token->type ? Type_Struct : Type_Union, name_token->value.string);
+                if (!type) type = (token->type == TOKEN_struct ? jitc_typecache_structref : jitc_typecache_unionref)(context, name_token->value.string);
+            }
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_enum))) {
             jitc_token_t* name_token = jitc_token_expect(tokens, TOKEN_IDENTIFIER);
@@ -337,11 +341,14 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
                     ERROR(NEXT_TOKEN, "Expected ',' or '}'");
                 }
                 type = jitc_typecache_enum(context, value_type);
+                if (name_token) jitc_declare_tagged_type(context, type, name_token->value.string);
             }
             else {
                 if (force_definition) ERROR(NEXT_TOKEN, "Expected '{'");
                 if (!name_token) ERROR(NEXT_TOKEN, "Expected identifier or '{'");
-                type = jitc_typecache_enumref(context, name_token->value.string);
+                type = jitc_get_tagged_type(context, Type_Enum, name_token->value.string);
+                if (!type) type = jitc_typecache_enumref(context, name_token->value.string);
+                else type = type->ptr.base;
             }
         }
         else {
@@ -506,6 +513,21 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->integer.value = variable->value;
             }
             node->exprtype = variable->type;
+        } break;
+        case AST_WalkStruct: if (!node->exprtype) {
+            jitc_type_t* type;
+            node->walk_struct.struct_ptr = try(jitc_process_ast(context, node->walk_struct.struct_ptr, &type));
+            if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) {
+                jitc_type_t* resolved = jitc_get_tagged_type(context, type->ptr.base->kind, type->ptr.base->ref.name);
+                if (!resolved) ERROR(node->token, "Cannot access an incomplete struct");
+                node->walk_struct.struct_ptr->exprtype = resolved;
+            }
+            if (!is_struct(type)) ERROR(node->token, "Not a struct type");
+            for (size_t i = 0; i < type->str.num_fields && !node->exprtype; i++) {
+                if (strcmp(type->str.fields[i]->name, node->walk_struct.field_name) == 0)
+                    node->exprtype = type->str.fields[i];
+            }
+            if (!node->exprtype) ERROR(node->token, "Field '%s' not found", node->walk_struct.field_name);
         } break;
 
         case AST_Unary: switch (node->unary.operation) {
@@ -904,18 +926,18 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
             op->unary.operation = Unary_SuffixDecrement;
             op->unary.inner = move(node);
         }
-        else if ((token = jitc_token_expect(tokens, TOKEN_ARROW))) {
+        else if ((token = jitc_token_expect(tokens, TOKEN_DOT))) {
             jitc_token_t* dot = token;
             if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) ERROR(NEXT_TOKEN, "Expected identifier");
             op = mknode(AST_WalkStruct, dot);
             op->walk_struct.struct_ptr = move(node);
             op->walk_struct.field_name = token->value.string;
         }
-        else if ((token = jitc_token_expect(tokens, TOKEN_DOT))) {
+        else if ((token = jitc_token_expect(tokens, TOKEN_ARROW))) {
             jitc_token_t* arrow = token;
             if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) ERROR(NEXT_TOKEN, "Expected identifier");
             jitc_ast_t* deref = mknode(AST_Unary, arrow);
-            deref->unary.operation = Unary_AddressOf;
+            deref->unary.operation = Unary_Dereference;
             deref->unary.inner = move(node);
             op = mknode(AST_WalkStruct, arrow);
             op->walk_struct.struct_ptr = deref;

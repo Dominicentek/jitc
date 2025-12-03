@@ -266,7 +266,6 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
 }
 
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name) {
-    if (!type->name) return true;
     jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
     map_t* map = NULL;
     if (type->kind == Type_Struct) map = scope->structs;
@@ -380,10 +379,7 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
     if ((policy & TypePolicy_NoFunction) && type->kind == Type_Function) return false;
     if ((policy & TypePolicy_NoVoid) && type->kind == Type_Void) return false;
     if ((policy & TypePolicy_NoUnkArrSize) && (type->kind == Type_Array && type->arr.size == -1)) return false;
-    if ((policy & TypePolicy_NoUndefTags)) {
-        // todo
-        return true;
-    }
+    if ((policy & TypePolicy_NoUndefTags) && (type->kind == Type_StructRef || type->kind == Type_UnionRef || type->kind == Type_EnumRef)) return false;
     return true;
 }
 

@@ -355,7 +355,7 @@ static int num_token_table_entries = sizeof(token_table) / sizeof(*token_table);
 typedef union {
     struct {
         bool is_unsigned : 1;
-        jitc_type_kind_t type_kind : 2;
+        int type_kind : 2;
         // there are 4 integer types: 8-bit, 16-bit, 32-bit, 64-bit; fits within 2 bits
     } int_flags;
     struct {

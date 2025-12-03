@@ -1,7 +1,9 @@
-enum test {
-    Foo,
-    Bar,
+struct test {
+    int bar;
 };
 
-int test1 = Foo;
-int test2 = Bar;
+struct test foo() {}
+
+int main() {
+    foo().bar;
+}
