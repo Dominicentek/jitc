@@ -239,7 +239,6 @@ int main() {
         else print_ast(ast, 0);
     }
     while (queue_size(tokens2) > 0) free(queue_pop_ptr(tokens2));
-    free(context->error);
     queue_delete(tokens1);
     queue_delete(tokens2);
     jitc_destroy_context(context);

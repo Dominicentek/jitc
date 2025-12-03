@@ -633,7 +633,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL)); \
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
                 node->exprtype = jitc_type_promotion(context, node->binary.left->exprtype, node->binary.right->exprtype); \
-                if (!is_number(node->exprtype)) ERROR(node->token, "Bitwise operation on a non-number"); \
+                if (!is_number(node->exprtype)) ERROR(node->token, "Arithmetic operation on a non-number"); \
                 node->binary.left = try(jitc_cast(context, node->binary.left, node->exprtype, false, node->token)); \
                 node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false, node->token)); \
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
@@ -1251,7 +1251,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
 }
 
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* tokens) {
-    jitc_ast_t* ast = mknode(AST_List, queue_peek_ptr(tokens));
+    smartptr(jitc_ast_t) ast = mknode(AST_List, queue_peek_ptr(tokens));
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
         if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
         list_add_ptr(ast->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Declaration)));
@@ -1274,6 +1274,7 @@ void jitc_destroy_ast(jitc_ast_t* ast) {
             jitc_destroy_ast(ast->ternary.then);
             jitc_destroy_ast(ast->ternary.otherwise);
             break;
+        case AST_Scope:
         case AST_List:
             for (size_t i = 0; i < list_size(ast->list.inner); i++) {
                 jitc_destroy_ast(list_get_ptr(ast->list.inner, i));

@@ -212,6 +212,8 @@ jitc_type_t* jitc_typecache_enum(jitc_context_t* context, jitc_type_t* base) {
     jitc_type_t enm = {};
     enm.kind = Type_Enum;
     enm.ptr.base = base;
+    enm.size = enm.ptr.base->size;
+    enm.alignment = enm.ptr.base->alignment;
     return jitc_register_type(context, &enm);
 }
 
@@ -254,6 +256,7 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     var->type = type;
     var->decltype = decltype;
     var->value = value;
+    var->defined = false;
     if ((map_find_ptr(scope->variables, (void*)type->name))) {
         jitc_variable_t* var = map_as_ptr(scope->variables);
         if (decltype != var->decltype) return false;
@@ -372,6 +375,8 @@ void jitc_error_set(jitc_context_t* context, jitc_error_t* error) {
 
 void jitc_report_error(jitc_error_t* error, FILE* file) {
     fprintf(file, "Error: %s (in %s at %d:%d)\n", error->msg, error->file, error->row, error->col);
+    free((void*)error->msg);
+    free((void*)error);
 }
 
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
