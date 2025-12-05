@@ -1,7 +1,5 @@
 #include "dynamics.h"
-#include "jitc.h"
 #include "jitc_internal.h"
-#include "cleanups.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -211,7 +209,13 @@ void print_ast(jitc_ast_t* ast, int indent) {
 }
 
 int main() {
-    FILE* f = fopen("test/test.c", "r");
+    bytewriter_t* writer = jitc_generate_function(NULL, NULL);
+    size_t size = bytewriter_size(writer);
+    uint8_t* data = bytewriter_delete(writer);
+    int result = ((int(*)())data)();
+    printf("%d\n", result);
+    
+    /*FILE* f = fopen("test/test.c", "r");
     fseek(f, 0, SEEK_END);
     size_t size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -235,6 +239,7 @@ int main() {
         queue_delete(tokens);
         jitc_push_scope(context);
         smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens1);
+        while (jitc_pop_scope(context));
         if (!ast) jitc_report_error(context->error, stderr);
         else print_ast(ast, 0);
     }
@@ -243,5 +248,5 @@ int main() {
     queue_delete(tokens2);
     jitc_destroy_context(context);
 
-    free(data);
+    free(data);*/
 }

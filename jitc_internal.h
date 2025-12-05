@@ -3,6 +3,7 @@
 
 #include "jitc.h"
 #include "dynamics.h"
+#include "cleanups.h"
 
 typedef struct jitc_token_t jitc_token_t;
 
@@ -136,7 +137,6 @@ typedef struct {
     map_t* structs;
     map_t* unions;
     map_t* enums;
-    bool is_function;
 } jitc_scope_t;
 
 typedef struct jitc_type_t jitc_type_t;
@@ -402,8 +402,7 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
 
 void jitc_push_scope(jitc_context_t* context);
-void jitc_push_function_scope(jitc_context_t* context);
-void jitc_pop_scope(jitc_context_t* context);
+bool jitc_pop_scope(jitc_context_t* context);
 
 jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const char* str, ...);
 jitc_error_t* jitc_error_parser(jitc_token_t* token, const char* str, ...);
@@ -417,6 +416,7 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype);
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, jitc_type_t** exprtype);
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
+bytewriter_t* jitc_generate_function(jitc_context_t* context, jitc_ast_t* ast);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
 

@@ -1,5 +1,5 @@
-#ifndef COMPARES_H
-#define COMPARES_H
+#ifndef JITC_COMPARES_H
+#define JITC_COMPARES_H
 
 #include <string.h>
 #include <stdint.h>

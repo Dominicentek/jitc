@@ -251,7 +251,9 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value) {
     if (!type->name) return true;
-    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
+    jitc_scope_t* scope = NULL;
+    if (decltype == Decltype_Static) scope = list_get_ptr(context->scopes, 0);
+    else scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
     autofree jitc_variable_t* var = malloc(sizeof(jitc_variable_t));
     var->type = type;
     var->decltype = decltype;
@@ -304,12 +306,9 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
 
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name) {
     if (!name) return NULL;
-    bool outside_of_function = false;
     for (size_t i = list_size(context->scopes) - 1; i < list_size(context->scopes) /* rely on underflow */; i--) {
-        if (i != 0 && outside_of_function) continue;
         jitc_scope_t* scope = list_get_ptr(context->scopes, i);
         map_t* map = NULL;
-        if (scope->is_function) outside_of_function = true;
         if (kind == Type_StructRef || kind == Type_Struct) map = scope->structs;
         if (kind == Type_UnionRef || kind == Type_Union) map = scope->unions;
         if (kind == Type_EnumRef || kind == Type_Enum) map = scope->enums;
@@ -320,15 +319,8 @@ jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind
     return NULL;
 }
 
-void jitc_push_function_scope(jitc_context_t* context) {
-    jitc_push_scope(context);
-    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
-    scope->is_function = true;
-}
-
 void jitc_push_scope(jitc_context_t* context) {
     jitc_scope_t* scope = malloc(sizeof(jitc_scope_t));
-    scope->is_function = false;
     scope->variables = map_new(compare_string);
     scope->structs = map_new(compare_string);
     scope->unions = map_new(compare_string);
@@ -336,7 +328,8 @@ void jitc_push_scope(jitc_context_t* context) {
     list_add_ptr(context->scopes, scope);
 }
 
-void jitc_pop_scope(jitc_context_t* context) {
+bool jitc_pop_scope(jitc_context_t* context) {
+    if (list_size(context->scopes) == 0) return false;
     jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
     list_remove(context->scopes, list_size(context->scopes) - 1);
     for (size_t i = 0; i < map_size(scope->variables); i++) {
@@ -348,6 +341,7 @@ void jitc_pop_scope(jitc_context_t* context) {
     map_delete(scope->unions);
     map_delete(scope->enums);
     free(scope);
+    return true;
 }
 
 jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const char* str, ...) {

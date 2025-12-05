@@ -1211,7 +1211,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 smartptr(jitc_ast_t) func = mknode(AST_Function, token);
                 smartptr(jitc_ast_t) body = mknode(AST_List, token);
                 func->func.variable = type;
-                jitc_push_function_scope(context);
+                jitc_push_scope(context);
                 jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, 0);
                 for (size_t i = 0; i < type->func.num_params; i++) {
                     jitc_declare_variable(context, type->func.params[i], Decltype_None, 0);
