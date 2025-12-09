@@ -9,12 +9,6 @@ typedef struct jitc_token_t jitc_token_t;
 
 typedef void*(*job_func_t)(void* ctx);
 
-struct jitc_error_t {
-    const char* msg;
-    const char* file;
-    int row, col;
-};
-
 struct jitc_context_t {
     set_t* strings;
     map_t* typecache;
@@ -420,7 +414,5 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
 void* jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
-
-void jitc_schedule_job(list_t* jobs, list_t* ctx);
 
 #endif
