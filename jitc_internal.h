@@ -175,6 +175,7 @@ struct jitc_ast_t {
     jitc_ast_type_t node_type;
     jitc_token_t* token;
     jitc_type_t* exprtype;
+    size_t su_number;
     union {
         struct {
             jitc_unary_op_t operation;
@@ -416,7 +417,7 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype);
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, jitc_type_t** exprtype);
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
-bytewriter_t* jitc_generate_function(jitc_context_t* context, jitc_ast_t* ast);
+void* jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
 

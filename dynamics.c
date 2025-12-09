@@ -637,8 +637,11 @@ void bytewriter_pointer(bytewriter_t* writer, void* value) {
 
 void* bytewriter_delete(bytewriter_t* writer) {
     void* ptr = writer->data;
+    void* copy = malloc(writer->size);
+    memcpy(copy, writer->data, writer->size);
+    free(writer->data);
     free(writer);
-    return ptr;
+    return copy;
 }
 
 bytereader_t* bytereader_new(void* ptr) {

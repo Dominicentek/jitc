@@ -209,13 +209,7 @@ void print_ast(jitc_ast_t* ast, int indent) {
 }
 
 int main() {
-    bytewriter_t* writer = jitc_generate_function(NULL, NULL);
-    size_t size = bytewriter_size(writer);
-    uint8_t* data = bytewriter_delete(writer);
-    int result = ((int(*)())data)();
-    printf("%d\n", result);
-    
-    /*FILE* f = fopen("test/test.c", "r");
+    FILE* f = fopen("test/test.c", "r");
     fseek(f, 0, SEEK_END);
     size_t size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -230,6 +224,7 @@ int main() {
     queue_t* tokens2 = queue_new();
     if (!tokens) jitc_report_error(context->error, stderr);
     else {
+        printf("== TOKEN DUMP ==\n");
         while (queue_size(tokens) > 0) {
             jitc_token_t* token = queue_pop_ptr(tokens);
             queue_push_ptr(tokens1, token);
@@ -240,13 +235,17 @@ int main() {
         jitc_push_scope(context);
         smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens1);
         while (jitc_pop_scope(context));
+        printf("== AST DUMP ==\n");
         if (!ast) jitc_report_error(context->error, stderr);
         else print_ast(ast, 0);
+        jitc_ast_t* func = list_get_ptr(ast->list.inner, 1);
+        printf("== BYTECODE DUMP ==\n");
+        jitc_compile(context, func);
     }
     while (queue_size(tokens2) > 0) free(queue_pop_ptr(tokens2));
     queue_delete(tokens1);
     queue_delete(tokens2);
     jitc_destroy_context(context);
 
-    free(data);*/
+    free(data);
 }

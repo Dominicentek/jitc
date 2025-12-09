@@ -273,6 +273,8 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
             smartptr(jitc_ast_t) ast = try(jitc_parse_expression(context, tokens, NULL));
             if (ast->node_type != AST_Integer) ERROR(token, "Expected integer constant");
+            if (!ast->integer.is_unsigned && (ast->integer.value & (1L << 63))) ERROR(token, "Alignment is negative");
+            if (ast->integer.value == 0 || !(ast->integer.value & ast->integer.value)) ERROR(token, "Alignment must be a power of 2");
             align = ast->integer.value;
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         }
@@ -769,7 +771,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             node->ternary.otherwise = try(jitc_process_ast(context, node->ternary.otherwise, NULL));
             if (is_struct(node->ternary.when->exprtype)) ERROR(node->token, "Condition must be a scalar value");
             if (is_constant(node->ternary.when)) {
-                bool cond = is_decayed_pointer(node->ternary.when->exprtype) ? 1 : node->unary.inner->node_type == AST_Floating
+                bool cond = is_decayed_pointer(node->ternary.when->exprtype) ? 1 : node->ternary.when->node_type == AST_Floating
                     ? node->ternary.when->floating.value
                     : node->ternary.when->integer.value;
                 jitc_ast_t* result = cond ? node->ternary.then : node->ternary.otherwise;
@@ -1077,11 +1079,11 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         node->ternary.when = try(jitc_parse_expression(context, tokens, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         jitc_push_scope(context);
-        node->ternary.then = try(jitc_parse_statement(context, tokens, ParseType_Any));
+        node->ternary.then = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
         jitc_pop_scope(context);
         if (jitc_token_expect(tokens, TOKEN_else)) {
             jitc_push_scope(context);
-            node->ternary.otherwise = try(jitc_parse_statement(context, tokens, ParseType_Any));
+            node->ternary.otherwise = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
             jitc_pop_scope(context);
         }
         return jitc_process_ast(context, move(node), NULL);
@@ -1093,7 +1095,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         node->loop.cond = try(jitc_parse_expression(context, tokens, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         jitc_push_scope(context);
-        node->loop.body = try(jitc_parse_statement(context, tokens, ParseType_Any));
+        node->loop.body = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
         jitc_pop_scope(context);
         return move(node);
     }
@@ -1106,7 +1108,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         jitc_push_scope(context);
         while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
             if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
-            list_add_ptr(scope->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
+            list_add_ptr(scope->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression)));
         }
         jitc_pop_scope(context);
         if (!jitc_token_expect(tokens, TOKEN_while)) ERROR(NEXT_TOKEN, "Expected 'while'");

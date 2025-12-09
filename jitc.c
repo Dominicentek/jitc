@@ -251,6 +251,9 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value) {
     if (!type->name) return true;
+    jitc_variable_t* prev = jitc_get_variable(context, type->name);
+    if (prev) return
+        list_size(context->scopes) == 1 && prev->decltype == decltype && prev->type == type;
     jitc_scope_t* scope = NULL;
     if (decltype == Decltype_Static) scope = list_get_ptr(context->scopes, 0);
     else scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
@@ -259,12 +262,6 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     var->decltype = decltype;
     var->value = value;
     var->defined = false;
-    if ((map_find_ptr(scope->variables, (void*)type->name))) {
-        jitc_variable_t* var = map_as_ptr(scope->variables);
-        if (decltype != var->decltype) return false;
-        if (var->type == type) return true;
-        return false;
-    }
     map_get_ptr(scope->variables, (void*)type->name);
     map_store_ptr(scope->variables, move(var));
     return true;
