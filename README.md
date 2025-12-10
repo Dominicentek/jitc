@@ -13,7 +13,8 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - `volatile`, `register`, `restrict` and `inline` do nothing
 - `long double` is the same as `double`
 - No VLAs
-- No Variable shadowing
+- No bitfields
+- No variable shadowing
 - No `goto` (for now)
 - No `alloca`, `auto`, `constexpr` or `signed`
 - `sizeof` and `alignof` **must** have parentheses

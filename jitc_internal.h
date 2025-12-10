@@ -235,6 +235,72 @@ typedef struct {
     uint64_t value;
 } jitc_variable_t;
 
+#define OPCODES(X) \
+    X(pushi, INT(TYPE(uint64_t) value), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
+    X(pushf, FLT(TYPE(float) value)) \
+    X(pushd, DBL(TYPE(double) value)) \
+    X(pop) \
+    X(dup) \
+    X(load, INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
+    X(lstack, INT(TYPE(int32_t) offset), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
+    X(store) \
+    X(add) \
+    X(sub) \
+    X(mul) \
+    X(div) \
+    X(mod) \
+    X(shl) \
+    X(shr) \
+    X(and) \
+    X(or) \
+    X(xor) \
+    X(not) \
+    X(neg) \
+    X(inc) \
+    X(dec) \
+    X(zero) \
+    X(addrof) \
+    X(eql) \
+    X(neq) \
+    X(lst) \
+    X(lte) \
+    X(grt) \
+    X(gte) \
+    X(swp) \
+    X(cvt, INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
+    X(if) \
+    X(then) \
+    X(else) \
+    X(end) \
+    X(goto_start) \
+    X(goto_end) \
+    X(call, PTR(TYPE(jitc_type_t*) signature)) \
+    X(ret) \
+    X(func, PTR(TYPE(jitc_type_t*) signature), INT(TYPE(size_t) stack_size)) \
+    X(func_end)
+
+#define NOTHING(...)
+#define EXPAND(...) __VA_ARGS__
+
+#define ENUM(x, ...) IROpCode_##x,
+typedef enum {
+    OPCODES(ENUM)
+} jitc_opcode_t;
+#undef ENUM
+
+typedef struct {
+    jitc_opcode_t opcode;
+    union {
+        uint64_t as_integer;
+        void* as_pointer;
+        float as_float;
+        double as_double;
+    } params[3];
+} jitc_ir_t;
+
+#undef NOTHING
+#undef EXPAND
+
 #define PROCESS_TOKENS(type) TOKENS(type##_KEYWORD, type##_SYMBOL, type##_SPECIAL)
 
 #define ENUM_KEYWORD(x) TOKEN_##x,
