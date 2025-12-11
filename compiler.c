@@ -8,7 +8,6 @@
 typedef enum {
     ArgType_Int,
     ArgType_Float,
-    ArgType_Double,
     ArgType_Pointer
 } jitc_ir_argtype_t;
 
@@ -33,7 +32,6 @@ static void jitc_asm(list_t* list, jitc_opcode_t opcode, ...) {
         switch (args[opcode].arg_type[i]) {
             case ArgType_Int: ir->params[i].as_integer = va_arg(varargs, uint64_t); break;
             case ArgType_Float: ir->params[i].as_float = va_arg(varargs, double); break;
-            case ArgType_Double: ir->params[i].as_double = va_arg(varargs, double); break;
             case ArgType_Pointer: ir->params[i].as_pointer = va_arg(varargs, void*); break;
         }
     }
@@ -41,7 +39,7 @@ static void jitc_asm(list_t* list, jitc_opcode_t opcode, ...) {
     list_add_ptr(list, ir);
 }
 
-#define DEBUG
+//#define DEBUG
 
 #if defined(DEBUG)
 #include "platform/debug.c"
@@ -190,9 +188,7 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             case Unary_SuffixIncrement:
             case Unary_SuffixDecrement:
                 assemble(list, ast->unary.inner, variable_map);
-                jitc_asm(list, IROpCode_dup);
                 jitc_asm(list, ast->unary.operation == Unary_SuffixIncrement ? IROpCode_inc : IROpCode_dec);
-                jitc_asm(list, IROpCode_pop);
                 break;
         }
         case AST_Binary:

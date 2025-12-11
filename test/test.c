@@ -1,6 +1,5 @@
 int main() {
-    do {
-        return 0;
-    }
-    while (1);
+    int test1 = 1;
+    int test2 = 2;
+    return test1 + test2;
 }

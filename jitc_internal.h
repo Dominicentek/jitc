@@ -237,10 +237,9 @@ typedef struct {
 
 #define OPCODES(X) \
     X(pushi, INT(TYPE(uint64_t) value), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
-    X(pushf, FLT(TYPE(float) value)) \
-    X(pushd, DBL(TYPE(double) value)) \
+    X(pushf, FLT(TYPE(double) value)) \
+    X(pushd, FLT(TYPE(double) value)) \
     X(pop) \
-    X(dup) \
     X(load, INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(lstack, INT(TYPE(int32_t) offset), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(store) \
@@ -293,8 +292,7 @@ typedef struct {
     union {
         uint64_t as_integer;
         void* as_pointer;
-        float as_float;
-        double as_double;
+        double as_float;
     } params[3];
 } jitc_ir_t;
 

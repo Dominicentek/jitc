@@ -239,7 +239,7 @@ int main() {
         if (!ast) jitc_report_error(context->error, stderr);
         else print_ast(ast, 0);
         jitc_ast_t* func = list_get_ptr(ast->list.inner, 1);
-        printf("== BYTECODE DUMP ==\n");
+        printf("== GENERATED ASM ==\n");
         jitc_compile(context, func);
     }
     while (queue_size(tokens2) > 0) free(queue_pop_ptr(tokens2));
