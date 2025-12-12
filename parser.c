@@ -679,8 +679,6 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
                     smartptr(jitc_ast_t) left = node->binary.left; \
                     smartptr(jitc_ast_t) right = node->binary.right; \
-                    node->exprtype = jitc_typecache_primitive(context, Type_Int8); \
-                    node->exprtype = jitc_typecache_unsigned(context, node->exprtype); \
                     node->node_type = AST_Integer; \
                     node->integer.type_kind = Type_Int8; \
                     node->integer.is_unsigned = true; \
@@ -693,6 +691,8 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                         else node->integer.value = left->integer.value op right->integer.value; \
                     } \
                 } \
+                node->exprtype = jitc_typecache_primitive(context, Type_Int8); \
+                node->exprtype = jitc_typecache_unsigned(context, node->exprtype); \
             } break
             #define LOGIC(op, shortcircuit) { \
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL)); \

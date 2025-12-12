@@ -119,6 +119,10 @@ static operand_t reg(reg_t reg, jitc_type_kind_t kind, bool is_unsigned) {
     return (operand_t){ .type = OpType_reg, .kind = kind, .is_unsigned = is_unsigned, .reg = reg };
 }
 
+static operand_t imm(uint64_t value, jitc_type_kind_t kind, bool is_unsigned) {
+    return (operand_t){ .type = OpType_imm, .kind = kind, .is_unsigned = is_unsigned, .value = value };
+}
+
 static operand_t op(stack_item_t* item) {
     switch (item->type) {
         case StackItem_literal: return (operand_t){
@@ -132,7 +136,7 @@ static operand_t op(stack_item_t* item) {
             .kind = item->kind,
             .is_unsigned = item->is_unsigned,
             .reg = rbp,
-            .value = -item->value.as_int
+            .value = -item->value.as_int - (int[]){ 1, 2, 4, 8, 4, 8, 8 }[item->kind]
         };
         case StackItem_lvalue_abs: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
@@ -281,6 +285,21 @@ static void bitshift(bool is_right) {
     instr1(is_right ? "shr" : "shl", op(res), true);
 }
 
+static void compare(const char* opcode) {
+    stack_item_t op2 = pop();
+    stack_item_t op1 = pop();
+    operand_t res = op(push(StackItem_rvalue, Type_Int8, true));
+    instr2("cmp", op(&op1), op(&op2));
+    instr1(opcode, res, false);
+}
+
+static void compare_against(const char* opcode, operand_t op2) {
+    stack_item_t op1 = pop();
+    operand_t res = op(push(StackItem_rvalue, Type_Int8, true));
+    instr2("cmp", op(&op1), op2);
+    instr1(opcode, res, false);
+}
+
 static void* jitc_assemble(list_t* list) {
     stack_t* stack = stack_new();
     for (size_t i = 0; i < list_size(list); i++) {
@@ -314,13 +333,13 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_inc: unaryop("inc"); break;
             case IROpCode_dec: unaryop("dec"); break;
             case IROpCode_addrof: break;
-            case IROpCode_zero: break;
-            case IROpCode_eql: break;
-            case IROpCode_neq: break;
-            case IROpCode_lst: break;
-            case IROpCode_lte: break;
-            case IROpCode_grt: break;
-            case IROpCode_gte: break;
+            case IROpCode_zero: compare_against("sete", imm(0, peek(0)->kind, peek(0)->is_unsigned)); break;
+            case IROpCode_eql: compare("sete"); break;
+            case IROpCode_neq: compare("setne"); break;
+            case IROpCode_lst: compare("setl"); break;
+            case IROpCode_lte: compare("setle"); break;
+            case IROpCode_grt: compare("setg"); break;
+            case IROpCode_gte: compare("setge"); break;
             case IROpCode_swp: break;
             case IROpCode_cvt: break;
             case IROpCode_if: break;
