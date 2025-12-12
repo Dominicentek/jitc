@@ -1,6 +1,5 @@
 int main() {
-    int* ptr = 0;
-    int test = *ptr;
-    *ptr = 8;
-    test = 4;
+    int test1 = 4;
+    int test2 = 2;
+    test1 %= test2;
 }

@@ -27,6 +27,7 @@ static const char* reg_names[][16] = {
     [Type_Float64] = { "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15" },
     [Type_Pointer] = { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15" },
 };
+static const char* ptr_prefixes[] = { "byte", "word", "dword", "qword", "", "", "qword" };
 
 typedef enum: uint8_t {
     StackItem_literal,
@@ -215,18 +216,19 @@ static void instr2(const char* opcode, operand_t op1, operand_t op2) {
     printf("\n");
 }
 
-static void instr1(const char* opcode, operand_t op) {
+static void instr1(const char* opcode, operand_t op, bool bitshift) {
     if (op.type == OpType_ptrptr) {
         printf("mov %s, ", reg_names[Type_Int64][rax]);
         print_mem(op.reg, op.value);
-        printf("\n%s%c [%s]\n", opcode, "bwdq"[op.kind], reg_names[Type_Int64][rax]);
+        printf("\n%s %s ptr [%s]", opcode, ptr_prefixes[op.kind], reg_names[Type_Int64][rax]);
     }
     else if (op.type == OpType_ptr) {
-        printf("\n%s%c ", opcode, "bwdq"[op.kind]);
+        printf("%s %s ptr ", opcode, ptr_prefixes[op.kind]);
         print_mem(op.reg, op.value);
-        printf("\n");
     }
-    else if (op.type == OpType_reg) printf("%s %s\n", opcode, reg_names[op.kind][op.reg]);
+    else if (op.type == OpType_reg) printf("%s %s", opcode, reg_names[op.kind][op.reg]);
+    if (bitshift) printf(", cl\n");
+    else printf("\n");
 }
 
 static void binaryop(const char* opcode) {
@@ -241,7 +243,7 @@ static void unaryop(const char* opcode) {
     stack_item_t op1 = pop();
     stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
     instr2("mov",  op(res), op(&op1));
-    instr1(opcode, op(res));
+    instr1(opcode, op(res), false);
 }
 
 static void load(jitc_type_kind_t kind, bool is_unsigned) {
@@ -254,11 +256,29 @@ static void load(jitc_type_kind_t kind, bool is_unsigned) {
 }
 
 static void divide(reg_t outreg) {
-
+    stack_item_t op2 = pop();
+    stack_item_t op1 = pop();
+    stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+    instr2("mov", reg(rax, op1.kind, op1.is_unsigned), op(&op1));
+    if (op1.kind == Type_Int8) {
+        if (op1.is_unsigned) printf("mov ah, 0x0\n");
+        else printf("cbw\n");
+    }
+    else {
+        if (op1.is_unsigned) printf("mov %s, 0x0\n", reg_names[op1.kind][rdx]);
+        else printf("%s\n", (const char*[]){ "", "cwd", "cdq", "cqo", "", "", "cqo" }[op1.kind]);
+    }
+    instr1("idiv", op(&op2), false);
+    instr2("mov", op(res), reg(outreg, op1.kind, op1.is_unsigned));
 }
 
 static void bitshift(bool is_right) {
-
+    stack_item_t op2 = pop();
+    stack_item_t op1 = pop();
+    stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+    instr2("mov", op(res), op(&op1));
+    instr2("mov", reg(rcx, op2.kind, op2.is_unsigned), op(&op2));
+    instr1(is_right ? "shr" : "shl", op(res), true);
 }
 
 static void* jitc_assemble(list_t* list) {

@@ -12,7 +12,6 @@ static void* jitc_assemble(list_t* list) {
         for (int i = 0; i < args[ir->opcode].num_args; i++) switch(args[ir->opcode].arg_type[i]) {
             case ArgType_Int: printf(" %lu", ir->params[i].as_integer); break;
             case ArgType_Float: printf(" %f", ir->params[i].as_float); break;
-            case ArgType_Double: printf(" %f", ir->params[i].as_double); break;
             case ArgType_Pointer: printf(" 0x%016lx", ir->params[i].as_integer); break;
         }
         printf("\n");

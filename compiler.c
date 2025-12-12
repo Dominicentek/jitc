@@ -174,7 +174,6 @@ static size_t get_stack_size(map_t* variable_map, jitc_ast_t* ast) {
 }
 
 static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
-    if (!ast) return false;
     switch (ast->node_type) {
         case AST_Unary: switch(ast->unary.operation) {
             case Unary_ArithPlus: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); break;
@@ -190,7 +189,7 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                 assemble(list, ast->unary.inner, variable_map);
                 jitc_asm(list, ast->unary.operation == Unary_SuffixIncrement ? IROpCode_inc : IROpCode_dec);
                 break;
-        } break;
+        } return true;
         case AST_Binary:
             if (ast->binary.operation == Binary_Cast) {
                 assemble(list, ast->binary.left, variable_map);
@@ -200,11 +199,15 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             else if (ast->binary.operation == Binary_FunctionCall) {}
             else {
                 if (get_su_number(ast->binary.left) < get_su_number(ast->binary.right)) {
+                    if (ast->binary.operation >= Binary_AssignAddition && ast->binary.operation <= Binary_AssignXor)
+                        assemble(list, ast->binary.left, variable_map);
                     assemble(list, ast->binary.right, variable_map);
                     assemble(list, ast->binary.left, variable_map);
                     jitc_asm(list, IROpCode_swp);
                 }
                 else {
+                    if (ast->binary.operation >= Binary_AssignAddition && ast->binary.operation <= Binary_AssignXor)
+                        assemble(list, ast->binary.left, variable_map);
                     assemble(list, ast->binary.left, variable_map);
                     assemble(list, ast->binary.right, variable_map);
                 }
@@ -241,59 +244,61 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                     default: break;
                 }
             }
-            break;
+            return true;
         case AST_Ternary:
             jitc_asm(list, IROpCode_if);
-            if (!assemble(list, ast->ternary.when, variable_map)) jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
+            if (ast->ternary.when) assemble(list, ast->ternary.when, variable_map);
+            else jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
             jitc_asm(list, IROpCode_then);
-            assemble(list, ast->ternary.then, variable_map);
+            if (assemble(list, ast->ternary.then, variable_map)) jitc_asm(list, IROpCode_pop);
             jitc_asm(list, IROpCode_else);
-            assemble(list, ast->ternary.otherwise, variable_map);
+            if (assemble(list, ast->ternary.otherwise, variable_map)) jitc_asm(list, IROpCode_pop);
             jitc_asm(list, IROpCode_end);
-            break;
+            return false;
         case AST_Scope:
         case AST_List:
             for (size_t i = 0; i < list_size(ast->list.inner); i++) {
-                assemble(list, list_get_ptr(ast->list.inner, i), variable_map);
+                if (assemble(list, list_get_ptr(ast->list.inner, i), variable_map)) jitc_asm(list, IROpCode_pop);
             }
-            break;
+            return false;
         case AST_Loop:
             jitc_asm(list, IROpCode_if);
-            if (!assemble(list, ast->loop.cond, variable_map)) jitc_asm(list, IROpCode_pushi, 1, Type_Int32, false);
+            if (ast->loop.cond) assemble(list, ast->loop.cond, variable_map);
+            else jitc_asm(list, IROpCode_pushi, 1, Type_Int32, false);
             jitc_asm(list, IROpCode_then);
             assemble(list, ast->loop.body, variable_map);
             jitc_asm(list, IROpCode_goto_start);
             jitc_asm(list, IROpCode_end);
-            break;
+            return false;
         case AST_Break:
             jitc_asm(list, IROpCode_goto_end);
-            break;
+            return false;
         case AST_Continue:
             jitc_asm(list, IROpCode_goto_start);
-            break;
+            return false;
         case AST_Return:
             if (ast->ret.expr) assemble(list, ast->ret.expr, variable_map);
             else jitc_asm(list, IROpCode_pushi, 0, Type_Int64, true);
             jitc_asm(list, IROpCode_ret);
-            break;
+            return false;
         case AST_Integer:
         case AST_StringLit:
             jitc_asm(list, IROpCode_pushi, ast->integer.value, ast->integer.type_kind, ast->integer.is_unsigned);
-            break;
+            return true;
         case AST_Floating:
             if (ast->floating.is_single_precision) jitc_asm(list, IROpCode_pushf, ast->floating.value);
             else jitc_asm(list, IROpCode_pushd, ast->floating.value);
-            break;
+            return true;
         case AST_Variable:
             map_find_ptr(variable_map, (char*)ast->variable.name);
             stackvar_t* var = map_as_ptr(variable_map);
             jitc_asm(list, IROpCode_lstack, var->var.offset, type(var->var.type));
-            break;
+            return true;
         case AST_WalkStruct:
             break;
         default: break;
     }
-    return true;
+    return false;
 }
 
 void* jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
@@ -303,7 +308,7 @@ void* jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
     jitc_asm(list, IROpCode_func, ast->func.variable, get_stack_size(variable_map, ast->func.body));
     for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
         jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
-        assemble(list, node, variable_map);
+        if (assemble(list, node, variable_map)) jitc_asm(list, IROpCode_pop);
         is_return = node->node_type == AST_Return;
     }
     if (!is_return) {
