@@ -7,12 +7,12 @@ typedef enum: uint8_t {
     rsp, rbp, rsi, rdi,
     r8,  r9,  r10, r11,
     r12, r13, r14, r15,
-    
+
     xmm0=0,xmm1,  xmm2,  xmm3,
     xmm4,  xmm5,  xmm6,  xmm7,
     xmm8,  xmm9,  xmm10, xmm11,
     xmm12, xmm13, xmm14, xmm15,
-    
+
     xmm_mask = (1 << 4)
 } reg_t;
 
@@ -25,6 +25,7 @@ static const char* reg_names[][16] = {
     [Type_Int64]   = { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15" },
     [Type_Float32] = { "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15" },
     [Type_Float64] = { "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15" },
+    [Type_Pointer] = { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15" },
 };
 
 typedef enum: uint8_t {
@@ -65,7 +66,7 @@ static int opstack_int_index = 0, opstack_float_index = 0, opstack_stack_index =
 
 static stack_item_t* push(stack_item_type_t type, jitc_type_kind_t kind, bool is_unsigned) {
     if (opstack_capacity == opstack_size) {
-        if (opstack_capacity == 0) opstack_capacity = 4; 
+        if (opstack_capacity == 0) opstack_capacity = 4;
         else opstack_capacity *= 2;
         opstack = realloc(opstack, opstack_capacity * sizeof(stack_item_t));
     }
@@ -171,7 +172,7 @@ static void print_mem(reg_t reg, int32_t disp) {
 }
 
 static void instr2(const char* opcode, operand_t op1, operand_t op2) {
-    bool use_rcx = false;
+    bool use_rcx = false, rcxptr = false;
     if (op2.type == OpType_ptr && (op1.type == OpType_ptr || op1.type == OpType_ptrptr)) {
         use_rcx = true;
         printf("mov %s, ", reg_names[op2.kind][rcx]);
@@ -185,6 +186,7 @@ static void instr2(const char* opcode, operand_t op1, operand_t op2) {
         printf("\n");
         if (op1.type == OpType_ptr || op1.type == OpType_ptrptr)
             printf("mov %s, [%s]\n", reg_names[op2.kind][rcx], reg_names[Type_Int64][rcx]);
+        else rcxptr = true;
     }
 
     if (op1.type == OpType_ptrptr) {
@@ -192,21 +194,21 @@ static void instr2(const char* opcode, operand_t op1, operand_t op2) {
         print_mem(op1.reg, op1.value);
         printf("\n%s ", opcode);
         if (op2.type == OpType_imm) printf("%s ptr ", (const char*[]) {
-            "byte", "word", "dword", "qword"
+            "byte", "word", "dword", "qword", "", "", "qword"
         }[op2.kind]);
         printf("[%s]", reg_names[Type_Int64][rax]);
     }
     else if (op1.type == OpType_ptr) {
         printf("%s ", opcode);
         if (op2.type == OpType_imm) printf("%s ptr ", (const char*[]) {
-            "byte", "word", "dword", "qword"
+            "byte", "word", "dword", "qword", "", "", "qword"
         }[op2.kind]);
         print_mem(op1.reg, op1.value);
     }
     else printf("%s %s", opcode, reg_names[op1.kind][op1.reg]);
     printf(", ");
 
-    if (use_rcx) printf("%s", reg_names[op2.kind][rcx]);
+    if (use_rcx) printf(rcxptr ? "[%s]" : "%s", reg_names[op2.kind][rcx]);
     else if (op2.type == OpType_imm) printf("0x%lx", op2.value);
     else if (op2.type == OpType_reg) printf("%s", reg_names[op2.kind][op2.reg]);
     else if (op2.type == OpType_ptr) print_mem(op2.reg, op2.value);
@@ -242,6 +244,23 @@ static void unaryop(const char* opcode) {
     instr1(opcode, op(res));
 }
 
+static void load(jitc_type_kind_t kind, bool is_unsigned) {
+    stack_item_t addr = pop();
+    stack_item_t* res = push(StackItem_rvalue, Type_Pointer, true);
+    instr2("mov", op(res), op(&addr));
+    res->kind = kind;
+    res->is_unsigned = is_unsigned;
+    res->type = StackItem_lvalue_abs;
+}
+
+static void divide(reg_t outreg) {
+
+}
+
+static void bitshift(bool is_right) {
+
+}
+
 static void* jitc_assemble(list_t* list) {
     stack_t* stack = stack_new();
     for (size_t i = 0; i < list_size(list); i++) {
@@ -254,53 +273,36 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_pushd:
                 pushf(StackItem_literal, ir->opcode == IROpCode_pushf ? Type_Float32 : Type_Float64, false, ir->params[0].as_float);
                 break;
-            case IROpCode_pop:
-                pop();
-                break;
-            case IROpCode_load:
-                break;
             case IROpCode_lstack:
                 pushi(StackItem_lvalue, ir->params[1].as_integer, ir->params[2].as_integer, ir->params[0].as_integer);
                 break;
+            case IROpCode_pop: pop(); break;
+            case IROpCode_load: load(ir->params[0].as_integer, ir->params[1].as_integer); break;
             case IROpCode_store: instr2("mov", op(peek(1)), op(peek(0))); pop(); break;
             case IROpCode_add: binaryop("add"); break;
             case IROpCode_sub: binaryop("sub"); break;
             case IROpCode_mul: binaryop("imul"); break;
-            case IROpCode_div:
-                break;
-            case IROpCode_mod:
-                break;
+            case IROpCode_div: divide(rax); break;
+            case IROpCode_mod: divide(rdx); break;
             case IROpCode_and: binaryop("and"); break;
             case IROpCode_or:  binaryop("or");  break;
             case IROpCode_xor: binaryop("xor"); break;
-            case IROpCode_shl:
-                break;
-            case IROpCode_shr:
-                break;
+            case IROpCode_shl: bitshift(false); break;
+            case IROpCode_shr: bitshift(true); break;
             case IROpCode_not: unaryop("not"); break;
             case IROpCode_neg: unaryop("neg"); break;
             case IROpCode_inc: unaryop("inc"); break;
             case IROpCode_dec: unaryop("dec"); break;
-            case IROpCode_addrof:
-                break;
-            case IROpCode_zero:
-                break;
-            case IROpCode_eql:
-                break;
-            case IROpCode_neq:
-                break;
-            case IROpCode_lst:
-                break;
-            case IROpCode_lte:
-                break;
-            case IROpCode_grt:
-                break;
-            case IROpCode_gte:
-                break;
-            case IROpCode_swp:
-                break;
-            case IROpCode_cvt:
-                break;
+            case IROpCode_addrof: break;
+            case IROpCode_zero: break;
+            case IROpCode_eql: break;
+            case IROpCode_neq: break;
+            case IROpCode_lst: break;
+            case IROpCode_lte: break;
+            case IROpCode_grt: break;
+            case IROpCode_gte: break;
+            case IROpCode_swp: break;
+            case IROpCode_cvt: break;
             case IROpCode_if: break;
             case IROpCode_then: break;
             case IROpCode_else: break;

@@ -73,7 +73,7 @@ static size_t get_su_number(jitc_ast_t* ast) {
     if (ast->su_number != 0) return ast->su_number;
     switch (ast->node_type) {
         case AST_Unary: {
-            ast->su_number = get_su_number(ast);
+            ast->su_number = get_su_number(ast->unary.inner);
         } break;
         case AST_Binary: {
             size_t l = get_su_number(ast->binary.left);
@@ -190,7 +190,7 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                 assemble(list, ast->unary.inner, variable_map);
                 jitc_asm(list, ast->unary.operation == Unary_SuffixIncrement ? IROpCode_inc : IROpCode_dec);
                 break;
-        }
+        } break;
         case AST_Binary:
             if (ast->binary.operation == Binary_Cast) {
                 assemble(list, ast->binary.left, variable_map);

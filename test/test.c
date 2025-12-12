@@ -1,5 +1,6 @@
 int main() {
-    int test1 = 1;
-    int test2 = 2;
-    return test1 + test2;
+    int* ptr = 0;
+    int test = *ptr;
+    *ptr = 8;
+    test = 4;
 }
