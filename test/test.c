@@ -1,4 +1,4 @@
 int main() {
     int test = 1;
-    test = test < 3;
+    *&test = test < 3;
 }

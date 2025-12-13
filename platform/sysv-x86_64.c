@@ -300,6 +300,38 @@ static void compare_against(const char* opcode, operand_t op2) {
     instr1(opcode, res, false);
 }
 
+static void addrof() {
+    stack_item_t item = pop();
+    operand_t op1 = op(&item);
+    operand_t res = op(push(StackItem_rvalue, Type_Pointer, true));
+    op1.kind = Type_Pointer;
+    op1.is_unsigned = true;
+    if (op1.type == OpType_ptr) {
+        op1.type = OpType_reg;
+        instr2("mov", res, op1);
+        int32_t offset = op1.value;
+        if (offset < 0) instr2("sub", res, imm(-offset, Type_Int32, true));
+        if (offset > 0) instr2("add", res, imm( offset, Type_Int32, true));
+    }
+    if (op1.type == OpType_ptrptr) {
+        op1.type = OpType_ptr;
+        instr2("mov", res, op1);
+    }
+}
+
+static void convert(jitc_type_kind_t kind, bool is_unsigned) {
+    stack_item_t item = pop();
+    operand_t op1 = op(&item);
+    operand_t res = op(push(StackItem_rvalue, kind, is_unsigned));
+    if (op1.kind == Type_Pointer) op1.kind = Type_Int64;
+    if (res.kind == Type_Pointer) res.kind = Type_Int64;
+    if (op1.kind > res.kind) {
+        op1.kind = res.kind;
+        instr2("mov", res, op1);
+    }
+    if (op1.kind < res.kind) instr2(op1.is_unsigned ? "movzx" : "movsx", res, op1);
+}
+
 static void* jitc_assemble(list_t* list) {
     stack_t* stack = stack_new();
     for (size_t i = 0; i < list_size(list); i++) {
@@ -332,7 +364,7 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_neg: unaryop("neg"); break;
             case IROpCode_inc: unaryop("inc"); break;
             case IROpCode_dec: unaryop("dec"); break;
-            case IROpCode_addrof: break;
+            case IROpCode_addrof: addrof(); break;
             case IROpCode_zero: compare_against("sete", imm(0, peek(0)->kind, peek(0)->is_unsigned)); break;
             case IROpCode_eql: compare("sete"); break;
             case IROpCode_neq: compare("setne"); break;
@@ -341,7 +373,7 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_grt: compare("setg"); break;
             case IROpCode_gte: compare("setge"); break;
             case IROpCode_swp: break;
-            case IROpCode_cvt: break;
+            case IROpCode_cvt: convert(ir->params[0].as_integer, ir->params[1].as_integer); break;
             case IROpCode_if: break;
             case IROpCode_then: break;
             case IROpCode_else: break;
