@@ -108,7 +108,6 @@ bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
         case TOKEN_register:
         case TOKEN_restrict:
         case TOKEN_inline:
-        case TOKEN_alignas:
         case TOKEN_typeof:
         case TOKEN_struct:
         case TOKEN_union:
@@ -267,15 +266,6 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
             if (jitc_peek_type(context, tokens)) type = try(jitc_parse_type(context, tokens, NULL));
             else jitc_destroy_ast(try(jitc_parse_expression(context, tokens, &type)));
-            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
-        }
-        else if ((token = jitc_token_expect(tokens, TOKEN_alignas))) {
-            if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
-            smartptr(jitc_ast_t) ast = try(jitc_parse_expression(context, tokens, NULL));
-            if (ast->node_type != AST_Integer) ERROR(token, "Expected integer constant");
-            if (!ast->integer.is_unsigned && (ast->integer.value & (1L << 63))) ERROR(token, "Alignment is negative");
-            if (ast->integer.value == 0 || !(ast->integer.value & ast->integer.value)) ERROR(token, "Alignment must be a power of 2");
-            align = ast->integer.value;
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_struct)) || (token = jitc_token_expect(tokens, TOKEN_union))) {

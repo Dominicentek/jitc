@@ -40,11 +40,9 @@ typedef struct {
     stack_item_type_t type;
     jitc_type_kind_t kind;
     bool is_unsigned;
-    union {
-        uint64_t as_int;
-        double as_float;
-        void* as_ptr;
-    } value;
+    uint64_t value;
+    uint32_t extra_storage;
+    int32_t offset;
 } stack_item_t;
 
 typedef struct {
@@ -79,7 +77,7 @@ static stack_item_t* push(stack_item_type_t type, jitc_type_kind_t kind, bool is
         int* index = &opstack_int_index;
         if (type == StackItem_rvalue && (item->kind == Type_Float32 || item->kind == Type_Float64)) index = &opstack_float_index;
         if (*index == sizeof(stack_regs)) index = &opstack_stack_index;
-        item->value.as_int = (*index)++ + (index == &opstack_stack_index ? sizeof(stack_regs) : 0);
+        item->value = (*index)++ + (index == &opstack_stack_index ? sizeof(stack_regs) : 0);
         if (index == &opstack_stack_index) printf("sub rsp, 8\n");
     }
     return item;
@@ -87,13 +85,18 @@ static stack_item_t* push(stack_item_type_t type, jitc_type_kind_t kind, bool is
 
 static stack_item_t* pushi(stack_item_type_t type, jitc_type_kind_t kind, bool is_unsigned, uint64_t value) {
     stack_item_t* item = push(type, kind, is_unsigned);
-    item->value.as_int = value;
+    item->value = value;
     return item;
 }
 
 static stack_item_t* pushf(stack_item_type_t type, jitc_type_kind_t kind, bool is_unsigned, double value) {
-    stack_item_t* item = push(type, kind, is_unsigned);
-    item->value.as_float = value;
+    return pushi(type, kind, is_unsigned, *(uint64_t*)&value);
+}
+
+static stack_item_t* stackalloc(uint32_t bytes) {
+    stack_item_t* item = push(StackItem_lvalue, Type_Pointer, true);
+    item->extra_storage = bytes;
+    printf("sub rsp, %u\n", bytes);
     return item;
 }
 
@@ -104,12 +107,13 @@ static stack_item_t* peek(int offset) {
 static stack_item_t pop() {
     stack_item_t* item = peek(0);
     if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
-        if (item->value.as_int >= sizeof(stack_regs)) {
+        if (item->value >= sizeof(stack_regs)) {
             opstack_stack_index--;
             printf("add rsp, 8\n");
         }
         else if (item->kind == Type_Float32 || item->kind == Type_Float64) opstack_float_index--;
         else opstack_int_index--;
+        if (item->extra_storage != 0) printf("add rsp, %u\n", item->extra_storage);
     }
     opstack_size--;
     return *item;
@@ -129,39 +133,39 @@ static operand_t op(stack_item_t* item) {
             .type = OpType_imm,
             .kind = item->kind,
             .is_unsigned = item->is_unsigned,
-            .value = item->value.as_int
+            .value = item->value
         };
         case StackItem_lvalue: return (operand_t){
             .type = OpType_ptr,
             .kind = item->kind,
             .is_unsigned = item->is_unsigned,
             .reg = rbp,
-            .value = -item->value.as_int - (int[]){ 1, 2, 4, 8, 4, 8, 8 }[item->kind]
+            .value = -item->value - (int[]){ 1, 2, 4, 8, 4, 8, 8 }[item->kind] + item->offset
         };
         case StackItem_lvalue_abs: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
-            if (item->value.as_int >= sizeof(stack_regs)) {
+            if (item->value >= sizeof(stack_regs)) {
                 op.type = OpType_ptrptr;
                 op.reg = rsp;
-                op.value = (opstack_stack_index - item->value.as_int + sizeof(stack_regs)) * 8;
+                op.value = (opstack_stack_index - item->value + sizeof(stack_regs)) * 8 + item->offset;
             }
             else {
                 op.type = OpType_ptr;
-                op.reg = stack_regs[item->value.as_int];
-                op.value = 0;
+                op.reg = stack_regs[item->value];
+                op.value = item->offset;
             }
             return op;
         }
         case StackItem_rvalue: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
-            if (item->value.as_int >= sizeof(stack_regs)) {
+            if (item->value >= sizeof(stack_regs)) {
                 op.type = OpType_ptr;
                 op.reg = rsp;
-                op.value = (opstack_stack_index - item->value.as_int + sizeof(stack_regs)) * 8;
+                op.value = (opstack_stack_index - item->value + sizeof(stack_regs)) * 8;
             }
             else {
                 op.type = OpType_reg;
-                op.reg = (item->kind == Type_Float32 || item->kind == Type_Float64 ? stack_xmms : stack_regs)[item->value.as_int];
+                op.reg = (item->kind == Type_Float32 || item->kind == Type_Float64 ? stack_xmms : stack_regs)[item->value];
             }
             return op;
         }
@@ -332,6 +336,16 @@ static void convert(jitc_type_kind_t kind, bool is_unsigned) {
     if (op1.kind < res.kind) instr2(op1.is_unsigned ? "movzx" : "movsx", res, op1);
 }
 
+static void swap() {
+    stack_item_t tmp = *peek(0);
+    *peek(0) = *peek(1);
+    *peek(1) = tmp;
+}
+
+static void offset(int32_t off) {
+    peek(0)->offset += off;
+}
+
 static void* jitc_assemble(list_t* list) {
     stack_t* stack = stack_new();
     for (size_t i = 0; i < list_size(list); i++) {
@@ -372,8 +386,9 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_lte: compare("setle"); break;
             case IROpCode_grt: compare("setg"); break;
             case IROpCode_gte: compare("setge"); break;
-            case IROpCode_swp: break;
+            case IROpCode_swp: swap(); break;
             case IROpCode_cvt: convert(ir->params[0].as_integer, ir->params[1].as_integer); break;
+            case IROpCode_offset: offset(ir->params[0].as_integer); break;
             case IROpCode_if: break;
             case IROpCode_then: break;
             case IROpCode_else: break;

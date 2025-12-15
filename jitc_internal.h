@@ -267,6 +267,8 @@ typedef struct {
     X(gte) \
     X(swp) \
     X(cvt, INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
+    X(stackalloc, INT(TYPE(uint32_t) offset)) \
+    X(offset, INT(TYPE(int32_t) offset)) \
     X(if) \
     X(then) \
     X(else) \
@@ -314,7 +316,6 @@ typedef struct {
     SPECIAL(STRING) \
     SPECIAL(INTEGER) \
     SPECIAL(FLOAT) \
-    KEYWORD(alignas) \
     KEYWORD(alignof) \
     KEYWORD(auto) \
     KEYWORD(bool) \
