@@ -255,8 +255,8 @@ typedef struct {
     X(xor) \
     X(not) \
     X(neg) \
-    X(inc) \
-    X(dec) \
+    X(inc, INT(TYPE(bool) suffix)) \
+    X(dec, INT(TYPE(bool) suffix)) \
     X(zero) \
     X(addrof) \
     X(eql) \

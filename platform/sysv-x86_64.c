@@ -247,11 +247,12 @@ static void binaryop(const char* opcode) {
     instr2(opcode, op(res), op(&op2));
 }
 
-static void unaryop(const char* opcode) {
+static void unaryop(const char* opcode, bool flip) {
     stack_item_t op1 = pop();
     stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
-    instr2("mov",  op(res), op(&op1));
-    instr1(opcode, op(res), false);
+    if (flip) instr2("mov",  op(res), op(&op1));
+    instr1(opcode, op(&op1), false);
+    if (!flip) instr2("mov",  op(res), op(&op1));
 }
 
 static void load(jitc_type_kind_t kind, bool is_unsigned) {
@@ -346,6 +347,37 @@ static void offset(int32_t off) {
     peek(0)->offset += off;
 }
 
+static int branch_id = 0;
+
+static void push_branch() {
+    printf("_L%d:\n", branch_id * 3 + 0);
+    branch_id++;
+}
+
+static void branch_then() {
+    stack_item_t item = pop();
+    instr2("cmp", op(&item), op(&item));
+    printf("jz _L%d\n", (branch_id - 1) * 3 + 1);
+}
+
+static void branch_else() {
+    printf("jmp _L%d\n", (branch_id - 1) * 3 + 2);
+    printf("_L%d:\n", (branch_id - 1) * 3 + 1);
+}
+
+static void pop_branch() {
+    branch_id--;
+    printf("_L%d:\n", branch_id * 3 + 2);
+}
+
+static void goto_start() {
+    printf("jmp _L%d\n", (branch_id - 1) * 3 + 0);
+}
+
+static void goto_end() {
+    printf("jmp _L%d\n", (branch_id - 1) * 3 + 2);
+}
+
 static void* jitc_assemble(list_t* list) {
     stack_t* stack = stack_new();
     for (size_t i = 0; i < list_size(list); i++) {
@@ -374,10 +406,10 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_xor: binaryop("xor"); break;
             case IROpCode_shl: bitshift(false); break;
             case IROpCode_shr: bitshift(true); break;
-            case IROpCode_not: unaryop("not"); break;
-            case IROpCode_neg: unaryop("neg"); break;
-            case IROpCode_inc: unaryop("inc"); break;
-            case IROpCode_dec: unaryop("dec"); break;
+            case IROpCode_not: unaryop("not", false); break;
+            case IROpCode_neg: unaryop("neg", false); break;
+            case IROpCode_inc: unaryop("inc", ir->params[0].as_integer); break;
+            case IROpCode_dec: unaryop("dec", ir->params[0].as_integer); break;
             case IROpCode_addrof: addrof(); break;
             case IROpCode_zero: compare_against("sete", imm(0, peek(0)->kind, peek(0)->is_unsigned)); break;
             case IROpCode_eql: compare("sete"); break;
@@ -389,12 +421,13 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_swp: swap(); break;
             case IROpCode_cvt: convert(ir->params[0].as_integer, ir->params[1].as_integer); break;
             case IROpCode_offset: offset(ir->params[0].as_integer); break;
-            case IROpCode_if: break;
-            case IROpCode_then: break;
-            case IROpCode_else: break;
-            case IROpCode_end: break;
-            case IROpCode_goto_start: break;
-            case IROpCode_goto_end: break;
+            case IROpCode_stackalloc: stackalloc(ir->params[0].as_integer); break;
+            case IROpCode_if: push_branch(); break; // todo: remove redundant branching
+            case IROpCode_then: branch_then(); break;
+            case IROpCode_else: branch_else(); break;
+            case IROpCode_end: pop_branch(); break;
+            case IROpCode_goto_start: goto_start(); break;
+            case IROpCode_goto_end: goto_end(); break;
             case IROpCode_call: break;
             case IROpCode_ret: break;
             case IROpCode_func: break;

@@ -1,4 +1,6 @@
 int main() {
-    int test = 1;
-    *&test = test < 3;
+    int test = 0;
+    for (int i = 0; i < 10; i++) {
+        *&test = i;
+    }
 }

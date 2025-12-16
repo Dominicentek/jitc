@@ -182,13 +182,10 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             case Unary_BinaryNegate: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); jitc_asm(list, IROpCode_not); break;
             case Unary_Dereference: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); jitc_asm(list, IROpCode_load, ast->exprtype->kind, ast->exprtype->is_unsigned); break;
             case Unary_AddressOf: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_addrof); break;
-            case Unary_PrefixIncrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_inc); break;
-            case Unary_PrefixDecrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_dec); break;
-            case Unary_SuffixIncrement:
-            case Unary_SuffixDecrement:
-                assemble(list, ast->unary.inner, variable_map);
-                jitc_asm(list, ast->unary.operation == Unary_SuffixIncrement ? IROpCode_inc : IROpCode_dec);
-                break;
+            case Unary_PrefixIncrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_inc, false); break;
+            case Unary_PrefixDecrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_dec, false); break;
+            case Unary_SuffixIncrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_inc, true);  break;
+            case Unary_SuffixDecrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_dec, true);  break;
         } return true;
         case AST_Binary:
             if (ast->binary.operation == Binary_Cast) {
@@ -268,6 +265,7 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             jitc_asm(list, IROpCode_then);
             assemble(list, ast->loop.body, variable_map);
             jitc_asm(list, IROpCode_goto_start);
+            jitc_asm(list, IROpCode_else);
             jitc_asm(list, IROpCode_end);
             return false;
         case AST_Break:
@@ -315,6 +313,5 @@ void* jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
         jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
         jitc_asm(list, IROpCode_ret);
     }
-    jitc_asm(list, IROpCode_end);
     return jitc_assemble(list);
 }
