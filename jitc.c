@@ -252,8 +252,12 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value) {
     if (!type->name) return true;
     jitc_variable_t* prev = jitc_get_variable(context, type->name);
-    if (prev) return
-        list_size(context->scopes) == 1 && prev->decltype == decltype && prev->type == type;
+    if (prev) {
+        if (list_size(context->scopes) == 1 && prev->decltype == decltype && prev->type == type) return true;
+        if (decltype == Decltype_Extern && prev->decltype != Decltype_Typedef) return true;
+        if (type->kind == Type_Function && prev->type == type) return true;
+        return false;
+    }
     jitc_scope_t* scope = NULL;
     if (decltype == Decltype_Static) scope = list_get_ptr(context->scopes, 0);
     else scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
@@ -393,12 +397,26 @@ jitc_context_t* jitc_create_context() {
     return context;
 }
 
-void* jitc_get(jitc_context_t* context, const char* name) {
+static bool jitc_get_symbol(jitc_context_t* context, const char* name, void** ptr) {
     jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
-    if (!map_find_ptr(scope->variables, (char*)name)) return NULL;
+    if (!map_find_ptr(scope->variables, (char*)name)) return false;
     jitc_variable_t* var = map_as_ptr(scope->variables);
-    if (var->decltype == Decltype_Extern) return (void*)var->value;
-    else return &var->value;
+    if (var->decltype == Decltype_Typedef) return false;
+    if (var->decltype == Decltype_Extern) *ptr = (void*)var->value;
+    else *ptr = &var->value;
+    return var->decltype == Decltype_Static;
+}
+
+void* jitc_get_or_static(jitc_context_t* context, const char* name) {
+    void* ptr;
+    jitc_get_symbol(context, name, &ptr);
+    return ptr;
+}
+
+void* jitc_get(jitc_context_t* context, const char* name) {
+    void* ptr;
+    if (jitc_get_symbol(context, name, &ptr)) return NULL;
+    return ptr;
 }
 
 void jitc_destroy_context(jitc_context_t* context) {

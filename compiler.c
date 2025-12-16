@@ -106,6 +106,10 @@ static void append_to_size_tree(list_t* list, jitc_ast_t* node) {
             stackvar_t* size = malloc(sizeof(stackvar_t));
             size->is_leaf = true;
             size->var.type = node->decl.type;
+            if (node->decl.decltype == Decltype_Extern) {
+                size->is_global = true;
+                size->var.ptr = node->decl.symbol_ptr;
+            }
             list_add_ptr(list, size);
         } break;
         case AST_List:
@@ -150,8 +154,10 @@ static size_t process_size_tree(map_t* variable_map, stackvar_t* tree, size_t pa
         if (!node->is_leaf) continue;
         if (!node->var.type->name) continue;
         if (size % node->var.type->alignment != 0) size += node->var.type->alignment - size % node->var.type->alignment;
-        node->var.offset = size;
-        size += node->var.type->size;
+        if (!node->is_global) {
+            node->var.offset = size;
+            size += node->var.type->size;
+        }
         map_get_ptr(variable_map, (char*)node->var.type->name);
         map_store_ptr(variable_map, node);
     }
@@ -316,7 +322,7 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
 void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
     switch (ast->node_type) {
         case AST_Binary: {
-            void* ptr = jitc_get(context, ast->binary.left->variable.name);
+            void* ptr = jitc_get_or_static(context, ast->binary.left->variable.name);
             memcpy(ptr, &ast->binary.right->integer.value, ast->exprtype->size);
         } break;
         case AST_Function: {
@@ -347,7 +353,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 jitc_asm(list, IROpCode_ret);
             }
             jitc_asm(list, IROpCode_func_end);
-            *(void**)jitc_get(context, ast->func.variable->name) = jitc_assemble(list);
+            *(void**)jitc_get_or_static(context, ast->func.variable->name) = jitc_assemble(list);
         } break;
         default: break;
     }

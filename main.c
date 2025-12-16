@@ -239,7 +239,6 @@ int main() {
         else {
             print_ast(ast, 0);
             printf("== GENERATED ASM ==\n");
-            printf("Address of puts: %p\n", puts);
             for (size_t i = 0; i < list_size(ast->list.inner); i++) {
                 jitc_compile(context, list_get_ptr(ast->list.inner, i));
             }

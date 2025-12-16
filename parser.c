@@ -8,7 +8,7 @@
 #include <string.h>
 #include <dlfcn.h>
 
-#define NEXT_TOKEN queue_pop_ptr(tokens)
+#define NEXT_TOKEN ((jitc_token_t*)queue_peek_ptr(tokens))
 #define ERROR(...) ({ jitc_error_set(context, jitc_error_parser(__VA_ARGS__)); return NULL; })
 
 typedef enum {
@@ -726,6 +726,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     (node->unary.inner->node_type == AST_Variable) || \
                     (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_Dereference) \
                 )) ERROR(node->token, "Assigning to an rvalue"); \
+                if (is_decayed_pointer(node->unary.inner->exprtype)) ERROR(node->token, "Assigning to an object"); \
                 if (!(check)) ERROR(node->token, errmsg); \
                 node->binary.right = try(jitc_cast(context, \
                     try(jitc_process_ast(context, node->binary.right, NULL)), \
@@ -760,7 +761,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Binary_AssignBitshiftRight:
             case Binary_AssignAnd:
             case Binary_AssignOr:
-            case Binary_AssignXor: ASSIGNMENT(is_integer(node->exprtype), "Bitwise operation on a non-integer");
+            case Binary_AssignXor: ASSIGNMENT(is_integer(node->exprtype), "Bitwise operation on a non-integer type");
             default: break;
         } break;
         case AST_Ternary: {
@@ -1197,24 +1198,30 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             jitc_type_t* type = base_type;
             smartptr(jitc_ast_t) node = mknode(AST_Declaration, token);
             if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
+            if (type->kind == Type_Function && NEXT_TOKEN->type == TOKEN_SEMICOLON && decltype != Decltype_Typedef) decltype = Decltype_Extern;
             node->decl.type = type;
             node->decl.decltype = decltype;
+            void* symbol_ptr = NULL;
+            if (decltype == Decltype_Extern) {
+                symbol_ptr = jitc_get_or_static(context, type->name);
+                if (!symbol_ptr) {
+                    symbol_ptr = dlsym(RTLD_DEFAULT, type->name);
+                    if (!symbol_ptr) ERROR(token, "Cannot resolve symbol '%s'");
+                }
+                node->decl.symbol_ptr = symbol_ptr;
+            }
             if (node->decl.decltype != Decltype_Typedef && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
                 ERROR(token, "Declaration of incomplete type");
-            if (decltype != Decltype_Typedef && !jitc_get_variable(context, type->name))
-                list_add_ptr(list->list.inner, move(node));
-            if (!jitc_declare_variable(context, type, decltype, 0)) ERROR(token, "Symbol '%s' already declared as different type", type->name);
+            if (decltype != Decltype_Typedef) list_add_ptr(list->list.inner, move(node));
+            if (!jitc_declare_variable(context, type, decltype, 0)) ERROR(token, "Symbol '%s' already declared", type->name);
             jitc_variable_t* var = jitc_get_variable(context, type->name);
+            var->value = (uint64_t)symbol_ptr;
 
-            if (decltype == Decltype_Extern) {
-                void* symbol = dlsym(RTLD_DEFAULT, type->name);
-                if (!symbol) ERROR(token, "Cannot resolve symbol '%s'");
-                var->value = (uint64_t)symbol;
-            }
             if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
                 if (decltype == Decltype_Extern) ERROR(token, "Cannot attach code to an extern function");
                 if (type->kind != Type_Function) ERROR(token, "Cannot attach code to a non-function");
                 if (!jitc_set_defined(context, type->name)) ERROR(token, "Symbol already defined");
+                if (list_size(context->scopes) > 1) ERROR(token, "Function definition illegal here");
                 smartptr(jitc_ast_t) func = mknode(AST_Function, token);
                 smartptr(jitc_ast_t) body = mknode(AST_List, token);
                 func->func.variable = type;
@@ -1231,6 +1238,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 list_add_ptr(list->list.inner, move(func));
                 break;
             }
+            else if (type->kind == Type_Function) var->decltype = Decltype_Extern;
             if ((token = jitc_token_expect(tokens, TOKEN_EQUALS))) {
                 if (decltype == Decltype_Extern) ERROR(token, "Cannot assign to an extern variable");
                 if (type->kind == Type_Function) ERROR(token, "Assigning to a function");

@@ -177,6 +177,16 @@ static operand_t op(stack_item_t* item) {
     return (operand_t){};
 }
 
+static operand_t unptr(operand_t op1) {
+    if (op1.type == OpType_ptr) {
+        op1.type = OpType_reg;
+        op1.kind = Type_Pointer;
+        op1.value = 0;
+    }
+    else if (op1.type == OpType_ptrptr) op1.type = OpType_ptr;
+    return op1;
+}
+
 static void print_mem(reg_t reg, int32_t disp) {
     printf("[%s", reg_names[Type_Int64][reg]);
     if (disp < 0) printf("%d", disp);
@@ -395,7 +405,7 @@ static void* jitc_assemble(list_t* list) {
                 pushf(StackItem_literal, ir->opcode == IROpCode_pushf ? Type_Float32 : Type_Float64, false, ir->params[0].as_float);
                 break;
             case IROpCode_laddr: instr2("mov",
-                op(push(StackItem_lvalue_abs, ir->params[1].as_integer, ir->params[2].as_integer)),
+                unptr(op(push(StackItem_lvalue_abs, ir->params[1].as_integer, ir->params[2].as_integer))),
                 imm(ir->params[0].as_integer, Type_Pointer, true)
             ); break;
             case IROpCode_lstack:
