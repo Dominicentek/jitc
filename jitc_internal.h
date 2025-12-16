@@ -241,6 +241,7 @@ typedef struct {
     X(pushd, FLT(TYPE(double) value)) \
     X(pop) \
     X(load, INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
+    X(laddr, INT(TYPE(void*) ptr), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(lstack, INT(TYPE(int32_t) offset), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(store) \
     X(add) \
@@ -476,7 +477,7 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype);
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, jitc_type_t** exprtype);
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
-void* jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
+void jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
 

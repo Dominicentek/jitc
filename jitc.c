@@ -325,10 +325,7 @@ void jitc_push_scope(jitc_context_t* context) {
     list_add_ptr(context->scopes, scope);
 }
 
-bool jitc_pop_scope(jitc_context_t* context) {
-    if (list_size(context->scopes) == 0) return false;
-    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
-    list_remove(context->scopes, list_size(context->scopes) - 1);
+static void jitc_destroy_scope(jitc_scope_t* scope) {
     for (size_t i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
         free(map_as_ptr(scope->variables));
@@ -338,6 +335,13 @@ bool jitc_pop_scope(jitc_context_t* context) {
     map_delete(scope->unions);
     map_delete(scope->enums);
     free(scope);
+}
+
+bool jitc_pop_scope(jitc_context_t* context) {
+    if (list_size(context->scopes) <= 1) return false;
+    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
+    list_remove(context->scopes, list_size(context->scopes) - 1);
+    jitc_destroy_scope(scope);
     return true;
 }
 
@@ -385,7 +389,15 @@ jitc_context_t* jitc_create_context() {
     context->typecache = map_new(compare_int64);
     context->scopes = list_new();
     context->error = NULL;
+    jitc_push_scope(context);
     return context;
+}
+
+void* jitc_get(jitc_context_t* context, const char* name) {
+    jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
+    if (!map_find_ptr(scope->variables, (char*)name)) return NULL;
+    jitc_variable_t* var = map_as_ptr(scope->variables);
+    return &var->value;
 }
 
 void jitc_destroy_context(jitc_context_t* context) {
@@ -401,7 +413,8 @@ void jitc_destroy_context(jitc_context_t* context) {
         free(type);
     }
     map_delete(context->typecache);
-    while (list_size(context->scopes) > 0) jitc_pop_scope(context);
+    while (list_size(context->scopes) > 1) jitc_pop_scope(context);
+    jitc_destroy_scope(list_get_ptr(context->scopes, 0));
     list_delete(context->scopes);
     free(context);
 }

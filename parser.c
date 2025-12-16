@@ -539,30 +539,33 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 break;
             case Unary_Dereference:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
-                if (!is_pointer(node->exprtype)) ERROR(node->token, "Operand must be a pointer type");
-                if (is_function(node->exprtype)) ERROR(node->token, "Cannot dereference a function");
-                if (node->exprtype->ptr.base->kind == Type_Void) ERROR(node->token, "Dereferencing void pointer");
-                node->exprtype = node->exprtype->ptr.base;
+                if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_AddressOf)
+                    replace(node) = replace(node->unary.inner) = node->unary.inner->unary.inner;
+                else {
+                    if (!is_pointer(node->exprtype)) ERROR(node->token, "Operand must be a pointer type");
+                    if (is_function(node->exprtype)) ERROR(node->token, "Cannot dereference a function");
+                    if (node->exprtype->ptr.base->kind == Type_Void) ERROR(node->token, "Dereferencing void pointer");
+                    node->exprtype = node->exprtype->ptr.base;
+                }
                 break;
             case Unary_ArithPlus:
             case Unary_ArithNegate:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
                 if (!is_number(node->exprtype)) ERROR(node->token, "Operand must be a numeric type");
-                if (node->unary.inner->node_type == AST_Integer) {
-                    jitc_ast_t* inner = node->unary.inner;
-                    inner->integer.value = node->unary.operation == Unary_ArithNegate
-                        ? -inner->integer.value
-                        : +inner->integer.value;
-                    free(node);
-                    node = inner;
-                }
-                else if (node->unary.inner->node_type == AST_Floating) {
-                    jitc_ast_t* inner = node->unary.inner;
-                    inner->floating.value = node->unary.operation == Unary_ArithNegate
-                        ? -inner->floating.value
-                        : +inner->floating.value;
-                    free(node);
-                    node = inner;
+                if (node->unary.operation == Unary_ArithPlus) replace(node) = node->unary.inner;
+                else {
+                    if (node->unary.inner->node_type == AST_Integer) {
+                        jitc_ast_t* inner = node->unary.inner;
+                        inner->integer.value = -inner->integer.value;
+                        replace(node) = inner;
+                    }
+                    else if (node->unary.inner->node_type == AST_Floating) {
+                        jitc_ast_t* inner = node->unary.inner;
+                        inner->floating.value = -inner->floating.value;
+                        replace(node) = inner;
+                    }
+                    else if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_ArithNegate)
+                        replace(node) = replace(node->unary.inner) = node->unary.inner->unary.inner;
                 }
                 break;
             case Unary_BinaryNegate:
@@ -570,16 +573,20 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 if (!is_integer(node->exprtype)) ERROR(node->token, "Operand must be an integer type");
                 if (is_constant(node->unary.inner)) {
                     jitc_ast_t* inner = node->unary.inner;
-                    inner->integer.value = node->unary.operation == Unary_LogicNegate
-                        ? !inner->integer.value
-                        : ~inner->integer.value;
-                    free(node);
-                    node = inner;
+                    inner->integer.value = ~inner->integer.value;
+                    replace(node) = inner;
                 }
+                else if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_BinaryNegate)
+                    replace(node) = replace(node->unary.inner) = node->unary.inner->unary.inner;
                 break;
             case Unary_LogicNegate:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
                 if (is_struct(node->exprtype)) ERROR(node->token, "Negating a non-scalar type");
+                if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_LogicNegate) {
+                    jitc_ast_t* inner = node->unary.inner;
+                    if (inner->unary.inner->node_type == AST_Unary && inner->unary.inner->unary.operation == Unary_LogicNegate)
+                        replace(node->unary.inner) = replace(inner->unary.inner) = replace(inner->unary.inner->unary.inner);
+                }
                 if (is_constant(node->unary.inner)) {
                     jitc_ast_t* inner = node->unary.inner;
                     node->node_type = AST_Integer;

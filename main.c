@@ -232,15 +232,17 @@ int main() {
             print_token(token);
         }
         queue_delete(tokens);
-        jitc_push_scope(context);
         smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens1);
         while (jitc_pop_scope(context));
         printf("== AST DUMP ==\n");
         if (!ast) jitc_report_error(context->error, stderr);
-        else print_ast(ast, 0);
-        jitc_ast_t* func = list_get_ptr(ast->list.inner, 1);
-        printf("== GENERATED ASM ==\n");
-        jitc_compile(context, func);
+        else {
+            print_ast(ast, 0);
+            printf("== GENERATED ASM ==\n");
+            for (size_t i = 0; i < list_size(ast->list.inner); i++) {
+                jitc_compile(context, list_get_ptr(ast->list.inner, i));
+            }
+        }
     }
     while (queue_size(tokens2) > 0) free(queue_pop_ptr(tokens2));
     queue_delete(tokens1);

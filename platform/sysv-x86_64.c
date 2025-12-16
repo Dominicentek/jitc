@@ -123,6 +123,10 @@ static operand_t reg(reg_t reg, jitc_type_kind_t kind, bool is_unsigned) {
     return (operand_t){ .type = OpType_reg, .kind = kind, .is_unsigned = is_unsigned, .reg = reg };
 }
 
+static operand_t ptr(reg_t reg, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) {
+    return (operand_t){ .type = OpType_ptr, .kind = kind, .is_unsigned = is_unsigned, .reg = reg, .value = offset };
+}
+
 static operand_t imm(uint64_t value, jitc_type_kind_t kind, bool is_unsigned) {
     return (operand_t){ .type = OpType_imm, .kind = kind, .is_unsigned = is_unsigned, .value = value };
 }
@@ -181,31 +185,31 @@ static void print_mem(reg_t reg, int32_t disp) {
 }
 
 static void instr2(const char* opcode, operand_t op1, operand_t op2) {
-    bool use_rcx = false, rcxptr = false;
+    bool use_rax = false, raxptr = false;
     if (op2.type == OpType_ptr && (op1.type == OpType_ptr || op1.type == OpType_ptrptr)) {
-        use_rcx = true;
-        printf("mov %s, ", reg_names[op2.kind][rcx]);
+        use_rax = true;
+        printf("mov %s, ", reg_names[op2.kind][rax]);
         print_mem(op2.reg, op2.value);
         printf("\n");
     }
     else if (op2.type == OpType_ptrptr) {
-        use_rcx = true;
-        printf("mov %s, ", reg_names[Type_Int64][rcx]);
+        use_rax = true;
+        printf("mov %s, ", reg_names[Type_Int64][rax]);
         print_mem(op2.reg, op2.value);
         printf("\n");
         if (op1.type == OpType_ptr || op1.type == OpType_ptrptr)
-            printf("mov %s, [%s]\n", reg_names[op2.kind][rcx], reg_names[Type_Int64][rcx]);
-        else rcxptr = true;
+            printf("mov %s, [%s]\n", reg_names[op2.kind][rax], reg_names[Type_Int64][rax]);
+        else raxptr = true;
     }
 
     if (op1.type == OpType_ptrptr) {
-        printf("mov %s, ", reg_names[Type_Int64][rax]);
+        printf("mov %s, ", reg_names[Type_Int64][rcx]);
         print_mem(op1.reg, op1.value);
         printf("\n%s ", opcode);
         if (op2.type == OpType_imm) printf("%s ptr ", (const char*[]) {
             "byte", "word", "dword", "qword", "", "", "qword"
         }[op2.kind]);
-        printf("[%s]", reg_names[Type_Int64][rax]);
+        printf("[%s]", reg_names[Type_Int64][rcx]);
     }
     else if (op1.type == OpType_ptr) {
         printf("%s ", opcode);
@@ -217,7 +221,7 @@ static void instr2(const char* opcode, operand_t op1, operand_t op2) {
     else printf("%s %s", opcode, reg_names[op1.kind][op1.reg]);
     printf(", ");
 
-    if (use_rcx) printf(rcxptr ? "[%s]" : "%s", reg_names[op2.kind][rcx]);
+    if (use_rax) printf(raxptr ? "[%s]" : "%s", reg_names[op2.kind][rax]);
     else if (op2.type == OpType_imm) printf("0x%lx", op2.value);
     else if (op2.type == OpType_reg) printf("%s", reg_names[op2.kind][op2.reg]);
     else if (op2.type == OpType_ptr) print_mem(op2.reg, op2.value);
@@ -390,6 +394,10 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_pushd:
                 pushf(StackItem_literal, ir->opcode == IROpCode_pushf ? Type_Float32 : Type_Float64, false, ir->params[0].as_float);
                 break;
+            case IROpCode_laddr: instr2("mov",
+                op(push(StackItem_lvalue_abs, ir->params[1].as_integer, ir->params[2].as_integer)),
+                imm(ir->params[0].as_integer, Type_Pointer, true)
+            ); break;
             case IROpCode_lstack:
                 pushi(StackItem_lvalue, ir->params[1].as_integer, ir->params[2].as_integer, ir->params[0].as_integer);
                 break;

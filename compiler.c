@@ -1,5 +1,6 @@
 #include "compares.h"
 #include "dynamics.h"
+#include "jitc.h"
 #include "jitc_internal.h"
 
 #include <stdlib.h>
@@ -55,11 +56,15 @@ static void jitc_asm(list_t* list, jitc_opcode_t opcode, ...) {
 
 typedef struct {
     bool is_leaf;
+    bool is_global;
     union {
         list_t* list;
         struct {
             jitc_type_t* type;
-            size_t offset;
+            union {
+                void* ptr;
+                size_t offset;
+            };
         } var;
     };
 } stackvar_t;
@@ -193,7 +198,15 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                 jitc_asm(list, IROpCode_cvt, type(ast->binary.right->type.type));
             }
             else if (ast->binary.operation == Binary_CompoundExpr) {}
-            else if (ast->binary.operation == Binary_FunctionCall) {}
+            else if (ast->binary.operation == Binary_FunctionCall) {
+                jitc_type_t* signature = ast->binary.left->exprtype;
+                if (signature->kind == Type_Pointer) signature = signature->ptr.base;
+                for (size_t i = signature->func.num_params - 1; i < signature->func.num_params; i--) {
+                    assemble(list, list_get_ptr(ast->binary.right->list.inner, i), variable_map);
+                }
+                assemble(list, ast->binary.left, variable_map);
+                jitc_asm(list, IROpCode_call, signature);
+            }
             else {
                 if (get_su_number(ast->binary.left) < get_su_number(ast->binary.right)) {
                     if (ast->binary.operation >= Binary_AssignAddition && ast->binary.operation <= Binary_AssignXor)
@@ -290,7 +303,8 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
         case AST_Variable:
             map_find_ptr(variable_map, (char*)ast->variable.name);
             stackvar_t* var = map_as_ptr(variable_map);
-            jitc_asm(list, IROpCode_lstack, var->var.offset, type(var->var.type));
+            if (var->is_global) jitc_asm(list, IROpCode_laddr, var->var.ptr, type(var->var.type));
+            else jitc_asm(list, IROpCode_lstack, var->var.offset, type(var->var.type));
             return true;
         case AST_WalkStruct:
             break;
@@ -299,19 +313,41 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
     return false;
 }
 
-void* jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
-    list_t* list = list_new();
-    map_t* variable_map = map_new(compare_int64);
-    bool is_return = false;
-    jitc_asm(list, IROpCode_func, ast->func.variable, get_stack_size(variable_map, ast->func.body));
-    for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
-        jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
-        if (assemble(list, node, variable_map)) jitc_asm(list, IROpCode_pop);
-        is_return = node->node_type == AST_Return;
+void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
+    switch (ast->node_type) {
+        case AST_Binary: {
+            void* ptr = jitc_get(context, ast->binary.left->variable.name);
+            memcpy(ptr, &ast->binary.right->integer.value, ast->exprtype->size);
+        } break;
+        case AST_Function: {
+            list_t* list = list_new();
+            map_t* variable_map = map_new(compare_int64);
+            bool is_return = false;
+            jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
+            for (size_t i = 0; i < map_size(global_scope->variables); i++) {
+                map_index(global_scope->variables, i);
+                const char* name = map_get_ptr_key(global_scope->variables, i);
+                jitc_variable_t* var = map_as_ptr(global_scope->variables);
+                stackvar_t* stackvar = malloc(sizeof(stackvar_t));
+                stackvar->is_global = stackvar->is_leaf = true;
+                stackvar->var.type = var->type;
+                stackvar->var.ptr = &var->value;
+                map_get_ptr(variable_map, (char*)name);
+                map_store_ptr(variable_map, stackvar);
+            }
+            jitc_asm(list, IROpCode_func, ast->func.variable, get_stack_size(variable_map, ast->func.body));
+            for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
+                jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
+                if (assemble(list, node, variable_map)) jitc_asm(list, IROpCode_pop);
+                is_return = node->node_type == AST_Return;
+            }
+            if (!is_return) {
+                jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
+                jitc_asm(list, IROpCode_ret);
+            }
+            jitc_asm(list, IROpCode_func_end);
+            *(void**)jitc_get(context, ast->func.variable->name) = jitc_assemble(list);
+        } break;
+        default: break;
     }
-    if (!is_return) {
-        jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
-        jitc_asm(list, IROpCode_ret);
-    }
-    return jitc_assemble(list);
 }
