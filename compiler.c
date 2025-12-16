@@ -331,7 +331,8 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 stackvar_t* stackvar = malloc(sizeof(stackvar_t));
                 stackvar->is_global = stackvar->is_leaf = true;
                 stackvar->var.type = var->type;
-                stackvar->var.ptr = &var->value;
+                if (var->decltype == Decltype_Extern) stackvar->var.ptr = (void*)var->value;
+                else stackvar->var.ptr = &var->value;
                 map_get_ptr(variable_map, (char*)name);
                 map_store_ptr(variable_map, stackvar);
             }

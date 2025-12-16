@@ -397,7 +397,8 @@ void* jitc_get(jitc_context_t* context, const char* name) {
     jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
     if (!map_find_ptr(scope->variables, (char*)name)) return NULL;
     jitc_variable_t* var = map_as_ptr(scope->variables);
-    return &var->value;
+    if (var->decltype == Decltype_Extern) return (void*)var->value;
+    else return &var->value;
 }
 
 void jitc_destroy_context(jitc_context_t* context) {

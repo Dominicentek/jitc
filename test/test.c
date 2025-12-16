@@ -1,5 +1,5 @@
-int x = 0;
+extern void puts(const char* s);
 
 int main() {
-    x =3;
+    puts("Hello World");
 }

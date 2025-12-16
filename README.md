@@ -45,4 +45,4 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - `void jitc_destroy_context(jitc_context_t* context)`
   - Destroys a context and all the variables and functions declared with it
 
-To use a symbol from the host or some other symbol from the current context in a script, use `extern`. `extern` cannot be used to reference symbols from other contexts.
+To use a symbol from the host, use `extern`. `extern` cannot be used to reference symbols from other contexts.

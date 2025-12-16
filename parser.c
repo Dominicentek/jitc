@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <dlfcn.h>
 
 #define NEXT_TOKEN queue_pop_ptr(tokens)
 #define ERROR(...) ({ jitc_error_set(context, jitc_error_parser(__VA_ARGS__)); return NULL; })
@@ -1203,8 +1204,15 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             if (decltype != Decltype_Typedef && !jitc_get_variable(context, type->name))
                 list_add_ptr(list->list.inner, move(node));
             if (!jitc_declare_variable(context, type, decltype, 0)) ERROR(token, "Symbol '%s' already declared as different type", type->name);
+            jitc_variable_t* var = jitc_get_variable(context, type->name);
 
+            if (decltype == Decltype_Extern) {
+                void* symbol = dlsym(RTLD_DEFAULT, type->name);
+                if (!symbol) ERROR(token, "Cannot resolve symbol '%s'");
+                var->value = (uint64_t)symbol;
+            }
             if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
+                if (decltype == Decltype_Extern) ERROR(token, "Cannot attach code to an extern function");
                 if (type->kind != Type_Function) ERROR(token, "Cannot attach code to a non-function");
                 if (!jitc_set_defined(context, type->name)) ERROR(token, "Symbol already defined");
                 smartptr(jitc_ast_t) func = mknode(AST_Function, token);
@@ -1224,6 +1232,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 break;
             }
             if ((token = jitc_token_expect(tokens, TOKEN_EQUALS))) {
+                if (decltype == Decltype_Extern) ERROR(token, "Cannot assign to an extern variable");
                 if (type->kind == Type_Function) ERROR(token, "Assigning to a function");
                 if (!type->name) ERROR(token, "Assigning to unnamed declaration");
                 if (!jitc_set_defined(context, type->name)) ERROR(token, "Symbol already defined");
