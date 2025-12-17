@@ -105,6 +105,7 @@ static void append_to_size_tree(list_t* list, jitc_ast_t* node) {
         case AST_Declaration: {
             stackvar_t* size = malloc(sizeof(stackvar_t));
             size->is_leaf = true;
+            size->is_global = false;
             size->var.type = node->decl.type;
             if (node->decl.decltype == Decltype_Extern) {
                 size->is_global = true;
@@ -120,6 +121,7 @@ static void append_to_size_tree(list_t* list, jitc_ast_t* node) {
         case AST_Scope: {
             stackvar_t* size = malloc(sizeof(stackvar_t));
             size->is_leaf = false;
+            size->is_global = false;
             size->list = list_new();
             for (size_t i = 0; i < list_size(node->list.inner); i++) {
                 append_to_size_tree(size->list, list_get_ptr(node->list.inner, i));
@@ -129,6 +131,7 @@ static void append_to_size_tree(list_t* list, jitc_ast_t* node) {
         case AST_Ternary: {
             stackvar_t* size = malloc(sizeof(stackvar_t));
             size->is_leaf = false;
+            size->is_global = false;
             size->list = list_new();
             append_to_size_tree(size->list, node->ternary.when);
             append_to_size_tree(size->list, node->ternary.then);
@@ -138,6 +141,7 @@ static void append_to_size_tree(list_t* list, jitc_ast_t* node) {
         case AST_Loop: {
             stackvar_t* size = malloc(sizeof(stackvar_t));
             size->is_leaf = false;
+            size->is_global = false;
             size->list = list_new();
             append_to_size_tree(size->list, node->loop.cond);
             append_to_size_tree(size->list, node->loop.body);
@@ -300,7 +304,7 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             return false;
         case AST_Integer:
         case AST_StringLit:
-            jitc_asm(list, IROpCode_pushi, ast->integer.value, ast->integer.type_kind, ast->integer.is_unsigned);
+            jitc_asm(list, IROpCode_pushi, ast->string.ptr, ast->exprtype->kind, ast->exprtype->is_unsigned);
             return true;
         case AST_Floating:
             if (ast->floating.is_single_precision) jitc_asm(list, IROpCode_pushf, ast->floating.value);

@@ -1,4 +1,4 @@
 int main() {
-    extern int main();
-    void* a = 0;
+    extern void puts(const char* s);
+    puts("Hello World");
 }

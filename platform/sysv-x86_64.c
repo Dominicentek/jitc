@@ -61,24 +61,48 @@ typedef struct {
 static int opstack_capacity = 0, opstack_size = 0;
 static stack_item_t* opstack = NULL;
 
-static int opstack_int_index = 0, opstack_float_index = 0, opstack_stack_index = 0;
+static int opstack_int_index = 0, opstack_float_index = 0;
+static size_t stack_bytes = 0;
+
+static void correct_kind(jitc_type_kind_t* kind, bool* is_unsigned) {
+    if (*kind > Type_Pointer) *kind = Type_Pointer;
+    if (*kind == Type_Pointer) *is_unsigned = true;
+    if (*kind == Type_Float32 || *kind == Type_Float64) *is_unsigned = false;
+}
+
+static void stack_sub(size_t size) {
+    printf("sub rsp, 0x%lx\n", size);
+    stack_bytes += size;
+}
+
+static void stack_free(size_t size) {
+    printf("add rsp, 0x%lx\n", size);
+    stack_bytes -= size;
+}
 
 static stack_item_t* push(stack_item_type_t type, jitc_type_kind_t kind, bool is_unsigned) {
+    if (kind == Type_Void) return NULL;
     if (opstack_capacity == opstack_size) {
         if (opstack_capacity == 0) opstack_capacity = 4;
         else opstack_capacity *= 2;
         opstack = realloc(opstack, opstack_capacity * sizeof(stack_item_t));
     }
     stack_item_t* item = &opstack[opstack_size++];
+    correct_kind(&kind, &is_unsigned);
     item->type = type;
     item->kind = kind;
     item->is_unsigned = is_unsigned;
+    item->value = 0;
+    item->offset = 0;
+    item->extra_storage = 0;
     if (type == StackItem_rvalue || type == StackItem_lvalue_abs) {
         int* index = &opstack_int_index;
         if (type == StackItem_rvalue && (item->kind == Type_Float32 || item->kind == Type_Float64)) index = &opstack_float_index;
-        if (*index == sizeof(stack_regs)) index = &opstack_stack_index;
-        item->value = (*index)++ + (index == &opstack_stack_index ? sizeof(stack_regs) : 0);
-        if (index == &opstack_stack_index) printf("sub rsp, 8\n");
+        if (*index < sizeof(stack_regs)) item->value = *index++ | (1L << 63);
+        else {
+            stack_sub(8);
+            item->value = stack_bytes;
+        }
     }
     return item;
 }
@@ -93,13 +117,6 @@ static stack_item_t* pushf(stack_item_type_t type, jitc_type_kind_t kind, bool i
     return pushi(type, kind, is_unsigned, *(uint64_t*)&value);
 }
 
-static stack_item_t* stackalloc(uint32_t bytes) {
-    stack_item_t* item = push(StackItem_lvalue, Type_Pointer, true);
-    item->extra_storage = bytes;
-    printf("sub rsp, %u\n", bytes);
-    return item;
-}
-
 static stack_item_t* peek(int offset) {
     return &opstack[opstack_size - 1 - offset];
 }
@@ -107,13 +124,10 @@ static stack_item_t* peek(int offset) {
 static stack_item_t pop() {
     stack_item_t* item = peek(0);
     if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
-        if (item->value >= sizeof(stack_regs)) {
-            opstack_stack_index--;
-            printf("add rsp, 8\n");
-        }
+        if (!(item->value & (1L << 63))) stack_free(8);
         else if (item->kind == Type_Float32 || item->kind == Type_Float64) opstack_float_index--;
         else opstack_int_index--;
-        if (item->extra_storage != 0) printf("add rsp, %u\n", item->extra_storage);
+        if (item->extra_storage != 0) stack_free(item->extra_storage);
     }
     opstack_size--;
     return *item;
@@ -148,28 +162,28 @@ static operand_t op(stack_item_t* item) {
         };
         case StackItem_lvalue_abs: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
-            if (item->value >= sizeof(stack_regs)) {
-                op.type = OpType_ptrptr;
-                op.reg = rsp;
-                op.value = (opstack_stack_index - item->value + sizeof(stack_regs)) * 8 + item->offset;
+            if (item->value & (1L << 63)) {
+                op.type = OpType_ptr;
+                op.reg = (item->kind == Type_Float32 || item->kind == Type_Float64 ? stack_xmms : stack_regs)[item->value & ~(1L << 63)];
+                op.value = item->offset;
             }
             else {
-                op.type = OpType_ptr;
-                op.reg = stack_regs[item->value];
-                op.value = item->offset;
+                op.type = OpType_ptrptr;
+                op.reg = rsp;
+                op.value = stack_bytes - item->value + item->offset;
             }
             return op;
         }
         case StackItem_rvalue: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
-            if (item->value >= sizeof(stack_regs)) {
-                op.type = OpType_ptr;
-                op.reg = rsp;
-                op.value = (opstack_stack_index - item->value + sizeof(stack_regs)) * 8;
+            if (item->value & (1L << 63)) {
+                op.type = OpType_reg;
+                op.reg = (item->kind == Type_Float32 || item->kind == Type_Float64 ? stack_xmms : stack_regs)[item->value & ~(1L << 63)];
             }
             else {
-                op.type = OpType_reg;
-                op.reg = (item->kind == Type_Float32 || item->kind == Type_Float64 ? stack_xmms : stack_regs)[item->value];
+                op.type = OpType_ptr;
+                op.reg = rsp;
+                op.value = stack_bytes - item->value;
             }
             return op;
         }
@@ -253,6 +267,16 @@ static void instr1(const char* opcode, operand_t op, bool bitshift) {
     else printf("\n");
 }
 
+static stack_item_t* stackalloc(uint32_t bytes) {
+    stack_sub(bytes);
+    size_t ptr = stack_bytes;
+    stack_item_t* item = push(StackItem_lvalue, Type_Pointer, true);
+    item->extra_storage = bytes;
+    instr2("mov", op(item), reg(rsp, Type_Pointer, true));
+    instr2("add", op(item), imm(8, Type_Int64, true));
+    return item;
+}
+
 static void binaryop(const char* opcode) {
     stack_item_t op2 = pop();
     stack_item_t op1 = pop();
@@ -273,6 +297,7 @@ static void load(jitc_type_kind_t kind, bool is_unsigned) {
     stack_item_t addr = pop();
     stack_item_t* res = push(StackItem_rvalue, Type_Pointer, true);
     instr2("mov", op(res), op(&addr));
+    correct_kind(&kind, &is_unsigned);
     res->kind = kind;
     res->is_unsigned = is_unsigned;
     res->type = StackItem_lvalue_abs;
@@ -392,6 +417,41 @@ static void goto_end() {
     printf("jmp _L%d\n", (branch_id - 1) * 3 + 2);
 }
 
+static void call(jitc_type_t* signature) {
+    stack_item_t func = pop();
+    stack_item_t* ret = push(StackItem_rvalue, signature->func.ret->kind, signature->func.ret->is_unsigned);
+    int int_params = 0, float_params = 0, stack_params = 0;
+    for (size_t i = 0; i < signature->func.num_params; i++) {
+        stack_item_t* item = peek(i);
+        bool is_float = signature->func.params[i]->kind == Type_Float32 || signature->func.params[i]->kind == Type_Float64;
+        if (is_float && float_params < 8) float_params++;
+        else if (int_params < 6) int_params++;
+        else stack_params++;
+    }
+    int_params = 0, float_params = 0;
+    int temp_stack = stack_params * 8;
+    if (temp_stack != 0) stack_sub(temp_stack);
+    for (size_t i = 0; i < signature->func.num_params; i++) {
+        stack_item_t* item = peek(i);
+        bool is_float = signature->func.params[i]->kind == Type_Float32 || signature->func.params[i]->kind == Type_Float64;
+        if (is_float && float_params < 8) instr2("mov", reg((reg_t[]){
+            xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7, xmm8
+        }[float_params++], item->kind, item->is_unsigned), op(item));
+        else if (int_params < 6) instr2("mov", reg((reg_t[]){
+            rdi, rsi, rdx, rcx, r8, r9
+        }[int_params++], item->kind, item->is_unsigned), op(item));
+        else instr2("mov", ptr(rsp, --stack_params * 8, item->kind, item->is_unsigned), op(item));
+    }
+    instr1("call", unptr(op(&func)), false);
+    if (temp_stack != 0) stack_free(temp_stack);
+    if (ret) {
+        if (ret->kind == Type_Float32 || ret->kind == Type_Float64)
+            instr2("mov", op(ret), reg(xmm0, ret->kind, false));
+        else
+            instr2("mov", op(ret), reg(rax, ret->kind, ret->is_unsigned));
+    }
+}
+
 static void* jitc_assemble(list_t* list) {
     stack_t* stack = stack_new();
     for (size_t i = 0; i < list_size(list); i++) {
@@ -446,7 +506,7 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_end: pop_branch(); break;
             case IROpCode_goto_start: goto_start(); break;
             case IROpCode_goto_end: goto_end(); break;
-            case IROpCode_call: break;
+            case IROpCode_call: call(ir->params[0].as_pointer); break;
             case IROpCode_ret: break;
             case IROpCode_func: break;
             case IROpCode_func_end: break;
