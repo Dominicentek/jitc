@@ -303,6 +303,8 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             jitc_asm(list, IROpCode_ret);
             return false;
         case AST_Integer:
+            jitc_asm(list, IROpCode_pushi, ast->integer.value, ast->exprtype->kind, ast->exprtype->is_unsigned);
+            return true;
         case AST_StringLit:
             jitc_asm(list, IROpCode_pushi, ast->string.ptr, ast->exprtype->kind, ast->exprtype->is_unsigned);
             return true;

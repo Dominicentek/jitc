@@ -1,4 +1,5 @@
 int main() {
-    extern void puts(const char* s);
-    puts("Hello World");
+    int x = 0;
+    x = x + 1 + 2 + 3;
+    return x;
 }

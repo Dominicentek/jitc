@@ -98,7 +98,7 @@ static stack_item_t* push(stack_item_type_t type, jitc_type_kind_t kind, bool is
     if (type == StackItem_rvalue || type == StackItem_lvalue_abs) {
         int* index = &opstack_int_index;
         if (type == StackItem_rvalue && (item->kind == Type_Float32 || item->kind == Type_Float64)) index = &opstack_float_index;
-        if (*index < sizeof(stack_regs)) item->value = *index++ | (1L << 63);
+        if (*index < sizeof(stack_regs)) item->value = (*index)++ | (1L << 63);
         else {
             stack_sub(8);
             item->value = stack_bytes;
@@ -452,6 +452,30 @@ static void call(jitc_type_t* signature) {
     }
 }
 
+static jitc_type_t* func_signature = NULL;
+
+static void func_begin(jitc_type_t* signature, size_t stack_size) {
+    func_signature = signature;
+    printf("push rbp\n"); // todo: preserve rbx and r12..r15
+    printf("mov rsp, rbp\n");
+    if (stack_size != 0) printf("sub rsp, 0x%lx\n", stack_size);
+}
+
+static void ret() {
+    if (func_signature->func.ret->kind == Type_Float32 || func_signature->func.ret->kind == Type_Float64)
+        instr2("mov", reg(xmm0, func_signature->func.ret->kind, false), op(peek(0)));
+    else if (func_signature->func.ret->kind != Type_Void)
+        instr2("mov", reg(rax, func_signature->func.ret->kind, func_signature->func.ret->is_unsigned), op(peek(0)));
+    pop();
+    printf("jmp _ret\n");
+}
+
+static void func_end() {
+    printf("_ret:\n");
+    printf("leave\n");
+    printf("ret\n");
+}
+
 static void* jitc_assemble(list_t* list) {
     stack_t* stack = stack_new();
     for (size_t i = 0; i < list_size(list); i++) {
@@ -507,9 +531,9 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_goto_start: goto_start(); break;
             case IROpCode_goto_end: goto_end(); break;
             case IROpCode_call: call(ir->params[0].as_pointer); break;
-            case IROpCode_ret: break;
-            case IROpCode_func: break;
-            case IROpCode_func_end: break;
+            case IROpCode_ret: ret(); break;
+            case IROpCode_func: func_begin(ir->params[0].as_pointer, ir->params[1].as_integer); break;
+            case IROpCode_func_end: func_end(); break;
         }
         free(ir);
     }
