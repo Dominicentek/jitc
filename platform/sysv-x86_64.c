@@ -1,6 +1,7 @@
 #include "../jitc_internal.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 typedef enum: uint8_t {
     rax, rcx, rdx, rbx,
@@ -27,7 +28,11 @@ static const char* reg_names[][16] = {
     [Type_Float64] = { "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15" },
     [Type_Pointer] = { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15" },
 };
-static const char* ptr_prefixes[] = { "byte", "word", "dword", "qword", "", "", "qword" };
+static const char* ptr_prefixes[] = { "byte", "word", "dword", "qword", "dword", "qword", "qword" };
+static const char* opcode_suffix[][7] = {
+    { "", "", "", "", "d", "q", "" },
+    { "", "", "d", "q", "ss", "sd", "q" },
+};
 
 typedef enum: uint8_t {
     StackItem_literal,
@@ -64,10 +69,14 @@ static stack_item_t* opstack = NULL;
 static int opstack_int_index = 0, opstack_float_index = 0;
 static size_t stack_bytes = 0;
 
+static bool isflt(jitc_type_kind_t kind) {
+    return kind == Type_Float32 || kind == Type_Float64;
+}
+
 static void correct_kind(jitc_type_kind_t* kind, bool* is_unsigned) {
     if (*kind > Type_Pointer) *kind = Type_Pointer;
     if (*kind == Type_Pointer) *is_unsigned = true;
-    if (*kind == Type_Float32 || *kind == Type_Float64) *is_unsigned = false;
+    if (isflt(*kind)) *is_unsigned = false;
 }
 
 static void stack_sub(size_t size) {
@@ -97,7 +106,7 @@ static stack_item_t* push(stack_item_type_t type, jitc_type_kind_t kind, bool is
     item->extra_storage = 0;
     if (type == StackItem_rvalue || type == StackItem_lvalue_abs) {
         int* index = &opstack_int_index;
-        if (type == StackItem_rvalue && (item->kind == Type_Float32 || item->kind == Type_Float64)) index = &opstack_float_index;
+        if (type == StackItem_rvalue && isflt(item->kind)) index = &opstack_float_index;
         if (*index < sizeof(stack_regs)) item->value = (*index)++ | (1L << 63);
         else {
             stack_sub(8);
@@ -125,7 +134,7 @@ static stack_item_t pop() {
     stack_item_t* item = peek(0);
     if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
         if (!(item->value & (1L << 63))) stack_free(8);
-        else if (item->kind == Type_Float32 || item->kind == Type_Float64) opstack_float_index--;
+        else if (isflt(item->kind)) opstack_float_index--;
         else opstack_int_index--;
         if (item->extra_storage != 0) stack_free(item->extra_storage);
     }
@@ -164,7 +173,7 @@ static operand_t op(stack_item_t* item) {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
             if (item->value & (1L << 63)) {
                 op.type = OpType_ptr;
-                op.reg = (item->kind == Type_Float32 || item->kind == Type_Float64 ? stack_xmms : stack_regs)[item->value & ~(1L << 63)];
+                op.reg = (isflt(item->kind) ? stack_xmms : stack_regs)[item->value & ~(1L << 63)];
                 op.value = item->offset;
             }
             else {
@@ -178,7 +187,7 @@ static operand_t op(stack_item_t* item) {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
             if (item->value & (1L << 63)) {
                 op.type = OpType_reg;
-                op.reg = (item->kind == Type_Float32 || item->kind == Type_Float64 ? stack_xmms : stack_regs)[item->value & ~(1L << 63)];
+                op.reg = (isflt(item->kind) ? stack_xmms : stack_regs)[item->value & ~(1L << 63)];
             }
             else {
                 op.type = OpType_ptr;
@@ -209,47 +218,82 @@ static void print_mem(reg_t reg, int32_t disp) {
 }
 
 static void instr2(const char* opcode, operand_t op1, operand_t op2) {
-    bool use_rax = false, raxptr = false;
+    // god fucking damnit SSE...
+    bool use_tmp = false, tmpptr = false, store_float = false;
+    reg_t tmpreg = isflt(op2.kind) ? xmm15 : rax;
     if (op2.type == OpType_ptr && (op1.type == OpType_ptr || op1.type == OpType_ptrptr)) {
-        use_rax = true;
-        printf("mov %s, ", reg_names[op2.kind][rax]);
+        use_tmp = true;
+        printf("mov%s %s, ", opcode_suffix[isflt(op2.kind)][op2.kind], reg_names[op2.kind][tmpreg]);
         print_mem(op2.reg, op2.value);
         printf("\n");
     }
     else if (op2.type == OpType_ptrptr) {
-        use_rax = true;
+        use_tmp = true;
         printf("mov %s, ", reg_names[Type_Int64][rax]);
         print_mem(op2.reg, op2.value);
         printf("\n");
         if (op1.type == OpType_ptr || op1.type == OpType_ptrptr)
-            printf("mov %s, [%s]\n", reg_names[op2.kind][rax], reg_names[Type_Int64][rax]);
-        else raxptr = true;
+            printf("mov%s %s, [%s]\n", opcode_suffix[isflt(op2.kind)][op2.kind], reg_names[op2.kind][tmpreg], reg_names[Type_Int64][rax]);
+        else tmpptr = true;
+    }
+    else if (op2.type == OpType_imm && op2.kind > Type_Int32) {
+        use_tmp = true;
+        jitc_type_kind_t itype = isflt(op2.kind) ? op2.kind - Type_Float32 + Type_Int32 : op2.kind;
+        printf("mov %s, ", reg_names[itype][rax]);
+        if (op2.kind == Type_Float32) {
+            float x = *(double*)&op2.value;
+            printf("0x%x\n", *(uint32_t*)&x);
+        }
+        else printf("0x%lx\n", op2.value);
+        if (isflt(op2.kind)) printf("mov%s %s, %s\n", opcode_suffix[isflt(op2.kind)][itype], reg_names[op2.kind][tmpreg], reg_names[itype][rax]);
     }
 
     if (op1.type == OpType_ptrptr) {
         printf("mov %s, ", reg_names[Type_Int64][rcx]);
         print_mem(op1.reg, op1.value);
-        printf("\n%s ", opcode);
-        if (op2.type == OpType_imm) printf("%s ptr ", (const char*[]) {
-            "byte", "word", "dword", "qword", "", "", "qword"
-        }[op2.kind]);
-        printf("[%s]", reg_names[Type_Int64][rcx]);
+        if (isflt(op1.kind) && strcmp(opcode, "mov") != 0) {
+            store_float = true;
+            printf("mov%s %s, [%s]\n", opcode_suffix[isflt(op1.kind)][op1.kind], reg_names[op1.kind][xmm0], reg_names[Type_Int64][rcx]);
+            printf("%s%s %s", opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][xmm0]);
+        }
+        else {
+            printf("\n%s%s ", opcode, opcode_suffix[isflt(op1.kind)][op2.kind]);
+            if (op2.type == OpType_imm) printf("%s ptr ", ptr_prefixes[op2.kind]);
+            printf("[%s]", reg_names[Type_Int64][rcx]);
+        }
+    }
+    else if (op1.type == OpType_ptr && isflt(op1.kind) && strcmp(opcode, "mov") != 0) {
+        store_float = true;
+        printf("mov%s %s, ", opcode_suffix[isflt(op1.kind)][op1.kind], reg_names[op1.kind][xmm0]);
+        print_mem(op1.reg, op1.value);
+        printf("\n%s%s %s", opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][xmm0]);
     }
     else if (op1.type == OpType_ptr) {
-        printf("%s ", opcode);
-        if (op2.type == OpType_imm) printf("%s ptr ", (const char*[]) {
-            "byte", "word", "dword", "qword", "", "", "qword"
-        }[op2.kind]);
+        printf("%s%s ", opcode, opcode_suffix[isflt(op1.kind)][op2.kind]);
+        if (op2.type == OpType_imm) printf("%s ptr ", ptr_prefixes[op2.kind]);
         print_mem(op1.reg, op1.value);
     }
-    else printf("%s %s", opcode, reg_names[op1.kind][op1.reg]);
+    else printf("%s%s %s", opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][op1.reg]);
     printf(", ");
 
-    if (use_rax) printf(raxptr ? "[%s]" : "%s", reg_names[op2.kind][rax]);
-    else if (op2.type == OpType_imm) printf("0x%lx", op2.value);
+    if (use_tmp) printf(tmpptr ? "[%s]" : "%s", reg_names[op2.kind][tmpreg]);
+    else if (op2.type == OpType_imm) {
+        if (op2.kind == Type_Float32) {
+            float x = *(double*)&op2.value;
+            printf("0x%x", *(uint32_t*)&x);
+        }
+        else printf("0x%lx", op2.value);
+    }
     else if (op2.type == OpType_reg) printf("%s", reg_names[op2.kind][op2.reg]);
     else if (op2.type == OpType_ptr) print_mem(op2.reg, op2.value);
     printf("\n");
+    
+    if (store_float) {
+        printf("mov%s ", opcode_suffix[isflt(op1.kind)][op1.kind]);
+        if (op1.type == OpType_ptrptr) printf("[%s]", reg_names[Type_Int64][rcx]);
+        else print_mem(op1.reg, op1.value);
+        printf(", %s\n", reg_names[op1.kind][xmm0]);
+    }
 }
 
 static void instr1(const char* opcode, operand_t op, bool bitshift) {
@@ -307,17 +351,44 @@ static void divide(reg_t outreg) {
     stack_item_t op2 = pop();
     stack_item_t op1 = pop();
     stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
-    instr2("mov", reg(rax, op1.kind, op1.is_unsigned), op(&op1));
-    if (op1.kind == Type_Int8) {
-        if (op1.is_unsigned) printf("mov ah, 0x0\n");
-        else printf("cbw\n");
+    if (isflt(op1.kind)) {
+        instr2("mov", op(res), op(&op1));
+        instr2("div", op(res), op(&op2));
     }
     else {
-        if (op1.is_unsigned) printf("mov %s, 0x0\n", reg_names[op1.kind][rdx]);
-        else printf("%s\n", (const char*[]){ "", "cwd", "cdq", "cqo", "", "", "cqo" }[op1.kind]);
+        instr2("mov", reg(rax, op1.kind, op1.is_unsigned), op(&op1));
+        if (op1.kind == Type_Int8) {
+            if (op1.is_unsigned) printf("mov ah, 0x0\n");
+            else printf("cbw\n");
+        }
+        else {
+            if (op1.is_unsigned) printf("mov %s, 0x0\n", reg_names[op1.kind][rdx]);
+            else printf("%s\n", (const char*[]){ "", "cwd", "cdq", "cqo", "", "", "cqo" }[op1.kind]);
+        }
+        instr1("idiv", op(&op2), false);
+        instr2("mov", op(res), reg(outreg, op1.kind, op1.is_unsigned));
     }
-    instr1("idiv", op(&op2), false);
-    instr2("mov", op(res), reg(outreg, op1.kind, op1.is_unsigned));
+}
+
+static void negate() {
+    stack_item_t* op1 = peek(0);
+    if (isflt(op1->kind)) {
+        instr2("mul", op(op1), imm(*(uint64_t*)&(double){-1}, op1->kind, op1->is_unsigned));
+        pop();
+    }
+    else unaryop("neg", false);
+}
+
+static void increment(bool decrement, bool flip) {
+    stack_item_t* op1ptr = peek(0);
+    if (isflt(op1ptr->kind)) {
+        stack_item_t op1 = pop();
+        stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+        if (flip) instr2("mov", op(res), op(&op1));
+        instr2(decrement ? "sub" : "add", op(&op1), imm(*(uint64_t*)&(double){1}, op1.kind, op1.is_unsigned));
+        if (!flip) instr2("mov", op(res), op(&op1));
+    }
+    else unaryop(decrement ? "dec" : "inc", false);
 }
 
 static void bitshift(bool is_right) {
@@ -333,14 +404,14 @@ static void compare(const char* opcode) {
     stack_item_t op2 = pop();
     stack_item_t op1 = pop();
     operand_t res = op(push(StackItem_rvalue, Type_Int8, true));
-    instr2("cmp", op(&op1), op(&op2));
+    instr2(isflt(op2.kind) ? "ucomi" : "cmp", op(&op1), op(&op2));
     instr1(opcode, res, false);
 }
 
 static void compare_against(const char* opcode, operand_t op2) {
     stack_item_t op1 = pop();
     operand_t res = op(push(StackItem_rvalue, Type_Int8, true));
-    instr2("cmp", op(&op1), op2);
+    instr2(isflt(op1.kind) ? "ucomi" : "cmp", op(&op1), op2);
     instr1(opcode, res, false);
 }
 
@@ -369,11 +440,63 @@ static void convert(jitc_type_kind_t kind, bool is_unsigned) {
     operand_t res = op(push(StackItem_rvalue, kind, is_unsigned));
     if (op1.kind == Type_Pointer) op1.kind = Type_Int64;
     if (res.kind == Type_Pointer) res.kind = Type_Int64;
-    if (op1.kind > res.kind) {
-        op1.kind = res.kind;
-        instr2("mov", res, op1);
+    if (res.kind == Type_Float32) {
+        if (op1.kind == Type_Float32) instr2("mov", res, op1);
+        else if (op1.kind == Type_Float64) instr2("cvtsd2ss", res, op1);
+        else if (op1.kind == Type_Int64 && op1.is_unsigned) {
+            operand_t itmp = reg(rax, Type_Int64, true);
+            operand_t ftmp = reg(xmm15, Type_Float64, true);
+            instr2("mov", itmp, op1);
+            instr2("cvtsi2ss", res, itmp);
+            instr2("sar", itmp, imm(63, Type_Int64, true));
+            instr2("and", itmp, imm(0x5F800000, Type_Int64, true));
+            instr2("mov", ftmp, itmp);
+            instr2("add", res, ftmp);
+        }
+        else {
+            operand_t newop = op1;
+            newop.kind = Type_Int32;
+            if (op1.kind < Type_Int32) instr2(op1.is_unsigned ? "movzx" : "movsx", newop, op1);
+            instr2("mov", res, newop);
+        }
     }
-    if (op1.kind < res.kind) instr2(op1.is_unsigned ? "movzx" : "movsx", res, op1);
+    else if (res.kind == Type_Float64) {
+        if (op1.kind == Type_Float32) instr2("cvtss2sd", res, op1);
+        else if (op1.kind == Type_Float64) instr2("mov", res, op1);
+        else if (op1.kind == Type_Int64 && op1.is_unsigned) {
+            operand_t itmp = reg(rax, Type_Int64, true);
+            operand_t ftmp = reg(xmm15, Type_Float64, true);
+            instr2("mov", itmp, op1);
+            instr2("cvtsi2sd", res, itmp);
+            instr2("sar", itmp, imm(63, Type_Int64, true));
+            instr2("and", itmp, imm(0x43f0000000000000, Type_Int64, true));
+            instr2("mov", ftmp, itmp);
+            instr2("add", res, ftmp);
+        }
+        else {
+            operand_t newop = op1;
+            newop.kind = Type_Int64;
+            if (op1.kind < Type_Int64) instr2(op1.is_unsigned ? "movzx" : "movsx", newop, op1);
+            instr2("mov", res, newop);
+        }
+    }
+    else {
+        if (op1.kind == Type_Float32) {
+            if (res.kind < Type_Int32) res.kind = Type_Int32;
+            instr2("cvttss2si", res, op1);
+        }
+        else if (op1.kind == Type_Float64) {
+            if (res.kind < Type_Int64) res.kind = Type_Int64;
+            instr2("cvttsd2si", res, op1);
+        }
+        else {
+            if (op1.kind > res.kind) {
+                op1.kind = res.kind;
+                instr2("mov", res, op1);
+            }
+            if (op1.kind < res.kind) instr2(op1.is_unsigned ? "movzx" : "movsx", res, op1);
+        }
+    }
 }
 
 static void swap() {
@@ -395,7 +518,7 @@ static void push_branch() {
 
 static void branch_then() {
     stack_item_t item = pop();
-    instr2("cmp", op(&item), op(&item));
+    instr2(isflt(item.kind) ? "ucomi" : "cmp", op(&item), op(&item));
     printf("jz _L%d\n", (branch_id - 1) * 3 + 1);
 }
 
@@ -423,8 +546,7 @@ static void call(jitc_type_t* signature) {
     int int_params = 0, float_params = 0, stack_params = 0;
     for (size_t i = 0; i < signature->func.num_params; i++) {
         stack_item_t* item = peek(i);
-        bool is_float = signature->func.params[i]->kind == Type_Float32 || signature->func.params[i]->kind == Type_Float64;
-        if (is_float && float_params < 8) float_params++;
+        if (isflt(signature->func.params[i]->kind) && float_params < 8) float_params++;
         else if (int_params < 6) int_params++;
         else stack_params++;
     }
@@ -433,8 +555,7 @@ static void call(jitc_type_t* signature) {
     if (temp_stack != 0) stack_sub(temp_stack);
     for (size_t i = 0; i < signature->func.num_params; i++) {
         stack_item_t* item = peek(i);
-        bool is_float = signature->func.params[i]->kind == Type_Float32 || signature->func.params[i]->kind == Type_Float64;
-        if (is_float && float_params < 8) instr2("mov", reg((reg_t[]){
+        if (isflt(signature->func.params[i]->kind) && float_params < 8) instr2("mov", reg((reg_t[]){
             xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7, xmm8
         }[float_params++], item->kind, item->is_unsigned), op(item));
         else if (int_params < 6) instr2("mov", reg((reg_t[]){
@@ -445,7 +566,7 @@ static void call(jitc_type_t* signature) {
     instr1("call", unptr(op(&func)), false);
     if (temp_stack != 0) stack_free(temp_stack);
     if (ret) {
-        if (ret->kind == Type_Float32 || ret->kind == Type_Float64)
+        if (isflt(ret->kind))
             instr2("mov", op(ret), reg(xmm0, ret->kind, false));
         else
             instr2("mov", op(ret), reg(rax, ret->kind, ret->is_unsigned));
@@ -457,12 +578,12 @@ static jitc_type_t* func_signature = NULL;
 static void func_begin(jitc_type_t* signature, size_t stack_size) {
     func_signature = signature;
     printf("push rbp\n"); // todo: preserve rbx and r12..r15
-    printf("mov rsp, rbp\n");
+    printf("mov rbp, rsp\n");
     if (stack_size != 0) printf("sub rsp, 0x%lx\n", stack_size);
 }
 
 static void ret() {
-    if (func_signature->func.ret->kind == Type_Float32 || func_signature->func.ret->kind == Type_Float64)
+    if (isflt(func_signature->func.ret->kind))
         instr2("mov", reg(xmm0, func_signature->func.ret->kind, false), op(peek(0)));
     else if (func_signature->func.ret->kind != Type_Void)
         instr2("mov", reg(rax, func_signature->func.ret->kind, func_signature->func.ret->is_unsigned), op(peek(0)));
@@ -500,7 +621,7 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_store: instr2("mov", op(peek(1)), op(peek(0))); pop(); break;
             case IROpCode_add: binaryop("add"); break;
             case IROpCode_sub: binaryop("sub"); break;
-            case IROpCode_mul: binaryop("imul"); break;
+            case IROpCode_mul: binaryop(isflt(peek(1)->kind) ? "mul" : "imul"); break;
             case IROpCode_div: divide(rax); break;
             case IROpCode_mod: divide(rdx); break;
             case IROpCode_and: binaryop("and"); break;
@@ -509,9 +630,9 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_shl: bitshift(false); break;
             case IROpCode_shr: bitshift(true); break;
             case IROpCode_not: unaryop("not", false); break;
-            case IROpCode_neg: unaryop("neg", false); break;
-            case IROpCode_inc: unaryop("inc", ir->params[0].as_integer); break;
-            case IROpCode_dec: unaryop("dec", ir->params[0].as_integer); break;
+            case IROpCode_neg: negate(); break;
+            case IROpCode_inc: increment(false, ir->params[0].as_integer); break;
+            case IROpCode_dec: increment(true,  ir->params[0].as_integer); break;
             case IROpCode_addrof: addrof(); break;
             case IROpCode_zero: compare_against("sete", imm(0, peek(0)->kind, peek(0)->is_unsigned)); break;
             case IROpCode_eql: compare("sete"); break;
