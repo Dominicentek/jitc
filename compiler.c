@@ -159,7 +159,7 @@ static size_t process_size_tree(map_t* variable_map, stackvar_t* tree, size_t pa
         if (!node->var.type->name) continue;
         if (size % node->var.type->alignment != 0) size += node->var.type->alignment - size % node->var.type->alignment;
         if (!node->is_global) {
-            node->var.offset = size;
+            node->var.offset = size - node->var.type->size;
             size += node->var.type->size;
         }
         map_get_ptr(variable_map, (char*)node->var.type->name);
@@ -189,6 +189,7 @@ static size_t get_stack_size(map_t* variable_map, jitc_ast_t* ast) {
 }
 
 static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
+    size_t step = 1;
     switch (ast->node_type) {
         case AST_Unary: switch(ast->unary.operation) {
             case Unary_ArithPlus: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); break;
@@ -197,10 +198,12 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             case Unary_BinaryNegate: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); jitc_asm(list, IROpCode_not); break;
             case Unary_Dereference: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); jitc_asm(list, IROpCode_load, ast->exprtype->kind, ast->exprtype->is_unsigned); break;
             case Unary_AddressOf: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_addrof); break;
-            case Unary_PrefixIncrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_inc, false); break;
-            case Unary_PrefixDecrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_dec, false); break;
-            case Unary_SuffixIncrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_inc, true);  break;
-            case Unary_SuffixDecrement: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_dec, true);  break;
+            case Unary_PtrPrefixIncrement: case Unary_PtrPrefixDecrement: case Unary_PtrSuffixIncrement: case Unary_PtrSuffixDecrement:
+                step = ast->exprtype->ptr.base->kind == Type_Function ? 1 : ast->exprtype->ptr.base->size;
+            case Unary_PrefixIncrement: case Unary_PrefixDecrement: case Unary_SuffixIncrement: case Unary_SuffixDecrement:
+                assemble(list, ast->unary.inner, variable_map);
+                jitc_asm(list, IROpCode_inc, ast->unary.operation & 0b10, step * (ast->unary.operation & 0b01 ? -1 : 1));
+                break;
         } return true;
         case AST_Binary:
             if (ast->binary.operation == Binary_Cast) {
@@ -219,15 +222,11 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             }
             else {
                 if (get_su_number(ast->binary.left) < get_su_number(ast->binary.right)) {
-                    if (ast->binary.operation >= Binary_AssignAddition && ast->binary.operation <= Binary_AssignXor)
-                        assemble(list, ast->binary.left, variable_map);
                     assemble(list, ast->binary.right, variable_map);
                     assemble(list, ast->binary.left, variable_map);
                     jitc_asm(list, IROpCode_swp);
                 }
                 else {
-                    if (ast->binary.operation >= Binary_AssignAddition && ast->binary.operation <= Binary_AssignXor)
-                        assemble(list, ast->binary.left, variable_map);
                     assemble(list, ast->binary.left, variable_map);
                     assemble(list, ast->binary.right, variable_map);
                 }
@@ -249,18 +248,34 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                     case Binary_GreaterThan:          jitc_asm(list, IROpCode_grt); break;
                     case Binary_GreaterThanOrEqualTo: jitc_asm(list, IROpCode_gte); break;
                     case Binary_Assignment:           jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignAddition:       jitc_asm(list, IROpCode_add); jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignSubtraction:    jitc_asm(list, IROpCode_sub); jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignMultiplication: jitc_asm(list, IROpCode_mul); jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignDivision:       jitc_asm(list, IROpCode_div); jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignModulo:         jitc_asm(list, IROpCode_mod); jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignBitshiftLeft:   jitc_asm(list, IROpCode_shl); jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignBitshiftRight:  jitc_asm(list, IROpCode_shr); jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignAnd:            jitc_asm(list, IROpCode_and); jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignOr:             jitc_asm(list, IROpCode_or);  jitc_asm(list, IROpCode_store); break;
-                    case Binary_AssignXor:            jitc_asm(list, IROpCode_xor); jitc_asm(list, IROpCode_store); break;
+                    case Binary_AssignAddition:       jitc_asm(list, IROpCode_sadd); break;
+                    case Binary_AssignSubtraction:    jitc_asm(list, IROpCode_ssub); break;
+                    case Binary_AssignMultiplication: jitc_asm(list, IROpCode_smul); break;
+                    case Binary_AssignDivision:       jitc_asm(list, IROpCode_sdiv); break;
+                    case Binary_AssignModulo:         jitc_asm(list, IROpCode_smod); break;
+                    case Binary_AssignBitshiftLeft:   jitc_asm(list, IROpCode_sshl); break;
+                    case Binary_AssignBitshiftRight:  jitc_asm(list, IROpCode_sshr); break;
+                    case Binary_AssignAnd:            jitc_asm(list, IROpCode_sand); break;
+                    case Binary_AssignOr:             jitc_asm(list, IROpCode_sor);  break;
+                    case Binary_AssignXor:            jitc_asm(list, IROpCode_sxor); break;
                     case Binary_LogicAnd: break; // todo
                     case Binary_LogicOr:  break; // todo
+                    case Binary_PtrAddition:
+                    case Binary_PtrSubtraction:
+                    case Binary_AssignPtrAddition:
+                    case Binary_AssignPtrSubtraction: {
+                        size_t size = ast->exprtype->ptr.base->kind == Type_Function ? 1 : ast->exprtype->ptr.base->size;
+                        if (size != 1) {
+                            jitc_asm(list, IROpCode_pushi, size, ast->binary.right->exprtype->kind, ast->binary.right->exprtype->is_unsigned);
+                            jitc_asm(list, IROpCode_mul);
+                        }
+                        jitc_asm(list, (jitc_opcode_t[]){
+                            [Binary_PtrAddition] = IROpCode_add,
+                            [Binary_PtrSubtraction] = IROpCode_sub,
+                            [Binary_AssignPtrAddition] = IROpCode_sadd,
+                            [Binary_AssignPtrSubtraction] = IROpCode_ssub,
+                        }[ast->binary.operation]);
+                    }
                     default: break;
                 }
             }
@@ -317,6 +332,8 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             stackvar_t* var = map_as_ptr(variable_map);
             if (var->is_global) jitc_asm(list, IROpCode_laddr, var->var.ptr, type(var->var.type));
             else jitc_asm(list, IROpCode_lstack, var->var.offset, type(var->var.type));
+            if (var->var.type->kind == Type_Array)
+                jitc_asm(list, IROpCode_addrof);
             return true;
         case AST_WalkStruct:
             break;

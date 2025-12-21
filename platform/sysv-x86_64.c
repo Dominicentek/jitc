@@ -104,15 +104,16 @@ static stack_item_t* push(stack_item_type_t type, jitc_type_kind_t kind, bool is
     item->value = 0;
     item->offset = 0;
     item->extra_storage = 0;
+    int* index = &opstack_int_index;
+    if (type == StackItem_rvalue && isflt(item->kind)) index = &opstack_float_index;
     if (type == StackItem_rvalue || type == StackItem_lvalue_abs) {
-        int* index = &opstack_int_index;
-        if (type == StackItem_rvalue && isflt(item->kind)) index = &opstack_float_index;
-        if (*index < sizeof(stack_regs)) item->value = (*index)++ | (1L << 63);
+        if (*index < sizeof(stack_regs)) item->value = *index | (1L << 63);
         else {
             stack_sub(8);
             item->value = stack_bytes;
         }
     }
+    (*index)++;
     return item;
 }
 
@@ -132,10 +133,10 @@ static stack_item_t* peek(int offset) {
 
 static stack_item_t pop() {
     stack_item_t* item = peek(0);
+    if (isflt(item->kind)) opstack_float_index--;
+    else opstack_int_index--;
     if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
         if (!(item->value & (1L << 63))) stack_free(8);
-        else if (isflt(item->kind)) opstack_float_index--;
-        else opstack_int_index--;
         if (item->extra_storage != 0) stack_free(item->extra_storage);
     }
     opstack_size--;
@@ -167,7 +168,7 @@ static operand_t op(stack_item_t* item) {
             .kind = item->kind,
             .is_unsigned = item->is_unsigned,
             .reg = rbp,
-            .value = -item->value - (int[]){ 1, 2, 4, 8, 4, 8, 8 }[item->kind] + item->offset
+            .value = -item->value + item->offset
         };
         case StackItem_lvalue_abs: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
@@ -314,7 +315,7 @@ static void instr1(const char* opcode, operand_t op, bool bitshift) {
 static stack_item_t* stackalloc(uint32_t bytes) {
     stack_sub(bytes);
     size_t ptr = stack_bytes;
-    stack_item_t* item = push(StackItem_lvalue, Type_Pointer, true);
+    stack_item_t* item = push(StackItem_rvalue, Type_Pointer, true);
     item->extra_storage = bytes;
     instr2("mov", op(item), reg(rsp, Type_Pointer, true));
     instr2("add", op(item), imm(8, Type_Int64, true));
@@ -325,7 +326,7 @@ static void binaryop(const char* opcode) {
     stack_item_t op2 = pop();
     stack_item_t op1 = pop();
     stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
-    instr2("mov",  op(res), op(&op1));
+    if (op1.type != StackItem_rvalue) instr2("mov", op(res), op(&op1));
     instr2(opcode, op(res), op(&op2));
 }
 
@@ -340,7 +341,7 @@ static void unaryop(const char* opcode, bool flip) {
 static void load(jitc_type_kind_t kind, bool is_unsigned) {
     stack_item_t addr = pop();
     stack_item_t* res = push(StackItem_rvalue, Type_Pointer, true);
-    instr2("mov", op(res), op(&addr));
+    if (addr.type != StackItem_rvalue) instr2("mov", op(res), op(&addr));
     correct_kind(&kind, &is_unsigned);
     res->kind = kind;
     res->is_unsigned = is_unsigned;
@@ -352,13 +353,13 @@ static void divide(reg_t outreg) {
     stack_item_t op1 = pop();
     stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
     if (isflt(op1.kind)) {
-        instr2("mov", op(res), op(&op1));
+        if (op1.type != StackItem_rvalue) instr2("mov", op(res), op(&op1));
         instr2("div", op(res), op(&op2));
     }
     else {
         instr2("mov", reg(rax, op1.kind, op1.is_unsigned), op(&op1));
         if (op1.kind == Type_Int8) {
-            if (op1.is_unsigned) printf("mov ah, 0x0\n");
+            if (op1.is_unsigned) printf("mov %s, 0x0\n", reg_names[Type_Int8][rax]);
             else printf("cbw\n");
         }
         else {
@@ -379,23 +380,24 @@ static void negate() {
     else unaryop("neg", false);
 }
 
-static void increment(bool decrement, bool flip) {
-    stack_item_t* op1ptr = peek(0);
-    if (isflt(op1ptr->kind)) {
-        stack_item_t op1 = pop();
-        stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
-        if (flip) instr2("mov", op(res), op(&op1));
-        instr2(decrement ? "sub" : "add", op(&op1), imm(*(uint64_t*)&(double){1}, op1.kind, op1.is_unsigned));
-        if (!flip) instr2("mov", op(res), op(&op1));
-    }
-    else unaryop(decrement ? "dec" : "inc", false);
+static void increment(int32_t step, bool flip) {
+    stack_item_t op1 = pop();
+    stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+    uint64_t data = 0;
+    if (op1.kind == Type_Float32) data = *(uint32_t*)&(float){abs(step)};
+    else if (op1.kind == Type_Float64) data = *(uint64_t*)&(double){abs(step)};
+    else data = abs(step);
+    if (flip) instr2("mov", op(res), op(&op1));
+    if (step > 0) instr2("add", op(&op1), imm(data, op1.kind, op1.is_unsigned));
+    if (step < 0) instr2("sub", op(&op1), imm(data, op1.kind, op1.is_unsigned));
+    if (!flip) instr2("mov", op(res), op(&op1));
 }
 
 static void bitshift(bool is_right) {
     stack_item_t op2 = pop();
     stack_item_t op1 = pop();
     stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
-    instr2("mov", op(res), op(&op1));
+    if (op1.type != StackItem_rvalue) instr2("mov", op(res), op(&op1));
     instr2("mov", reg(rcx, op2.kind, op2.is_unsigned), op(&op2));
     instr1(is_right ? "shr" : "shl", op(res), true);
 }
@@ -421,17 +423,7 @@ static void addrof() {
     operand_t res = op(push(StackItem_rvalue, Type_Pointer, true));
     op1.kind = Type_Pointer;
     op1.is_unsigned = true;
-    if (op1.type == OpType_ptr) {
-        op1.type = OpType_reg;
-        instr2("mov", res, op1);
-        int32_t offset = op1.value;
-        if (offset < 0) instr2("sub", res, imm(-offset, Type_Int32, true));
-        if (offset > 0) instr2("add", res, imm( offset, Type_Int32, true));
-    }
-    if (op1.type == OpType_ptrptr) {
-        op1.type = OpType_ptr;
-        instr2("mov", res, op1);
-    }
+    instr2("lea", res, op1);
 }
 
 static void convert(jitc_type_kind_t kind, bool is_unsigned) {
@@ -631,8 +623,7 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_shr: bitshift(true); break;
             case IROpCode_not: unaryop("not", false); break;
             case IROpCode_neg: negate(); break;
-            case IROpCode_inc: increment(false, ir->params[0].as_integer); break;
-            case IROpCode_dec: increment(true,  ir->params[0].as_integer); break;
+            case IROpCode_inc: increment(ir->params[1].as_integer, ir->params[0].as_integer); break;
             case IROpCode_addrof: addrof(); break;
             case IROpCode_zero: compare_against("sete", imm(0, peek(0)->kind, peek(0)->is_unsigned)); break;
             case IROpCode_eql: compare("sete"); break;

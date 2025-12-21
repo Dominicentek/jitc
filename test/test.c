@@ -1,4 +1,4 @@
 int main() {
-    float x = 1;
-    x++;
+    int arr[4];
+    arr[2] = 3;
 }

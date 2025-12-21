@@ -65,10 +65,14 @@ typedef enum: uint8_t {
 } jitc_decltype_t;
 
 typedef enum: uint8_t {
-    Unary_SuffixIncrement,
-    Unary_SuffixDecrement,
     Unary_PrefixIncrement,
     Unary_PrefixDecrement,
+    Unary_SuffixIncrement,
+    Unary_SuffixDecrement,
+    Unary_PtrPrefixIncrement,
+    Unary_PtrPrefixDecrement,
+    Unary_PtrSuffixIncrement,
+    Unary_PtrSuffixDecrement,
     Unary_ArithPlus,
     Unary_ArithNegate,
     Unary_LogicNegate,
@@ -81,6 +85,8 @@ typedef enum: uint8_t {
     Binary_Cast,
     Binary_CompoundExpr,
     Binary_FunctionCall,
+    Binary_PtrAddition,
+    Binary_PtrSubtraction,
     Binary_Addition,
     Binary_Subtraction,
     Binary_Multiplication,
@@ -100,6 +106,8 @@ typedef enum: uint8_t {
     Binary_LogicAnd,
     Binary_LogicOr,
     Binary_Assignment,
+    Binary_AssignPtrAddition,
+    Binary_AssignPtrSubtraction,
     Binary_AssignAddition,
     Binary_AssignSubtraction,
     Binary_AssignMultiplication,
@@ -144,6 +152,7 @@ struct jitc_type_t {
     union {
         struct {
             jitc_type_t* base;
+            jitc_type_kind_t prev;
         } ptr;
         struct {
             jitc_type_t* base;
@@ -255,10 +264,19 @@ typedef struct {
     X(and) \
     X(or) \
     X(xor) \
+    X(sadd) \
+    X(ssub) \
+    X(smul) \
+    X(sdiv) \
+    X(smod) \
+    X(sshl) \
+    X(sshr) \
+    X(sand) \
+    X(sor) \
+    X(sxor) \
     X(not) \
     X(neg) \
-    X(inc, INT(TYPE(bool) suffix)) \
-    X(dec, INT(TYPE(bool) suffix)) \
+    X(inc, INT(TYPE(bool) suffix), INT(TYPE(int32_t) step)) \
     X(zero) \
     X(addrof) \
     X(eql) \
@@ -454,6 +472,7 @@ jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name)
 jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name);
+jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from);
 bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value);

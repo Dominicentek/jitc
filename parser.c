@@ -57,7 +57,7 @@ static bool is_floating(jitc_type_t* type) {
 }
 
 static bool is_pointer(jitc_type_t* type) {
-    return type->kind == Type_Pointer || type->kind == Type_Array || type->kind == Type_Function;
+    return type->kind == Type_Pointer;
 }
 
 static bool is_number(jitc_type_t* type) {
@@ -77,7 +77,7 @@ static bool is_function(jitc_type_t* type) {
 }
 
 static bool is_decayed_pointer(jitc_type_t* type) {
-    return type->kind == Type_Function || type->kind == Type_Array;
+    return type->kind == Type_Pointer && type->ptr.prev != Type_Pointer;
 }
 
 static bool is_constant(jitc_ast_t* ast) {
@@ -389,8 +389,8 @@ jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decl
 }
 
 jitc_type_t* jitc_type_promotion(jitc_context_t* context, jitc_type_t* left, jitc_type_t* right) {
-    if (!is_scalar(left))  return left;
-    if (!is_scalar(right)) return right;
+    if (!is_number(left))  return left;
+    if (!is_number(right)) return right;
     jitc_type_kind_t kind = Type_Int32;
     bool is_unsigned = false;
     if (left->kind == Type_Int64 || right->kind == Type_Int64) {
@@ -404,9 +404,6 @@ jitc_type_t* jitc_type_promotion(jitc_context_t* context, jitc_type_t* left, jit
     if (left->kind == Type_Float64 || right->kind == Type_Float64) {
         kind = Type_Float64;
         is_unsigned = false;
-    }
-    if (left->kind == Type_Pointer || right->kind == Type_Pointer) {
-        kind = Type_Pointer;
     }
     jitc_type_t* type = jitc_typecache_primitive(context, kind);
     if (is_unsigned) type = jitc_typecache_unsigned(context, type);
@@ -505,7 +502,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->integer.is_unsigned = variable->type->is_unsigned;
                 node->integer.value = variable->value;
             }
-            node->exprtype = variable->type;
+            node->exprtype = jitc_typecache_decay(context, variable->type);
         } break;
         case AST_WalkStruct: if (!node->exprtype) {
             jitc_type_t* type;
@@ -530,9 +527,17 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Unary_PrefixDecrement:
             case Unary_AddressOf:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
-                if (node->unary.operation == Unary_AddressOf)
-                    node->exprtype = jitc_typecache_pointer(context, node->exprtype);
-                else if (!is_number(node->exprtype)) ERROR(node->token, "Operand must be a numeric type");
+                if (node->unary.operation == Unary_AddressOf) {
+                    if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_Dereference) {
+                        replace(node) = replace(node->unary.inner) = node->unary.inner->unary.inner;
+                        break;
+                    }
+                    else node->exprtype = jitc_typecache_pointer(context, node->exprtype);
+                }
+                else {
+                    if (!is_scalar(node->exprtype)) ERROR(node->token, "Operand must be a scalar type");
+                    if (is_pointer(node->exprtype)) node->unary.operation += Unary_PtrSuffixIncrement - Unary_SuffixIncrement;
+                }
                 if (!(
                     (node->unary.inner->node_type == AST_Variable) ||
                     (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_Dereference)
@@ -602,6 +607,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->exprtype = jitc_typecache_primitive(context, Type_Int8);
                 node->exprtype = jitc_typecache_unsigned(context, node->exprtype);
                 break;
+            default: break;
         } break;
         case AST_Binary: switch (node->binary.operation) {
             case Binary_CompoundExpr: break;
@@ -629,11 +635,24 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     ));
                 }
                 break;
-            #define ARITHMETIC(op) \
+            #define ARITHMETIC(op, can_be_ptr) \
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL)); \
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
                 node->exprtype = jitc_type_promotion(context, node->binary.left->exprtype, node->binary.right->exprtype); \
-                if (!is_number(node->exprtype)) ERROR(node->token, "Arithmetic operation on a non-number"); \
+                if (can_be_ptr && is_pointer(node->exprtype)) { \
+                    if (is_pointer(node->binary.right->exprtype)) { \
+                        if (node->binary.operation == Binary_Subtraction) \
+                            ERROR(node->token, "Pointer subtraction with pointer on RHS of expression"); \
+                        jitc_ast_t* tmp = node->binary.left; \
+                        node->binary.left = node->binary.right; \
+                        node->binary.right = tmp; \
+                    } \
+                    if (is_pointer(node->binary.left->exprtype) && !is_integer(node->binary.right->exprtype)) \
+                        ERROR(node->token, "Pointer arithmetic on a non-integer type"); \
+                    node->binary.operation += Binary_PtrAddition - Binary_Addition; \
+                    break; \
+                } \
+                if (!is_number(node->exprtype)) ERROR(node->token, "Arithmetic operation on a non-%s", can_be_ptr ? "scalar" : "number"); \
                 node->binary.left = try(jitc_cast(context, node->binary.left, node->exprtype, false, node->token)); \
                 node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false, node->token)); \
                 if (is_constant(node->binary.left) && is_constant(node->binary.right)) { \
@@ -722,21 +741,24 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             } break
             #define ASSIGNMENT(check, errmsg) \
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, &node->exprtype)); \
+                node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
                 if (!( \
-                    (node->unary.inner->node_type == AST_Variable) || \
-                    (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_Dereference) \
+                    (node->binary.left->node_type == AST_Variable) || \
+                    (node->binary.left->node_type == AST_Unary && node->binary.left->unary.operation == Unary_Dereference) \
                 )) ERROR(node->token, "Assigning to an rvalue"); \
                 if (is_decayed_pointer(node->unary.inner->exprtype)) ERROR(node->token, "Assigning to an object"); \
                 if (!(check)) ERROR(node->token, errmsg); \
-                node->binary.right = try(jitc_cast(context, \
-                    try(jitc_process_ast(context, node->binary.right, NULL)), \
-                    node->exprtype, false, node->token \
-                )); \
+                if (is_pointer(node->binary.left->exprtype) && node->binary.operation != Binary_Assignment) { \
+                    if (!is_integer(node->binary.right->exprtype)) \
+                        ERROR(node->token, "Pointer arithmetic with a non-integer type"); \
+                    node->binary.operation += Binary_AssignPtrAddition - Binary_AssignAddition; \
+                } \
+                else node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false, node->token)); \
                 break
-            case Binary_Addition: ARITHMETIC(+);
-            case Binary_Subtraction: ARITHMETIC(-);
-            case Binary_Multiplication: ARITHMETIC(*);
-            case Binary_Division: ARITHMETIC(/);
+            case Binary_Addition: ARITHMETIC(+, true);
+            case Binary_Subtraction: ARITHMETIC(-, true);
+            case Binary_Multiplication: ARITHMETIC(*, false);
+            case Binary_Division: ARITHMETIC(/, false);
             case Binary_Modulo: BINARY(%);
             case Binary_BitshiftLeft: BINARY(<<);
             case Binary_BitshiftRight: BINARY(>>);
