@@ -20,7 +20,9 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - Assembling to machine code
 - Virtual headers (#include)
 - Windows support
+
 Calling it done here, the things below are planned but not guaranteed
+
 - Implement macro support
 - Implement `goto`
 - aarch64 support
