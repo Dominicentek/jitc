@@ -336,6 +336,8 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                 jitc_asm(list, IROpCode_addrof);
             return true;
         case AST_WalkStruct:
+            assemble(list, ast->walk_struct.struct_ptr, variable_map);
+            jitc_asm(list, IROpCode_offset, ast->walk_struct.offset);
             break;
         default: break;
     }

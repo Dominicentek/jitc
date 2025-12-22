@@ -84,6 +84,10 @@ static bool is_constant(jitc_ast_t* ast) {
     return ast->node_type == AST_Integer || ast->node_type == AST_Floating || ast->node_type == AST_StringLit;
 }
 
+static bool is_lvalue(jitc_ast_t* ast) {
+    return ast->node_type == AST_Variable || (ast->node_type == AST_Unary && ast->unary.operation == Unary_Dereference) || ast->node_type == AST_WalkStruct;
+}
+
 bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
     jitc_token_t* token = queue_peek_ptr(tokens);
     switch (token->type) {
@@ -274,10 +278,8 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
                         field_type = jitc_typecache_named(context, field_type, NULL);
                         try(jitc_parse_type_declarations(context, tokens, &field_type));
                         if (!jitc_validate_type(field_type, TypePolicy_NoIncomplete)) ERROR(NEXT_TOKEN, "Field has incomplete type");
-                        if (field_type->name) for (size_t i = 0; i < list_size(list); i++) {
-                            jitc_type_t* type = list_get_ptr(list, i);
-                            if (strcmp(field_type->name, type->name) == 0) ERROR(NEXT_TOKEN, "Duplicate field '%s'", field_type->name);
-                        }
+                        if (field_type->name) if (jitc_struct_field_exists_list(list, field_type->name))
+                            ERROR(NEXT_TOKEN, "Duplicate field '%s'", field_type->name);
                         list_add_ptr(list, field_type);
                         if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
                         if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) break;
@@ -507,11 +509,8 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->walk_struct.struct_ptr->exprtype = resolved;
             }
             if (!is_struct(type)) ERROR(node->token, "Not a struct type");
-            for (size_t i = 0; i < type->str.num_fields && !node->exprtype; i++) {
-                if (strcmp(type->str.fields[i]->name, node->walk_struct.field_name) == 0)
-                    node->exprtype = type->str.fields[i];
-            }
-            if (!node->exprtype) ERROR(node->token, "Field '%s' not found", node->walk_struct.field_name);
+            if (!jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset))
+                ERROR(node->token, "Field '%s' not found", node->walk_struct.field_name);
         } break;
 
         case AST_Unary: switch (node->unary.operation) {
@@ -532,10 +531,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     if (!is_scalar(node->exprtype)) ERROR(node->token, "Operand must be a scalar type");
                     if (is_pointer(node->exprtype)) node->unary.operation += Unary_PtrSuffixIncrement - Unary_SuffixIncrement;
                 }
-                if (!(
-                    (node->unary.inner->node_type == AST_Variable) ||
-                    (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_Dereference)
-                )) ERROR(node->token, "Operand must be an lvalue");
+                if (!is_lvalue(node->unary.inner)) ERROR(node->token, "Operand must be an lvalue");
                 break;
             case Unary_Dereference:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
@@ -736,10 +732,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             #define ASSIGNMENT(check, errmsg) \
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, &node->exprtype)); \
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
-                if (!( \
-                    (node->binary.left->node_type == AST_Variable) || \
-                    (node->binary.left->node_type == AST_Unary && node->binary.left->unary.operation == Unary_Dereference) \
-                )) ERROR(node->token, "Assigning to an rvalue"); \
+                if (!is_lvalue(node->binary.left)) ERROR(node->token, "Assigning to an rvalue"); \
                 if (is_decayed_pointer(node->unary.inner->exprtype)) ERROR(node->token, "Assigning to an object"); \
                 if (!(check)) ERROR(node->token, errmsg); \
                 if (is_pointer(node->binary.left->exprtype) && node->binary.operation != Binary_Assignment) { \

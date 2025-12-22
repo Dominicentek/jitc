@@ -165,6 +165,7 @@ struct jitc_type_t {
         } func;
         struct {
             jitc_type_t** fields;
+            size_t* offsets;
             size_t num_fields;
         } str;
         struct {
@@ -234,6 +235,7 @@ struct jitc_ast_t {
         struct {
             jitc_ast_t* struct_ptr;
             const char* field_name;
+            size_t offset;
         } walk_struct;
     };
 };
@@ -482,6 +484,9 @@ bool jitc_set_defined(jitc_context_t* context, const char* name);
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
 void* jitc_get_or_static(jitc_context_t* context, const char* name);
+
+bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_type, size_t* offset);
+bool jitc_struct_field_exists_list(list_t* list, const char* name);
 
 void jitc_push_scope(jitc_context_t* context);
 bool jitc_pop_scope(jitc_context_t* context);
