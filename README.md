@@ -1,12 +1,40 @@
 # jitc
 
-**This project is NOT usable yet**
+**This project is NOT usable yet (check TODO)**
 
 An embeddable C JIT compiler.
 
 ## Mission
 
 Fill the hole where there's no lightweight, embeddable C JIT compiler that makes interop near plug and play.
+
+## TODO
+
+- Struct copying
+- Struct arguments/returns
+- Varargs
+- Ternary operator
+- Short circuiting
+- Switch statements
+- Initializers
+- Assembling to machine code
+- Virtual headers (#include)
+- Windows support
+Calling it done here, the things below are planned but not guaranteed
+- Implement macro support
+- Implement `goto`
+- aarch64 support
+- Rewrite IR into SSA
+- Implement custom extensions
+  - GNU statement expressions
+  - GNU ternary syntax (`x ? : y`)
+  - switch expressions
+  - Zig's `defer` or GNU `__attribute__((cleanup))`, either one of the two
+  - C++ lambdas
+  - C++ templates (won't blow up to the complexity of C++)
+  - C++ operator overloading (also won't blow up to C++'s complexity)
+  
+Note to self: When implementing extension features, still make programs as explicit as possible (minimal implicit behavior *cough cough C++ cough*)
 
 ## Differences from real C
 
@@ -15,11 +43,11 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - No VLAs
 - No bitfields
 - No variable shadowing
+- No macros, only `#include` (for now)
 - No `goto` (for now)
 - No `alloca`, `auto`, `constexpr` or `signed`
 - `sizeof` and `alignof` **must** have parentheses
 - No underscore-prefixed keywords:
-  - `_Alignas` -> `alignas`
   - `_Alignof` -> `alignof`
   - `_Bool` -> `bool`
   - Every other underscore-prefixed keyword is unsupported
