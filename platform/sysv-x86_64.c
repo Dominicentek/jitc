@@ -308,6 +308,10 @@ static void instr1(const char* opcode, operand_t op, bool bitshift) {
         print_mem(op.reg, op.value);
     }
     else if (op.type == OpType_reg) printf("%s %s", opcode, reg_names[op.kind][op.reg]);
+    else if (op.type == OpType_imm) {
+        printf("mov %s, 0x%lx\n", reg_names[op.kind][rcx], op.value);
+        printf("%s %s", opcode, reg_names[op.kind][rcx]);
+    }
     if (bitshift) printf(", cl\n");
     else printf("\n");
 }
@@ -348,10 +352,14 @@ static void load(jitc_type_kind_t kind, bool is_unsigned) {
     res->type = StackItem_lvalue_abs;
 }
 
-static void divide(reg_t outreg) {
-    stack_item_t op2 = pop();
-    stack_item_t op1 = pop();
-    stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+static void divide(reg_t outreg, bool store) {
+    stack_item_t op1, op2 = pop();
+    stack_item_t* res = NULL;
+    if (store) op1 = *(res = peek(0));
+    else {
+        op1 = pop();
+        res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+    }
     if (isflt(op1.kind)) {
         if (op1.type != StackItem_rvalue) instr2("mov", op(res), op(&op1));
         instr2("div", op(res), op(&op2));
@@ -393,11 +401,15 @@ static void increment(int32_t step, bool flip) {
     if (!flip) instr2("mov", op(res), op(&op1));
 }
 
-static void bitshift(bool is_right) {
+static void bitshift(bool store, bool is_right) {
     stack_item_t op2 = pop();
-    stack_item_t op1 = pop();
-    stack_item_t* res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
-    if (op1.type != StackItem_rvalue) instr2("mov", op(res), op(&op1));
+    stack_item_t* res = NULL;
+    if (store) res = peek(0);
+    else {
+        stack_item_t op1 = pop();
+        res = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+        if (op1.type != StackItem_rvalue) instr2("mov", op(res), op(&op1));
+    }
     instr2("mov", reg(rcx, op2.kind, op2.is_unsigned), op(&op2));
     instr1(is_right ? "shr" : "shl", op(res), true);
 }
@@ -423,7 +435,7 @@ static void addrof() {
     operand_t res = op(push(StackItem_rvalue, Type_Pointer, true));
     op1.kind = Type_Pointer;
     op1.is_unsigned = true;
-    instr2("lea", res, op1);
+    if (item.type != StackItem_rvalue) instr2("lea", res, op1);
 }
 
 static void convert(jitc_type_kind_t kind, bool is_unsigned) {
@@ -555,7 +567,8 @@ static void call(jitc_type_t* signature) {
         }[int_params++], item->kind, item->is_unsigned), op(item));
         else instr2("mov", ptr(rsp, --stack_params * 8, item->kind, item->is_unsigned), op(item));
     }
-    instr1("call", unptr(op(&func)), false);
+    instr2("lea", reg(rax, Type_Pointer, true), op(&func));
+    instr1("call", reg(rax, Type_Pointer, true), false);
     if (temp_stack != 0) stack_free(temp_stack);
     if (ret) {
         if (isflt(ret->kind))
@@ -614,13 +627,23 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_add: binaryop("add"); break;
             case IROpCode_sub: binaryop("sub"); break;
             case IROpCode_mul: binaryop(isflt(peek(1)->kind) ? "mul" : "imul"); break;
-            case IROpCode_div: divide(rax); break;
-            case IROpCode_mod: divide(rdx); break;
+            case IROpCode_div: divide(rax, false); break;
+            case IROpCode_mod: divide(rdx, false); break;
             case IROpCode_and: binaryop("and"); break;
             case IROpCode_or:  binaryop("or");  break;
             case IROpCode_xor: binaryop("xor"); break;
-            case IROpCode_shl: bitshift(false); break;
-            case IROpCode_shr: bitshift(true); break;
+            case IROpCode_shl: bitshift(false, false); break;
+            case IROpCode_shr: bitshift(false, true); break;
+            case IROpCode_sadd: instr2("add", op(peek(1)), op(peek(0))); pop(); break;
+            case IROpCode_ssub: instr2("sub", op(peek(1)), op(peek(0))); pop(); break;
+            case IROpCode_smul: instr2(isflt(peek(1)->kind) ? "mul" : "imul", op(peek(1)), op(peek(0))); pop(); break;
+            case IROpCode_sdiv: divide(rax, true); break;
+            case IROpCode_smod: divide(rdx, true); break;
+            case IROpCode_sand: instr2("and", op(peek(1)), op(peek(0))); pop(); break;
+            case IROpCode_sor: instr2("or", op(peek(1)), op(peek(0))); pop(); break;
+            case IROpCode_sxor: instr2("xor", op(peek(1)), op(peek(0))); pop(); break;
+            case IROpCode_sshl: bitshift(true, false); break;
+            case IROpCode_sshr: bitshift(true, true); break;
             case IROpCode_not: unaryop("not", false); break;
             case IROpCode_neg: negate(); break;
             case IROpCode_inc: increment(ir->params[1].as_integer, ir->params[0].as_integer); break;

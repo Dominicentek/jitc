@@ -73,7 +73,7 @@ static bool is_struct(jitc_type_t* type) {
 }
 
 static bool is_function(jitc_type_t* type) {
-    return type->kind == Type_Function || (type->kind == Type_Pointer && type->ptr.base->kind == Type_Function);
+    return type->kind == Type_Pointer && (type->ptr.prev == Type_Function || type->ptr.base->kind == Type_Function);
 }
 
 static bool is_decayed_pointer(jitc_type_t* type) {
@@ -82,12 +82,6 @@ static bool is_decayed_pointer(jitc_type_t* type) {
 
 static bool is_constant(jitc_ast_t* ast) {
     return ast->node_type == AST_Integer || ast->node_type == AST_Floating || ast->node_type == AST_StringLit;
-}
-
-static jitc_type_t* as_function(jitc_type_t* type) {
-    if (type->kind == Type_Function) return type;
-    if (type->kind == Type_Pointer && type->ptr.base->kind == Type_Function) return type->ptr.base;
-    return NULL;
 }
 
 bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
@@ -620,7 +614,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Binary_FunctionCall:
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, &node->exprtype));
                 if (!is_function(node->exprtype)) ERROR(node->token, "Calling a non-function");
-                jitc_type_t* func = as_function(node->exprtype);
+                jitc_type_t* func = node->exprtype->ptr.base;
                 list_t* list = node->binary.right->list.inner;
                 node->exprtype = func->func.ret;
                 if (list_size(list) != func->func.num_params) ERROR(node->token,
@@ -885,7 +879,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
         stack_push_ptr(unary_stack, move(node));
     }
     if (force_parse_parentheses || jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) {
-        node = jitc_parse_expression(context, tokens, NULL);
+        node = try(jitc_parse_expression(context, tokens, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_INTEGER))) {
@@ -1237,7 +1231,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             if (decltype != Decltype_Typedef) list_add_ptr(list->list.inner, move(node));
             if (!jitc_declare_variable(context, type, decltype, 0)) ERROR(token, "Symbol '%s' already declared", type->name);
             jitc_variable_t* var = jitc_get_variable(context, type->name);
-            var->value = (uint64_t)symbol_ptr;
+            if (var) var->value = (uint64_t)symbol_ptr;
 
             if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
                 if (decltype == Decltype_Extern) ERROR(token, "Cannot attach code to an extern function");
@@ -1260,7 +1254,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 list_add_ptr(list->list.inner, move(func));
                 break;
             }
-            else if (type->kind == Type_Function) var->decltype = Decltype_Extern;
+            else if (type->kind == Type_Function && var) var->decltype = Decltype_Extern;
             if ((token = jitc_token_expect(tokens, TOKEN_EQUALS))) {
                 if (decltype == Decltype_Extern) ERROR(token, "Cannot assign to an extern variable");
                 if (type->kind == Type_Function) ERROR(token, "Assigning to a function");

@@ -1,4 +1,8 @@
+int* fuhh() {
+    return 0;
+}
+
 int main() {
-    int arr[4];
-    arr[2] = 3;
+    int x = 0;
+    x = x / 2;
 }

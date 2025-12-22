@@ -159,7 +159,7 @@ static size_t process_size_tree(map_t* variable_map, stackvar_t* tree, size_t pa
         if (!node->var.type->name) continue;
         if (size % node->var.type->alignment != 0) size += node->var.type->alignment - size % node->var.type->alignment;
         if (!node->is_global) {
-            node->var.offset = size - node->var.type->size;
+            node->var.offset = -(size - node->var.type->size);
             size += node->var.type->size;
         }
         map_get_ptr(variable_map, (char*)node->var.type->name);

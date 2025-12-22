@@ -141,6 +141,12 @@ jitc_type_t* jitc_typecache_align(jitc_context_t* context, jitc_type_t* base, ui
 
 jitc_type_t* jitc_typecache_pointer(jitc_context_t* context, jitc_type_t* base) {
     jitc_type_t ptr = {};
+    if (base->kind == Type_Pointer && base->ptr.prev != Type_Pointer) {
+        ptr = jitc_copy_type(base);
+        ptr.ptr.prev = Type_Pointer;
+        ptr.hash = 0;
+        return jitc_register_type(context, &ptr);
+    }
     ptr.kind = Type_Pointer;
     ptr.ptr.base = base;
     ptr.ptr.prev = Type_Pointer;
@@ -249,8 +255,9 @@ jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, co
 
 jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from) {
     if (from->kind != Type_Array && from->kind != Type_Function) return from;
-    jitc_type_t type = jitc_copy_type(from);
+    jitc_type_t type;
     type.kind = Type_Pointer;
+    type.ptr.base = from;
     type.ptr.prev = from->kind;
     type.size = type.alignment = 8;
     type.hash = 0;
