@@ -159,7 +159,7 @@ static size_t process_size_tree(map_t* variable_map, stackvar_t* tree, size_t pa
         if (!node->var.type->name) continue;
         if (size % node->var.type->alignment != 0) size += node->var.type->alignment - size % node->var.type->alignment;
         if (!node->is_global) {
-            node->var.offset = -(size - node->var.type->size);
+            node->var.offset = size + node->var.type->size;
             size += node->var.type->size;
         }
         map_get_ptr(variable_map, (char*)node->var.type->name);
@@ -231,6 +231,13 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                     assemble(list, ast->binary.right, variable_map);
                 }
                 switch (ast->binary.operation) {
+                    case Binary_Assignment: {
+                        if (ast->binary.left->exprtype->kind == Type_Struct || ast->binary.left->exprtype->kind == Type_Union) {
+                            jitc_type_t* type = ast->binary.left->exprtype;
+                            jitc_asm(list, IROpCode_copy, type->size / type->alignment, type->alignment);
+                        }
+                        else jitc_asm(list, IROpCode_store);
+                    } break;
                     case Binary_Addition:             jitc_asm(list, IROpCode_add); break;
                     case Binary_Subtraction:          jitc_asm(list, IROpCode_sub); break;
                     case Binary_Multiplication:       jitc_asm(list, IROpCode_mul); break;
@@ -247,7 +254,6 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                     case Binary_LessThanOrEqualTo:    jitc_asm(list, IROpCode_lte); break;
                     case Binary_GreaterThan:          jitc_asm(list, IROpCode_grt); break;
                     case Binary_GreaterThanOrEqualTo: jitc_asm(list, IROpCode_gte); break;
-                    case Binary_Assignment:           jitc_asm(list, IROpCode_store); break;
                     case Binary_AssignAddition:       jitc_asm(list, IROpCode_sadd); break;
                     case Binary_AssignSubtraction:    jitc_asm(list, IROpCode_ssub); break;
                     case Binary_AssignMultiplication: jitc_asm(list, IROpCode_smul); break;

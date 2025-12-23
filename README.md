@@ -10,7 +10,6 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 
 ## TODO
 
-- Struct copying
 - Struct arguments/returns
 - Varargs
 - Ternary operator
@@ -48,6 +47,7 @@ Note to self: When implementing extension features, still make programs as expli
 - No macros, only `#include` (for now)
 - No `goto` (for now)
 - No `alloca`, `auto`, `constexpr` or `signed`
+- No L-strings or `wchar`
 - `sizeof` and `alignof` **must** have parentheses
 - No underscore-prefixed keywords:
   - `_Alignof` -> `alignof`

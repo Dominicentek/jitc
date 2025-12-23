@@ -286,7 +286,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
                         ERROR(NEXT_TOKEN, "Expected ';' or ','");
                     }
                 }
-                type = (token->type == TOKEN_struct ? jitc_typecache_struct : jitc_typecache_union)(context, list);
+                type = (token->type == TOKEN_struct ? jitc_typecache_struct : jitc_typecache_union)(context, list, token);
                 if (name_token) if (!jitc_declare_tagged_type(context, type, name_token->value.string))
                     ERROR(name_token, "%s '%s' already defined", token->type == TOKEN_struct ? "Struct" : "Union", name_token->value.string);
             }
@@ -528,6 +528,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     else node->exprtype = jitc_typecache_pointer(context, node->exprtype);
                 }
                 else {
+                    if (node->exprtype->is_const) ERROR(node->token, "Assigning to a const");
                     if (!is_scalar(node->exprtype)) ERROR(node->token, "Operand must be a scalar type");
                     if (is_pointer(node->exprtype)) node->unary.operation += Unary_PtrSuffixIncrement - Unary_SuffixIncrement;
                 }
@@ -732,6 +733,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             #define ASSIGNMENT(check, errmsg) \
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, &node->exprtype)); \
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
+                if (node->exprtype->is_const) ERROR(node->token, "Assigning to const"); \
                 if (!is_lvalue(node->binary.left)) ERROR(node->token, "Assigning to an rvalue"); \
                 if (is_decayed_pointer(node->unary.inner->exprtype)) ERROR(node->token, "Assigning to an object"); \
                 if (!(check)) ERROR(node->token, errmsg); \

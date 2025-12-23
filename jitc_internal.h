@@ -147,7 +147,7 @@ struct jitc_type_t {
     bool is_const;
     bool is_unsigned;
     const char* name;
-    uint64_t alignment, size;
+    uint32_t alignment, size;
     uint64_t hash;
     union {
         struct {
@@ -167,6 +167,7 @@ struct jitc_type_t {
             jitc_type_t** fields;
             size_t* offsets;
             size_t num_fields;
+            jitc_token_t* source_token;
         } str;
         struct {
             const char* name;
@@ -256,6 +257,7 @@ typedef struct {
     X(laddr, INT(TYPE(void*) ptr), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(lstack, INT(TYPE(int32_t) offset), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(store) \
+    X(copy, INT(TYPE(uint64_t) count), INT(TYPE(uint64_t) alignment)) \
     X(add) \
     X(sub) \
     X(mul) \
@@ -467,8 +469,8 @@ jitc_type_t* jitc_typecache_align(jitc_context_t* context, jitc_type_t* base, ui
 jitc_type_t* jitc_typecache_pointer(jitc_context_t* context, jitc_type_t* base);
 jitc_type_t* jitc_typecache_array(jitc_context_t* context, jitc_type_t* base, size_t size);
 jitc_type_t* jitc_typecache_function(jitc_context_t* context, jitc_type_t* retval, list_t* params);
-jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields);
-jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* fields);
+jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields, jitc_token_t* source);
+jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* fields, jitc_token_t* source);
 jitc_type_t* jitc_typecache_enum(jitc_context_t* context, jitc_type_t* base);
 jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name);

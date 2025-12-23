@@ -352,6 +352,20 @@ static void load(jitc_type_kind_t kind, bool is_unsigned) {
     res->type = StackItem_lvalue_abs;
 }
 
+static void copy(uint64_t count, uint64_t alignment) {
+    stack_item_t op2 = pop();
+    stack_item_t* op1 = peek(0);
+    instr2("lea", reg(rdi, Type_Int64, true), op(op1));
+    instr2("lea", reg(rsi, Type_Int64, true), op(&op2));
+    instr2("mov", reg(rcx, Type_Int32, true), imm(count, Type_Int32, true));
+    printf("rep %s\n",
+        alignment == 1 ? "movsb" :
+        alignment == 2 ? "movsw" :
+        alignment == 4 ? "movsd" :
+        alignment == 8 ? "movsq" : "<UNK>"
+    );
+}
+
 static void divide(reg_t outreg, bool store) {
     stack_item_t op1, op2 = pop();
     stack_item_t* res = NULL;
@@ -624,6 +638,7 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_pop: pop(); break;
             case IROpCode_load: load(ir->params[0].as_integer, ir->params[1].as_integer); break;
             case IROpCode_store: instr2("mov", op(peek(1)), op(peek(0))); pop(); break;
+            case IROpCode_copy: copy(ir->params[0].as_integer, ir->params[1].as_integer); break;
             case IROpCode_add: binaryop("add"); break;
             case IROpCode_sub: binaryop("sub"); break;
             case IROpCode_mul: binaryop(isflt(peek(1)->kind) ? "mul" : "imul"); break;

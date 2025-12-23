@@ -1,12 +1,10 @@
-struct Test {
-    int hello;
-    struct {
-        int hi;
-    } hi;
+struct test {
+    int x[1024];
 };
 
 int main() {
-    struct Test* test = 0;
-    test->hello = 0;
-    test->hi.hi = 3;
+    struct test test1;
+    const struct test test2;
+    test1 = test2;
 }
+

@@ -65,6 +65,7 @@ static uint64_t hash_type(jitc_type_t* type) {
             break;
         case Type_Struct:
         case Type_Union:
+            hash = hash_mix(hash, hash_ptr(type->str.source_token));
             for (size_t i = 0; i < type->str.num_fields; i++)
                 hash = hash_mix(hash, hash_ptr(type->str.fields[i]));
             break;
@@ -178,12 +179,13 @@ jitc_type_t* jitc_typecache_function(jitc_context_t* context, jitc_type_t* ret, 
     return jitc_register_type(context, &func, true);
 }
 
-jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields) {
+jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields, jitc_token_t* source) {
     jitc_type_t str = {};
     str.kind = Type_Struct;
     str.str.num_fields = list_size(fields);
     str.str.fields = malloc(sizeof(jitc_type_t*) * list_size(fields));
     str.str.offsets = malloc(sizeof(size_t) * list_size(fields));
+    str.str.source_token = source;
     for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get_ptr(fields, i);
     size_t max_alignment = 1;
     size_t ptr = 0;
@@ -201,12 +203,13 @@ jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields) {
     return jitc_register_type(context, &str, true);
 }
 
-jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* fields) {
+jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* fields, jitc_token_t* source) {
     jitc_type_t str = {};
     str.kind = Type_Union;
     str.str.num_fields = list_size(fields);
     str.str.fields = malloc(sizeof(jitc_type_t*) * list_size(fields));
     str.str.offsets = malloc(sizeof(size_t) * list_size(fields));
+    str.str.source_token = source;
     for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get_ptr(fields, i);
     size_t max_alignment = 1;
     size_t max_size = 0;
@@ -272,6 +275,8 @@ jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from) {
 }
 
 bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
+    if ((a->kind == Type_Struct || a->kind == Type_Union) && (b->kind == Type_Struct || b->kind  == Type_Union))
+        return a->str.source_token = b->str.source_token;
     return jitc_typecache_named(context, a, NULL) == jitc_typecache_named(context, b, NULL);
 }
 
