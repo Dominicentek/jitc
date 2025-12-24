@@ -10,7 +10,7 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 
 ## TODO
 
-- Struct arguments/returns
+- Parameters/returns in function prolog and epilog
 - Varargs
 - Ternary operator
 - Short circuiting
@@ -44,10 +44,10 @@ Note to self: When implementing extension features, still make programs as expli
 - No VLAs
 - No bitfields
 - No variable shadowing
+- No wide strings or characters
 - No macros, only `#include` (for now)
 - No `goto` (for now)
 - No `alloca`, `auto`, `constexpr` or `signed`
-- No L-strings or `wchar`
 - `sizeof` and `alignof` **must** have parentheses
 - No underscore-prefixed keywords:
   - `_Alignof` -> `alignof`

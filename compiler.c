@@ -234,7 +234,7 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                     case Binary_Assignment: {
                         if (ast->binary.left->exprtype->kind == Type_Struct || ast->binary.left->exprtype->kind == Type_Union) {
                             jitc_type_t* type = ast->binary.left->exprtype;
-                            jitc_asm(list, IROpCode_copy, type->size / type->alignment, type->alignment);
+                            jitc_asm(list, IROpCode_copy, type->size, type->alignment);
                         }
                         else jitc_asm(list, IROpCode_store);
                     } break;

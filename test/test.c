@@ -1,10 +1,12 @@
 struct test {
-    int x[1024];
+    long y, z;
+    double x;
 };
 
+void func(struct test test) {}
+
 int main() {
-    struct test test1;
-    const struct test test2;
-    test1 = test2;
+    struct test tset;
+    func(tset);
 }
 

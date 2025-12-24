@@ -1217,7 +1217,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 symbol_ptr = jitc_get_or_static(context, type->name);
                 if (!symbol_ptr) {
                     symbol_ptr = dlsym(RTLD_DEFAULT, type->name);
-                    if (!symbol_ptr) ERROR(token, "Cannot resolve symbol '%s'");
+                    if (!symbol_ptr) ERROR(token, "Cannot resolve symbol '%s'", type->name);
                 }
                 node->decl.symbol_ptr = symbol_ptr;
             }

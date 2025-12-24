@@ -257,7 +257,7 @@ typedef struct {
     X(laddr, INT(TYPE(void*) ptr), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(lstack, INT(TYPE(int32_t) offset), INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(store) \
-    X(copy, INT(TYPE(uint64_t) count), INT(TYPE(uint64_t) alignment)) \
+    X(copy, INT(TYPE(uint64_t) size), INT(TYPE(uint64_t) alignment)) \
     X(add) \
     X(sub) \
     X(mul) \
