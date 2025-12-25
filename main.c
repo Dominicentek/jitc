@@ -75,6 +75,7 @@ void print_ast(jitc_ast_t* ast, int indent) {
         "unary",
         "binary",
         "ternary",
+        "branch",
         "list",
         "type",
         "decl",
@@ -156,6 +157,7 @@ void print_ast(jitc_ast_t* ast, int indent) {
             print_ast(ast->binary.right, indent + 2);
             break;
         case AST_Ternary:
+        case AST_Branch:
             printf("\n");
             print_ast(ast->ternary.when, indent + 2);
             print_ast(ast->ternary.then, indent + 2);

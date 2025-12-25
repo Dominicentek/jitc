@@ -297,6 +297,19 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
             if (ast->ternary.when) assemble(list, ast->ternary.when, variable_map);
             else jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
             jitc_asm(list, IROpCode_then);
+            assemble(list, ast->ternary.then, variable_map);
+            jitc_asm(list, IROpCode_rval);
+            jitc_asm(list, IROpCode_pop);
+            jitc_asm(list, IROpCode_else);
+            assemble(list, ast->ternary.otherwise, variable_map);
+            jitc_asm(list, IROpCode_rval);
+            jitc_asm(list, IROpCode_end);
+            return true;
+        case AST_Branch:
+            jitc_asm(list, IROpCode_if);
+            if (ast->ternary.when) assemble(list, ast->ternary.when, variable_map);
+            else jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
+            jitc_asm(list, IROpCode_then);
             if (assemble(list, ast->ternary.then, variable_map)) jitc_asm(list, IROpCode_pop);
             jitc_asm(list, IROpCode_else);
             if (assemble(list, ast->ternary.otherwise, variable_map)) jitc_asm(list, IROpCode_pop);

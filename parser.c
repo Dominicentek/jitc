@@ -776,7 +776,8 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 break;
             default: break;
         } break;
-        case AST_Ternary: {
+        case AST_Ternary:
+        case AST_Branch: {
             node->ternary.when = try(jitc_process_ast(context, node->ternary.when, NULL));
             node->ternary.then = try(jitc_process_ast(context, node->ternary.then, NULL));
             node->ternary.otherwise = try(jitc_process_ast(context, node->ternary.otherwise, NULL));
@@ -805,7 +806,7 @@ jitc_ast_t* jitc_flatten_ast(jitc_ast_t* ast, list_t* list) {
             ast->loop.cond = jitc_flatten_ast(ast->loop.cond, NULL);
             ast->loop.body = jitc_flatten_ast(ast->loop.body, NULL);
         }
-        else if (ast->node_type == AST_Ternary) {
+        else if (ast->node_type == AST_Branch) {
             ast->ternary.when = jitc_flatten_ast(ast->ternary.when, NULL);
             ast->ternary.then = jitc_flatten_ast(ast->ternary.then, NULL);
             ast->ternary.otherwise = jitc_flatten_ast(ast->ternary.otherwise, NULL);
@@ -1118,7 +1119,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
     jitc_token_t* token = NULL;
     if ((token = jitc_token_expect(tokens, TOKEN_if))) {
         if (!(allowed & ParseType_Command)) ERROR(token, "'if' not allowed here");
-        smartptr(jitc_ast_t) node = mknode(AST_Ternary, token);
+        smartptr(jitc_ast_t) node = mknode(AST_Branch, token);
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
         node->ternary.when = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
@@ -1160,7 +1161,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         smartptr(jitc_ast_t) condition = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) ERROR(NEXT_TOKEN, "Expected ';'");
-        smartptr(jitc_ast_t) ternary = mknode(AST_Ternary, token);
+        smartptr(jitc_ast_t) ternary = mknode(AST_Branch, token);
         ternary->ternary.when = move(condition);
         ternary->ternary.then = mknode(AST_List, token);
         ternary->ternary.otherwise = mknode(AST_Break, token);
@@ -1331,6 +1332,7 @@ void jitc_destroy_ast(jitc_ast_t* ast) {
             jitc_destroy_ast(ast->binary.right);
             break;
         case AST_Ternary:
+        case AST_Branch:
             jitc_destroy_ast(ast->ternary.when);
             jitc_destroy_ast(ast->ternary.then);
             jitc_destroy_ast(ast->ternary.otherwise);

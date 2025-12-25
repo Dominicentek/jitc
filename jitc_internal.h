@@ -40,6 +40,7 @@ typedef enum: uint8_t {
     AST_Unary,
     AST_Binary,
     AST_Ternary,
+    AST_Branch,
     AST_List,
     AST_Type,
     AST_Declaration,
@@ -288,6 +289,7 @@ typedef struct {
     X(grt) \
     X(gte) \
     X(swp) \
+    X(rval) \
     X(cvt, INT(TYPE(jitc_type_kind_t) kind), INT(TYPE(bool) is_unsigned)) \
     X(stackalloc, INT(TYPE(uint32_t) offset)) \
     X(offset, INT(TYPE(int32_t) offset)) \

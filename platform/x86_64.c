@@ -522,6 +522,16 @@ static void convert(jitc_type_kind_t kind, bool is_unsigned) {
     }
 }
 
+static void rval() {
+    stack_item_t* item = peek(0);
+    if (item->type == StackItem_literal) {
+        pop();
+        operand_t op1 = op(item);
+        item = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+        instr2("mov", op(item), op1);
+    }
+}
+
 static void swap() {
     stack_item_t tmp = *peek(0);
     *peek(0) = *peek(1);
@@ -625,6 +635,7 @@ static void* jitc_assemble(list_t* list) {
             case IROpCode_gte: compare("setge"); break;
             case IROpCode_swp: swap(); break;
             case IROpCode_cvt: convert(ir->params[0].as_integer, ir->params[1].as_integer); break;
+            case IROpCode_rval: rval(); break;
             case IROpCode_offset: offset(ir->params[0].as_integer); break;
             case IROpCode_stackalloc: stackalloc(ir->params[0].as_integer); break;
             case IROpCode_if: push_branch(); break; // todo: remove redundant branching
