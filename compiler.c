@@ -221,6 +221,12 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                 jitc_asm(list, IROpCode_call, signature);
             }
             else {
+                if (ast->binary.operation == Binary_Comma) {
+                    assemble(list, ast->binary.left, variable_map);
+                    jitc_asm(list, IROpCode_pop);
+                    assemble(list, ast->binary.right, variable_map);
+                    break;
+                }
                 if (get_su_number(ast->binary.left) < get_su_number(ast->binary.right)) {
                     assemble(list, ast->binary.right, variable_map);
                     assemble(list, ast->binary.left, variable_map);

@@ -150,8 +150,9 @@ void print_ast(jitc_ast_t* ast, int indent) {
                 "assignand",
                 "assignor",
                 "assignxor",
-                "tern1",
-                "tern2",
+                "comma",
+                "lhsternary",
+                "rhsternary",
             }[ast->unary.operation]);
             print_ast(ast->binary.left, indent + 2);
             print_ast(ast->binary.right, indent + 2);

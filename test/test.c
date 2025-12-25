@@ -1,12 +1,5 @@
-struct test {
-    long y, z;
-    double x;
-};
-
-void func(struct test test) {}
-
 int main() {
-    struct test tset;
-    func(tset);
+    int x = 0, y = 2;
+    
+    x = (y, 2);
 }
-

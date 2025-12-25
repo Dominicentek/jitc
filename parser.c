@@ -153,7 +153,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
             jitc_token_t* starting_token = token;
             if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) {
                 token = queue_peek_ptr(tokens);
-                smartptr(jitc_ast_t) ast = try(jitc_parse_expression(context, tokens, NULL));
+                smartptr(jitc_ast_t) ast = try(jitc_parse_expression(context, tokens, false, NULL));
                 if (ast->node_type != AST_Integer) ERROR(token, "Expected integer constant");
                 size = ast->integer.value;
                 if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) ERROR(NEXT_TOKEN, "Expected ']'");
@@ -264,7 +264,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
         else if ((token = jitc_token_expect(tokens, TOKEN_typeof))) {
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
             if (jitc_peek_type(context, tokens)) type = try(jitc_parse_type(context, tokens, NULL));
-            else jitc_destroy_ast(try(jitc_parse_expression(context, tokens, &type)));
+            else jitc_destroy_ast(try(jitc_parse_expression(context, tokens, true, &type)));
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_struct)) || (token = jitc_token_expect(tokens, TOKEN_union))) {
@@ -318,7 +318,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
                     const char* name = id->value.string;
                     uint64_t value = prev_value + 1;
                     if ((jitc_token_expect(tokens, TOKEN_EQUALS))) {
-                        jitc_ast_t* ast = try(jitc_parse_expression(context, tokens, NULL));
+                        jitc_ast_t* ast = try(jitc_parse_expression(context, tokens, false, NULL));
                         if (ast->node_type != AST_Integer) ERROR(ast->token, "Value must be an integer");
                         value = ast->integer.value;
                     }
@@ -773,6 +773,11 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Binary_AssignAnd:
             case Binary_AssignOr:
             case Binary_AssignXor: ASSIGNMENT(is_integer(node->exprtype), "Bitwise operation on a non-integer type");
+            case Binary_Comma:
+                node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL));
+                node->binary.right = try(jitc_process_ast(context, node->binary.right, &node->exprtype));
+                if (is_constant(node->binary.left)) replace(node) = node->binary.right;
+                break;
             default: break;
         } break;
         case AST_Ternary: {
@@ -874,7 +879,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
         stack_push_ptr(unary_stack, move(node));
     }
     if (force_parse_parentheses || jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) {
-        node = try(jitc_parse_expression(context, tokens, NULL));
+        node = try(jitc_parse_expression(context, tokens, true, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_INTEGER))) {
@@ -918,7 +923,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
         jitc_type_t* type = NULL;
         if (jitc_peek_type(context, tokens)) type = try(jitc_parse_type(context, tokens, NULL));
-        else jitc_destroy_ast(try(jitc_parse_expression(context, tokens, &type)));
+        else jitc_destroy_ast(try(jitc_parse_expression(context, tokens, true, &type)));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         node = mknode(AST_Integer, token);
         node->integer.is_unsigned = true;
@@ -959,7 +964,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
             smartptr(jitc_ast_t) addition = mknode(AST_Binary, token);
             addition->binary.operation = Binary_Addition;
             addition->binary.left = move(node);
-            addition->binary.right = try(jitc_parse_expression(context, tokens, NULL));
+            addition->binary.right = try(jitc_parse_expression(context, tokens, true, NULL));
             if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) ERROR(NEXT_TOKEN, "Expected ']'");
             op = mknode(AST_Unary, token);
             op->unary.operation = Unary_Dereference;
@@ -968,7 +973,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
         else if ((token = jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN))) {
             smartptr(jitc_ast_t) list = mknode(AST_List, token);
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) while (true) {
-                list_add_ptr(list->list.inner, try(jitc_parse_expression(context, tokens, NULL)));
+                list_add_ptr(list->list.inner, try(jitc_parse_expression(context, tokens, false, NULL)));
                 if (jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) break;
                 if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
                 ERROR(NEXT_TOKEN, "Expected ')' or ','");
@@ -994,37 +999,38 @@ static struct {
     int precedence;
     jitc_binary_op_t type;
 } op_info[] = {
-    [TOKEN_ASTERISK]                   = { false, 12, Binary_Multiplication },
-    [TOKEN_SLASH]                      = { false, 12, Binary_Division },
-    [TOKEN_PERCENT]                    = { false, 12, Binary_Modulo },
-    [TOKEN_PLUS]                       = { false, 11, Binary_Addition },
-    [TOKEN_MINUS]                      = { false, 11, Binary_Subtraction },
-    [TOKEN_DOUBLE_LESS_THAN]           = { false, 10, Binary_BitshiftLeft },
-    [TOKEN_DOUBLE_GREATER_THAN]        = { false, 10, Binary_BitshiftRight },
-    [TOKEN_LESS_THAN]                  = { false, 9,  Binary_LessThan },
-    [TOKEN_GREATER_THAN]               = { false, 9,  Binary_GreaterThan },
-    [TOKEN_LESS_THAN_EQUALS]           = { false, 9,  Binary_LessThanOrEqualTo },
-    [TOKEN_GREATER_THAN_EQUALS]        = { false, 9,  Binary_GreaterThanOrEqualTo },
-    [TOKEN_DOUBLE_EQUALS]              = { false, 8,  Binary_Equals },
-    [TOKEN_NOT_EQUALS]                 = { false, 8,  Binary_NotEquals },
-    [TOKEN_AMPERSAND]                  = { false, 7,  Binary_And },
-    [TOKEN_HAT]                        = { false, 6,  Binary_Xor },
-    [TOKEN_PIPE]                       = { false, 5,  Binary_Or },
-    [TOKEN_DOUBLE_AMPERSAND]           = { false, 4,  Binary_LogicAnd },
-    [TOKEN_DOUBLE_PIPE]                = { false, 3,  Binary_LogicOr },
-    [TOKEN_QUESTION_MARK]              = { true,  2,  Binary_Tern1 },
-    [TOKEN_COLON]                      = { true,  2,  Binary_Tern2 },
-    [TOKEN_EQUALS]                     = { true,  1,  Binary_Assignment },
-    [TOKEN_PLUS_EQUALS]                = { true,  1,  Binary_AssignAddition },
-    [TOKEN_MINUS_EQUALS]               = { true,  1,  Binary_AssignSubtraction },
-    [TOKEN_ASTERISK_EQUALS]            = { true,  1,  Binary_AssignMultiplication },
-    [TOKEN_SLASH_EQUALS]               = { true,  1,  Binary_AssignDivision },
-    [TOKEN_PERCENT_EQUALS]             = { true,  1,  Binary_AssignModulo },
-    [TOKEN_DOUBLE_LESS_THAN_EQUALS]    = { true,  1,  Binary_AssignBitshiftLeft },
-    [TOKEN_DOUBLE_GREATER_THAN_EQUALS] = { true,  1,  Binary_AssignBitshiftRight },
-    [TOKEN_AMPERSAND_EQUALS]           = { true,  1,  Binary_AssignAnd },
-    [TOKEN_PIPE_EQUALS]                = { true,  1,  Binary_AssignOr },
-    [TOKEN_HAT_EQUALS]                 = { true,  1,  Binary_AssignXor },
+    [TOKEN_ASTERISK]                   = { false, 13, Binary_Multiplication },
+    [TOKEN_SLASH]                      = { false, 13, Binary_Division },
+    [TOKEN_PERCENT]                    = { false, 13, Binary_Modulo },
+    [TOKEN_PLUS]                       = { false, 12, Binary_Addition },
+    [TOKEN_MINUS]                      = { false, 12, Binary_Subtraction },
+    [TOKEN_DOUBLE_LESS_THAN]           = { false, 11, Binary_BitshiftLeft },
+    [TOKEN_DOUBLE_GREATER_THAN]        = { false, 11, Binary_BitshiftRight },
+    [TOKEN_LESS_THAN]                  = { false, 10, Binary_LessThan },
+    [TOKEN_GREATER_THAN]               = { false, 10, Binary_GreaterThan },
+    [TOKEN_LESS_THAN_EQUALS]           = { false, 10, Binary_LessThanOrEqualTo },
+    [TOKEN_GREATER_THAN_EQUALS]        = { false, 10, Binary_GreaterThanOrEqualTo },
+    [TOKEN_DOUBLE_EQUALS]              = { false, 9,  Binary_Equals },
+    [TOKEN_NOT_EQUALS]                 = { false, 9,  Binary_NotEquals },
+    [TOKEN_AMPERSAND]                  = { false, 8,  Binary_And },
+    [TOKEN_HAT]                        = { false, 7,  Binary_Xor },
+    [TOKEN_PIPE]                       = { false, 6,  Binary_Or },
+    [TOKEN_DOUBLE_AMPERSAND]           = { false, 5,  Binary_LogicAnd },
+    [TOKEN_DOUBLE_PIPE]                = { false, 4,  Binary_LogicOr },
+    [TOKEN_QUESTION_MARK]              = { true,  3,  Binary_Tern1 },
+    [TOKEN_COLON]                      = { true,  3,  Binary_Tern2 },
+    [TOKEN_EQUALS]                     = { true,  2,  Binary_Assignment },
+    [TOKEN_PLUS_EQUALS]                = { true,  2,  Binary_AssignAddition },
+    [TOKEN_MINUS_EQUALS]               = { true,  2,  Binary_AssignSubtraction },
+    [TOKEN_ASTERISK_EQUALS]            = { true,  2,  Binary_AssignMultiplication },
+    [TOKEN_SLASH_EQUALS]               = { true,  2,  Binary_AssignDivision },
+    [TOKEN_PERCENT_EQUALS]             = { true,  2,  Binary_AssignModulo },
+    [TOKEN_DOUBLE_LESS_THAN_EQUALS]    = { true,  2,  Binary_AssignBitshiftLeft },
+    [TOKEN_DOUBLE_GREATER_THAN_EQUALS] = { true,  2,  Binary_AssignBitshiftRight },
+    [TOKEN_AMPERSAND_EQUALS]           = { true,  2,  Binary_AssignAnd },
+    [TOKEN_PIPE_EQUALS]                = { true,  2,  Binary_AssignOr },
+    [TOKEN_HAT_EQUALS]                 = { true,  2,  Binary_AssignXor },
+    [TOKEN_COMMA]                      = { false, 1,  Binary_Comma },
 };
 
 jitc_ast_t* jitc_shunting_yard(jitc_context_t* context, list_t* expr) {
@@ -1046,7 +1052,6 @@ jitc_ast_t* jitc_shunting_yard(jitc_context_t* context, list_t* expr) {
         jitc_token_t* op = list_get_ptr(expr, i);
         while (stack_size(op_stack) > 0) {
             jitc_token_t* top = stack_peek_ptr(op_stack);
-            if (top->type == TOKEN_QUESTION_MARK) break;
             int top_precedence = op_info[top->type].precedence;
             int cur_precedence = op_info[ op->type].precedence;
             bool rtl_associativity = op_info[op->type].rtl_assoc;
@@ -1061,13 +1066,15 @@ jitc_ast_t* jitc_shunting_yard(jitc_context_t* context, list_t* expr) {
     return stack_pop_ptr(node_stack);
 }
 
-jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, jitc_type_t** exprtype) {
+jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, bool comma_allowed, jitc_type_t** exprtype) {
     smartptr(list_t) expr = list_new();
     while (true) {
         jitc_ast_t* operand = try(jitc_parse_expression_operand(context, tokens));
         jitc_token_t* token = queue_peek_ptr(tokens);
         list_add_ptr(expr, operand);
         if (op_info[token->type].precedence == 0) break;
+        if (!comma_allowed && token->type == TOKEN_COMMA) break;
+        printf("%d, comma: %d\n", token->type, TOKEN_COMMA);
         list_add_ptr(expr, queue_pop_ptr(tokens));
     }
     return jitc_process_ast(context, jitc_shunting_yard(context, expr), exprtype);
@@ -1086,7 +1093,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         if (!(allowed & ParseType_Command)) ERROR(token, "'if' not allowed here");
         smartptr(jitc_ast_t) node = mknode(AST_Ternary, token);
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
-        node->ternary.when = try(jitc_parse_expression(context, tokens, NULL));
+        node->ternary.when = try(jitc_parse_expression(context, tokens, true, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         jitc_push_scope(context);
         node->ternary.then = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
@@ -1102,7 +1109,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         if (!(allowed & ParseType_Command)) ERROR(token, "'while' not allowed here");
         smartptr(jitc_ast_t) node = mknode(AST_Loop, token);
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
-        node->loop.cond = try(jitc_parse_expression(context, tokens, NULL));
+        node->loop.cond = try(jitc_parse_expression(context, tokens, true, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         jitc_push_scope(context);
         node->loop.body = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
@@ -1123,7 +1130,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         jitc_pop_scope(context);
         if (!jitc_token_expect(tokens, TOKEN_while)) ERROR(NEXT_TOKEN, "Expected 'while'");
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN))  ERROR(NEXT_TOKEN, "Expected '('");
-        smartptr(jitc_ast_t) condition = try(jitc_parse_expression(context, tokens, NULL));
+        smartptr(jitc_ast_t) condition = try(jitc_parse_expression(context, tokens, true, NULL));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) ERROR(NEXT_TOKEN, "Expected ';'");
         smartptr(jitc_ast_t) ternary = mknode(AST_Ternary, token);
@@ -1150,7 +1157,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON))
             cond = try(jitc_parse_statement(context, tokens, ParseType_Expression));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) {
-            expr = try(jitc_parse_expression(context, tokens, NULL));
+            expr = try(jitc_parse_expression(context, tokens, true, NULL));
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) ERROR(NEXT_TOKEN, "Expected ')'");
         }
         list_add_ptr(body->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
@@ -1181,7 +1188,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         jitc_variable_t* retvar = jitc_get_variable(context, "return");
         if (retvar->type->kind != Type_Void) {
             node->ret.expr = try(jitc_cast(context,
-                try(jitc_parse_expression(context, tokens, NULL)),
+                try(jitc_parse_expression(context, tokens, true, NULL)),
                 retvar->type, false, token
             ));
         }
@@ -1259,7 +1266,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 smartptr(jitc_ast_t) variable = mknode(AST_Variable, token);
                 variable->variable.name = type->name;
                 assign->binary.operation = Binary_Assignment;
-                assign->binary.right = try(jitc_parse_expression(context, tokens, NULL));
+                assign->binary.right = try(jitc_parse_expression(context, tokens, false, NULL));
                 assign->binary.left = move(variable);
                 list_add_ptr(list->list.inner, try(jitc_process_ast(context, move(assign), NULL)));
             }
@@ -1270,7 +1277,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         return move(list);
     }
     if (allowed & ParseType_Expression) {
-        smartptr(jitc_ast_t) node = try(jitc_parse_expression(context, tokens, NULL));
+        smartptr(jitc_ast_t) node = try(jitc_parse_expression(context, tokens, true, NULL));
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) ERROR(NEXT_TOKEN, "Expected ';'");
         return move(node);
     }
