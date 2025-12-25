@@ -12,7 +12,7 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 
 - Parameters/returns in function prolog and epilog
 - Varargs
-- Ternary operator
+- Correct codegen for ternary operator
 - Short circuiting
 - Switch statements
 - Initializers

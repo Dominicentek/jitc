@@ -119,9 +119,6 @@ typedef enum: uint8_t {
     Binary_AssignOr,
     Binary_AssignXor,
     Binary_Comma,
-
-    Binary_Tern1,
-    Binary_Tern2,
 } jitc_binary_op_t;
 
 typedef enum {
@@ -504,7 +501,7 @@ void jitc_free_error(jitc_error_t* error);
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype);
-jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, bool comma_allowed, jitc_type_t** exprtype);
+jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int min_prec, jitc_type_t** exprtype);
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
 void jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
 
