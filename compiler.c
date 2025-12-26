@@ -6,45 +6,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
-typedef enum {
-    ArgType_Int,
-    ArgType_Float,
-    ArgType_Pointer
-} jitc_ir_argtype_t;
-
-#define INT(...) ArgType_Int
-#define FLT(...) ArgType_Float
-#define DBL(...) ArgType_Double
-#define PTR(...) ArgType_Pointer
-#define IRFUNC(x, ...) [IROpCode_##x] = { sizeof((jitc_ir_argtype_t[]){__VA_ARGS__}) / sizeof(jitc_ir_argtype_t), (jitc_ir_argtype_t[]){__VA_ARGS__} },
-static struct {
-    int num_args;
-    jitc_ir_argtype_t* arg_type;
-} args[] = {
-    OPCODES(IRFUNC)
-};
-
-static void jitc_asm(list_t* list, jitc_opcode_t opcode, ...) {
-    va_list varargs;
-    va_start(varargs, opcode);
-    jitc_ir_t* ir = malloc(sizeof(jitc_ir_t));
-    ir->opcode = opcode;
-    for (int i = 0; i < args[opcode].num_args; i++) {
-        switch (args[opcode].arg_type[i]) {
-            case ArgType_Int: ir->params[i].as_integer = va_arg(varargs, uint64_t); break;
-            case ArgType_Float: ir->params[i].as_float = va_arg(varargs, double); break;
-            case ArgType_Pointer: ir->params[i].as_pointer = va_arg(varargs, void*); break;
-        }
-    }
-    va_end(varargs);
-    list_add_ptr(list, ir);
-}
-
-//#define DEBUG
-
-#if defined(DEBUG)
-#include "platform/debug.c"
-#elif defined(_WIN32) && defined(__x86_64__)
+#if defined(_WIN32) && defined(__x86_64__)
 #include "platform/win-x86_64.c"
 #elif defined(__x86_64__)
 #include "platform/sysv-x86_64.c"
@@ -69,9 +31,9 @@ typedef struct {
     };
 } stackvar_t;
 
-static void promote(list_t* list, jitc_ast_t* ast) {
+static void promote(bytewriter_t* writer, jitc_ast_t* ast) {
     if (ast->exprtype->kind < Type_Int32)
-        jitc_asm(list, IROpCode_cvt, Type_Int32, ast->exprtype->is_unsigned);
+        jitc_asm_cvt(writer, Type_Int32, ast->exprtype->is_unsigned);
 }
 
 static size_t get_su_number(jitc_ast_t* ast) {
@@ -188,88 +150,88 @@ static size_t get_stack_size(map_t* variable_map, jitc_ast_t* ast) {
     return process_size_tree(variable_map, size, 0);
 }
 
-static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
+static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map) {
     size_t step = 1;
     switch (ast->node_type) {
         case AST_Unary: switch(ast->unary.operation) {
-            case Unary_ArithPlus: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); break;
-            case Unary_ArithNegate: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); jitc_asm(list, IROpCode_neg); break;
-            case Unary_LogicNegate: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); jitc_asm(list, IROpCode_zero); break;
-            case Unary_BinaryNegate: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); jitc_asm(list, IROpCode_not); break;
-            case Unary_Dereference: assemble(list, ast->unary.inner, variable_map); promote(list, ast->unary.inner); jitc_asm(list, IROpCode_load, ast->exprtype->kind, ast->exprtype->is_unsigned); break;
-            case Unary_AddressOf: assemble(list, ast->unary.inner, variable_map); jitc_asm(list, IROpCode_addrof); break;
+            case Unary_ArithPlus: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); break;
+            case Unary_ArithNegate: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_neg(writer); break;
+            case Unary_LogicNegate: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_zero(writer); break;
+            case Unary_BinaryNegate: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_not(writer); break;
+            case Unary_Dereference: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_load(writer, ast->exprtype->kind, ast->exprtype->is_unsigned); break;
+            case Unary_AddressOf: assemble(writer, ast->unary.inner, variable_map); jitc_asm_addrof(writer); break;
             case Unary_PtrPrefixIncrement: case Unary_PtrPrefixDecrement: case Unary_PtrSuffixIncrement: case Unary_PtrSuffixDecrement:
                 step = ast->exprtype->ptr.base->kind == Type_Function ? 1 : ast->exprtype->ptr.base->size;
             case Unary_PrefixIncrement: case Unary_PrefixDecrement: case Unary_SuffixIncrement: case Unary_SuffixDecrement:
-                assemble(list, ast->unary.inner, variable_map);
-                jitc_asm(list, IROpCode_inc, ast->unary.operation & 0b10, step * (ast->unary.operation & 0b01 ? -1 : 1));
+                assemble(writer, ast->unary.inner, variable_map);
+                jitc_asm_inc(writer, ast->unary.operation & 0b10, step * (ast->unary.operation & 0b01 ? -1 : 1));
                 break;
         } return true;
         case AST_Binary:
             if (ast->binary.operation == Binary_Cast) {
-                assemble(list, ast->binary.left, variable_map);
-                jitc_asm(list, IROpCode_cvt, type(ast->binary.right->type.type));
+                assemble(writer, ast->binary.left, variable_map);
+                jitc_asm_cvt(writer, type(ast->binary.right->type.type));
             }
             else if (ast->binary.operation == Binary_CompoundExpr) {}
             else if (ast->binary.operation == Binary_FunctionCall) {
                 jitc_type_t* signature = ast->binary.left->exprtype;
                 if (signature->kind == Type_Pointer) signature = signature->ptr.base;
                 for (size_t i = signature->func.num_params - 1; i < signature->func.num_params; i--) {
-                    assemble(list, list_get_ptr(ast->binary.right->list.inner, i), variable_map);
+                    assemble(writer, list_get_ptr(ast->binary.right->list.inner, i), variable_map);
                 }
-                assemble(list, ast->binary.left, variable_map);
-                jitc_asm(list, IROpCode_call, signature);
+                assemble(writer, ast->binary.left, variable_map);
+                jitc_asm_call(writer, signature);
             }
             else {
                 if (ast->binary.operation == Binary_Comma) {
-                    assemble(list, ast->binary.left, variable_map);
-                    jitc_asm(list, IROpCode_pop);
-                    assemble(list, ast->binary.right, variable_map);
+                    assemble(writer, ast->binary.left, variable_map);
+                    jitc_asm_pop(writer);
+                    assemble(writer, ast->binary.right, variable_map);
                     break;
                 }
                 if (get_su_number(ast->binary.left) < get_su_number(ast->binary.right)) {
-                    assemble(list, ast->binary.right, variable_map);
-                    assemble(list, ast->binary.left, variable_map);
-                    jitc_asm(list, IROpCode_swp);
+                    assemble(writer, ast->binary.right, variable_map);
+                    assemble(writer, ast->binary.left, variable_map);
+                    jitc_asm_swp(writer);
                 }
                 else {
-                    assemble(list, ast->binary.left, variable_map);
-                    assemble(list, ast->binary.right, variable_map);
+                    assemble(writer, ast->binary.left, variable_map);
+                    assemble(writer, ast->binary.right, variable_map);
                 }
                 switch (ast->binary.operation) {
                     case Binary_Assignment: {
                         if (ast->binary.left->exprtype->kind == Type_Struct || ast->binary.left->exprtype->kind == Type_Union) {
                             jitc_type_t* type = ast->binary.left->exprtype;
-                            jitc_asm(list, IROpCode_copy, type->size, type->alignment);
+                            jitc_asm_copy(writer, type->size, type->alignment);
                         }
-                        else jitc_asm(list, IROpCode_store);
+                        else jitc_asm_store(writer);
                     } break;
-                    case Binary_Addition:             jitc_asm(list, IROpCode_add); break;
-                    case Binary_Subtraction:          jitc_asm(list, IROpCode_sub); break;
-                    case Binary_Multiplication:       jitc_asm(list, IROpCode_mul); break;
-                    case Binary_Division:             jitc_asm(list, IROpCode_div); break;
-                    case Binary_Modulo:               jitc_asm(list, IROpCode_mod); break;
-                    case Binary_BitshiftLeft:         jitc_asm(list, IROpCode_shl); break;
-                    case Binary_BitshiftRight:        jitc_asm(list, IROpCode_shr); break;
-                    case Binary_And:                  jitc_asm(list, IROpCode_and); break;
-                    case Binary_Or:                   jitc_asm(list, IROpCode_or);  break;
-                    case Binary_Xor:                  jitc_asm(list, IROpCode_xor); break;
-                    case Binary_Equals:               jitc_asm(list, IROpCode_eql); break;
-                    case Binary_NotEquals:            jitc_asm(list, IROpCode_neq); break;
-                    case Binary_LessThan:             jitc_asm(list, IROpCode_lst); break;
-                    case Binary_LessThanOrEqualTo:    jitc_asm(list, IROpCode_lte); break;
-                    case Binary_GreaterThan:          jitc_asm(list, IROpCode_grt); break;
-                    case Binary_GreaterThanOrEqualTo: jitc_asm(list, IROpCode_gte); break;
-                    case Binary_AssignAddition:       jitc_asm(list, IROpCode_sadd); break;
-                    case Binary_AssignSubtraction:    jitc_asm(list, IROpCode_ssub); break;
-                    case Binary_AssignMultiplication: jitc_asm(list, IROpCode_smul); break;
-                    case Binary_AssignDivision:       jitc_asm(list, IROpCode_sdiv); break;
-                    case Binary_AssignModulo:         jitc_asm(list, IROpCode_smod); break;
-                    case Binary_AssignBitshiftLeft:   jitc_asm(list, IROpCode_sshl); break;
-                    case Binary_AssignBitshiftRight:  jitc_asm(list, IROpCode_sshr); break;
-                    case Binary_AssignAnd:            jitc_asm(list, IROpCode_sand); break;
-                    case Binary_AssignOr:             jitc_asm(list, IROpCode_sor);  break;
-                    case Binary_AssignXor:            jitc_asm(list, IROpCode_sxor); break;
+                    case Binary_Addition:             jitc_asm_add(writer); break;
+                    case Binary_Subtraction:          jitc_asm_sub(writer); break;
+                    case Binary_Multiplication:       jitc_asm_mul(writer); break;
+                    case Binary_Division:             jitc_asm_div(writer); break;
+                    case Binary_Modulo:               jitc_asm_mod(writer); break;
+                    case Binary_BitshiftLeft:         jitc_asm_shl(writer); break;
+                    case Binary_BitshiftRight:        jitc_asm_shr(writer); break;
+                    case Binary_And:                  jitc_asm_and(writer); break;
+                    case Binary_Or:                   jitc_asm_or(writer);  break;
+                    case Binary_Xor:                  jitc_asm_xor(writer); break;
+                    case Binary_Equals:               jitc_asm_eql(writer); break;
+                    case Binary_NotEquals:            jitc_asm_neq(writer); break;
+                    case Binary_LessThan:             jitc_asm_lst(writer); break;
+                    case Binary_LessThanOrEqualTo:    jitc_asm_lte(writer); break;
+                    case Binary_GreaterThan:          jitc_asm_grt(writer); break;
+                    case Binary_GreaterThanOrEqualTo: jitc_asm_gte(writer); break;
+                    case Binary_AssignAddition:       jitc_asm_sadd(writer); break;
+                    case Binary_AssignSubtraction:    jitc_asm_ssub(writer); break;
+                    case Binary_AssignMultiplication: jitc_asm_smul(writer); break;
+                    case Binary_AssignDivision:       jitc_asm_sdiv(writer); break;
+                    case Binary_AssignModulo:         jitc_asm_smod(writer); break;
+                    case Binary_AssignBitshiftLeft:   jitc_asm_sshl(writer); break;
+                    case Binary_AssignBitshiftRight:  jitc_asm_sshr(writer); break;
+                    case Binary_AssignAnd:            jitc_asm_sand(writer); break;
+                    case Binary_AssignOr:             jitc_asm_sor(writer);  break;
+                    case Binary_AssignXor:            jitc_asm_sxor(writer); break;
                     case Binary_LogicAnd: break; // todo
                     case Binary_LogicOr:  break; // todo
                     case Binary_PtrAddition:
@@ -278,91 +240,91 @@ static bool assemble(list_t* list, jitc_ast_t* ast, map_t* variable_map) {
                     case Binary_AssignPtrSubtraction: {
                         size_t size = ast->exprtype->ptr.base->kind == Type_Function ? 1 : ast->exprtype->ptr.base->size;
                         if (size != 1) {
-                            jitc_asm(list, IROpCode_pushi, size, ast->binary.right->exprtype->kind, ast->binary.right->exprtype->is_unsigned);
-                            jitc_asm(list, IROpCode_mul);
+                            jitc_asm_pushi(writer, size, ast->binary.right->exprtype->kind, ast->binary.right->exprtype->is_unsigned);
+                            jitc_asm_mul(writer);
                         }
-                        jitc_asm(list, (jitc_opcode_t[]){
-                            [Binary_PtrAddition] = IROpCode_add,
-                            [Binary_PtrSubtraction] = IROpCode_sub,
-                            [Binary_AssignPtrAddition] = IROpCode_sadd,
-                            [Binary_AssignPtrSubtraction] = IROpCode_ssub,
-                        }[ast->binary.operation]);
+                        (void(*[])(bytewriter_t*)){
+                            jitc_asm_add,
+                            jitc_asm_sub,
+                            jitc_asm_sadd,
+                            jitc_asm_ssub,
+                        }[ast->binary.operation](writer);
                     }
                     default: break;
                 }
             }
             return true;
         case AST_Ternary:
-            jitc_asm(list, IROpCode_if);
-            if (ast->ternary.when) assemble(list, ast->ternary.when, variable_map);
-            else jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
-            jitc_asm(list, IROpCode_then);
-            assemble(list, ast->ternary.then, variable_map);
-            jitc_asm(list, IROpCode_rval);
-            jitc_asm(list, IROpCode_pop);
-            jitc_asm(list, IROpCode_else);
-            assemble(list, ast->ternary.otherwise, variable_map);
-            jitc_asm(list, IROpCode_rval);
-            jitc_asm(list, IROpCode_end);
+            jitc_asm_if(writer);
+            if (ast->ternary.when) assemble(writer, ast->ternary.when, variable_map);
+            else jitc_asm_pushi(writer, 0, Type_Int32, false);
+            jitc_asm_then(writer);
+            assemble(writer, ast->ternary.then, variable_map);
+            jitc_asm_rval(writer);
+            jitc_asm_pop(writer);
+            jitc_asm_else(writer);
+            assemble(writer, ast->ternary.otherwise, variable_map);
+            jitc_asm_rval(writer);
+            jitc_asm_end(writer);
             return true;
         case AST_Branch:
-            jitc_asm(list, IROpCode_if);
-            if (ast->ternary.when) assemble(list, ast->ternary.when, variable_map);
-            else jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
-            jitc_asm(list, IROpCode_then);
-            if (assemble(list, ast->ternary.then, variable_map)) jitc_asm(list, IROpCode_pop);
-            jitc_asm(list, IROpCode_else);
-            if (assemble(list, ast->ternary.otherwise, variable_map)) jitc_asm(list, IROpCode_pop);
-            jitc_asm(list, IROpCode_end);
+            jitc_asm_if(writer);
+            if (ast->ternary.when) assemble(writer, ast->ternary.when, variable_map);
+            else jitc_asm_pushi(writer, 0, Type_Int32, false);
+            jitc_asm_then(writer);
+            if (assemble(writer, ast->ternary.then, variable_map)) jitc_asm_pop(writer);
+            jitc_asm_else(writer);
+            if (assemble(writer, ast->ternary.otherwise, variable_map)) jitc_asm_pop(writer);
+            jitc_asm_end(writer);
             return false;
         case AST_Scope:
         case AST_List:
             for (size_t i = 0; i < list_size(ast->list.inner); i++) {
-                if (assemble(list, list_get_ptr(ast->list.inner, i), variable_map)) jitc_asm(list, IROpCode_pop);
+                if (assemble(writer, list_get_ptr(ast->list.inner, i), variable_map)) jitc_asm_pop(writer);
             }
             return false;
         case AST_Loop:
-            jitc_asm(list, IROpCode_if);
-            if (ast->loop.cond) assemble(list, ast->loop.cond, variable_map);
-            else jitc_asm(list, IROpCode_pushi, 1, Type_Int32, false);
-            jitc_asm(list, IROpCode_then);
-            assemble(list, ast->loop.body, variable_map);
-            jitc_asm(list, IROpCode_goto_start);
-            jitc_asm(list, IROpCode_else);
-            jitc_asm(list, IROpCode_end);
+            jitc_asm_if(writer);
+            if (ast->loop.cond) assemble(writer, ast->loop.cond, variable_map);
+            else jitc_asm_pushi(writer, 1, Type_Int32, false);
+            jitc_asm_then(writer);
+            assemble(writer, ast->loop.body, variable_map);
+            jitc_asm_goto_start(writer);
+            jitc_asm_else(writer);
+            jitc_asm_end(writer);
             return false;
         case AST_Break:
-            jitc_asm(list, IROpCode_goto_end);
+            jitc_asm_goto_end(writer);
             return false;
         case AST_Continue:
-            jitc_asm(list, IROpCode_goto_start);
+            jitc_asm_goto_start(writer);
             return false;
         case AST_Return:
-            if (ast->ret.expr) assemble(list, ast->ret.expr, variable_map);
-            else jitc_asm(list, IROpCode_pushi, 0, Type_Int64, true);
-            jitc_asm(list, IROpCode_ret);
+            if (ast->ret.expr) assemble(writer, ast->ret.expr, variable_map);
+            else jitc_asm_pushi(writer, 0, Type_Int64, true);
+            jitc_asm_ret(writer);
             return false;
         case AST_Integer:
-            jitc_asm(list, IROpCode_pushi, ast->integer.value, ast->exprtype->kind, ast->exprtype->is_unsigned);
+            jitc_asm_pushi(writer, ast->integer.value, ast->exprtype->kind, ast->exprtype->is_unsigned);
             return true;
         case AST_StringLit:
-            jitc_asm(list, IROpCode_pushi, ast->string.ptr, ast->exprtype->kind, ast->exprtype->is_unsigned);
+            jitc_asm_pushi(writer, (uint64_t)ast->string.ptr, ast->exprtype->kind, ast->exprtype->is_unsigned);
             return true;
         case AST_Floating:
-            if (ast->floating.is_single_precision) jitc_asm(list, IROpCode_pushf, ast->floating.value);
-            else jitc_asm(list, IROpCode_pushd, ast->floating.value);
+            if (ast->floating.is_single_precision) jitc_asm_pushf(writer, ast->floating.value);
+            else jitc_asm_pushd(writer, ast->floating.value);
             return true;
         case AST_Variable:
             map_find_ptr(variable_map, (char*)ast->variable.name);
             stackvar_t* var = map_as_ptr(variable_map);
-            if (var->is_global) jitc_asm(list, IROpCode_laddr, var->var.ptr, type(var->var.type));
-            else jitc_asm(list, IROpCode_lstack, var->var.offset, type(var->var.type));
+            if (var->is_global) jitc_asm_laddr(writer, var->var.ptr, type(var->var.type));
+            else jitc_asm_lstack(writer, var->var.offset, type(var->var.type));
             if (var->var.type->kind == Type_Array)
-                jitc_asm(list, IROpCode_addrof);
+                jitc_asm_addrof(writer);
             return true;
         case AST_WalkStruct:
-            assemble(list, ast->walk_struct.struct_ptr, variable_map);
-            jitc_asm(list, IROpCode_offset, ast->walk_struct.offset);
+            assemble(writer, ast->walk_struct.struct_ptr, variable_map);
+            jitc_asm_offset(writer, ast->walk_struct.offset);
             break;
         default: break;
     }
@@ -376,7 +338,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             memcpy(ptr, &ast->binary.right->integer.value, ast->exprtype->size);
         } break;
         case AST_Function: {
-            list_t* list = list_new();
+            bytewriter_t* writer = bytewriter_new();
             map_t* variable_map = map_new(compare_int64);
             bool is_return = false;
             jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
@@ -392,18 +354,18 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 map_get_ptr(variable_map, (char*)name);
                 map_store_ptr(variable_map, stackvar);
             }
-            jitc_asm(list, IROpCode_func, ast->func.variable, get_stack_size(variable_map, ast->func.body));
+            jitc_asm_func(writer, ast->func.variable, get_stack_size(variable_map, ast->func.body));
             for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
                 jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
-                if (assemble(list, node, variable_map)) jitc_asm(list, IROpCode_pop);
+                if (assemble(writer, node, variable_map)) jitc_asm_pop(writer);
                 is_return = node->node_type == AST_Return;
             }
             if (!is_return) {
-                jitc_asm(list, IROpCode_pushi, 0, Type_Int32, false);
-                jitc_asm(list, IROpCode_ret);
+                jitc_asm_pushi(writer, 0, Type_Int32, false);
+                jitc_asm_ret(writer);
             }
-            jitc_asm(list, IROpCode_func_end);
-            *(void**)jitc_get_or_static(context, ast->func.variable->name) = jitc_assemble(list);
+            jitc_asm_func_end(writer);
+            *(void**)jitc_get_or_static(context, ast->func.variable->name) = bytewriter_delete(writer);
         } break;
         default: break;
     }

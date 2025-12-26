@@ -75,7 +75,7 @@ static abi_arg_t classify(jitc_type_t* type, int* int_params, int* float_params,
     return arg;
 }
 
-static void call(jitc_type_t* signature) {
+static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature) {
     stack_item_t func = pop();
 
     // classify
@@ -89,6 +89,7 @@ static void call(jitc_type_t* signature) {
     }
     
     // allocate stack
+    if (signature->func.params[signature->func.num_params - 1]->kind == Type_Varargs) stack_size += 8;
     for (size_t i = 0; i < signature->func.num_params + 1; i++) {
         if (!args[i].is_big) continue;
         if (stack_size % args[i].type->alignment) stack_size += args[i].type->alignment - (stack_size % args[i].type->alignment);
@@ -130,14 +131,17 @@ static void call(jitc_type_t* signature) {
     }
 
     // call the function
-    instr2("lea", reg(rax, Type_Pointer, true), op(&func));
-    instr1("call", reg(rax, Type_Pointer, true), false);
+    operand_t func_op = reg(rax, Type_Pointer, true);
+    if (signature->func.params[signature->func.num_params - 1]->kind == Type_Varargs)
+        func_op = ptr(rsp, stack_size - 8, Type_Pointer, true);
+    instr2("lea", func_op, op(&func));
+    instr1("call", func_op, false);
     if (stack_size != 0) stack_free(stack_size);
 
     // return value
     stack_item_t* ret;
     if (args[0].type->kind == Type_Struct || args[0].type->kind == Type_Union) {
-        ret = stackalloc(args[0].type->size);
+        ret = jitc_asm_stackalloc(args[0].type->size);
         if (!args[0].is_big) {
             instr2("mov", op(ret), reg(rax, args[0].class == ABIClass_FLOATING ? Type_Float64 : Type_Int64, true));
             if (args[0].is_128bit) {
@@ -163,7 +167,7 @@ static void call(jitc_type_t* signature) {
 
 static jitc_type_t* func_signature = NULL;
 
-static void func_begin(jitc_type_t* signature, size_t stack_size) {
+static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t stack_size) {
     func_signature = signature;
     printf("push rbp\n"); // todo: preserve rbx and r12..r15
     printf("mov rbp, rsp\n");
@@ -171,7 +175,7 @@ static void func_begin(jitc_type_t* signature, size_t stack_size) {
     if (stack_size != 0) printf("sub rsp, 0x%lx\n", stack_size);
 }
 
-static void ret() {
+static void jitc_asm_ret(bytewriter_t* writer) {
     if (isflt(func_signature->func.ret->kind))
         instr2("mov", reg(xmm0, func_signature->func.ret->kind, false), op(peek(0)));
     else if (func_signature->func.ret->kind != Type_Void)
@@ -180,7 +184,7 @@ static void ret() {
     printf("jmp _ret\n");
 }
 
-static void func_end() {
+static void jitc_asm_func_end(bytewriter_t* writer) {
     printf("_ret:\n");
     printf("leave\n");
     printf("ret\n");

@@ -316,17 +316,6 @@ static void instr1(const char* opcode, operand_t op, bool bitshift) {
     else printf("\n");
 }
 
-static stack_item_t* stackalloc(uint32_t bytes) {
-    if (bytes % 8 != 0) bytes += 8 - (bytes % 8);
-    stack_sub(bytes);
-    stack_item_t* item = push(StackItem_rvalue, Type_Pointer, true);
-    item->extra_storage = bytes;
-    operand_t op1 = op(item);
-    instr2("lea", op1, ptr(rsp, op1.type == OpType_reg ? 0 : 8, Type_Pointer, true));
-    item->type = StackItem_lvalue_abs;
-    return item;
-}
-
 static void binaryop(const char* opcode) {
     stack_item_t op2 = pop();
     stack_item_t op1 = pop();
@@ -343,16 +332,6 @@ static void unaryop(const char* opcode, bool flip) {
     if (!flip) instr2("mov",  op(res), op(&op1));
 }
 
-static void load(jitc_type_kind_t kind, bool is_unsigned) {
-    stack_item_t addr = pop();
-    stack_item_t* res = push(StackItem_rvalue, Type_Pointer, true);
-    if (addr.type != StackItem_rvalue) instr2("mov", op(res), op(&addr));
-    correct_kind(&kind, &is_unsigned);
-    res->kind = kind;
-    res->is_unsigned = is_unsigned;
-    res->type = StackItem_lvalue_abs;
-}
-
 static void copy(operand_t dst, operand_t src, uint64_t size, uint64_t alignment) {
     instr2("lea", reg(rdi, Type_Int64, true), dst);
     instr2("lea", reg(rsi, Type_Int64, true), src);
@@ -363,12 +342,6 @@ static void copy(operand_t dst, operand_t src, uint64_t size, uint64_t alignment
         alignment == 4 ? "movsd" :
         alignment == 8 ? "movsq" : "<UNK>"
     );
-}
-
-static void copy_instr(uint64_t size, uint64_t alignment) {
-    stack_item_t src = pop();
-    stack_item_t* dst = peek(0);
-    copy(op(dst), op(&src), size, alignment);
 }
 
 static void divide(reg_t outreg, bool store) {
@@ -396,15 +369,6 @@ static void divide(reg_t outreg, bool store) {
         instr1("idiv", op(&op2), false);
         instr2("mov", op(res), reg(outreg, op1.kind, op1.is_unsigned));
     }
-}
-
-static void negate() {
-    stack_item_t* op1 = peek(0);
-    if (isflt(op1->kind)) {
-        instr2("mul", op(op1), imm(*(uint64_t*)&(double){-1}, op1->kind, op1->is_unsigned));
-        pop();
-    }
-    else unaryop("neg", false);
 }
 
 static void increment(int32_t step, bool flip) {
@@ -448,7 +412,161 @@ static void compare_against(const char* opcode, operand_t op2) {
     instr1(opcode, res, false);
 }
 
-static void addrof() {
+static void jitc_asm_pushi(bytewriter_t* writer, uint64_t value, jitc_type_kind_t kind, bool is_unsigned) {
+    pushi(StackItem_literal, kind, is_unsigned, value);
+}
+
+static void jitc_asm_pushf(bytewriter_t* writer, float value) {
+    pushf(StackItem_literal, Type_Float32, false, value);
+}
+
+static void jitc_asm_pushd(bytewriter_t* writer, double value) {
+    pushf(StackItem_literal, Type_Float64, false, value);
+}
+
+static void jitc_asm_pop(bytewriter_t* writer) {
+    pop();
+}
+
+static void jitc_asm_load(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) {
+    stack_item_t addr = pop();
+    stack_item_t* res = push(StackItem_rvalue, Type_Pointer, true);
+    if (addr.type != StackItem_rvalue) instr2("mov", op(res), op(&addr));
+    correct_kind(&kind, &is_unsigned);
+    res->kind = kind;
+    res->is_unsigned = is_unsigned;
+    res->type = StackItem_lvalue_abs;
+}
+
+static void jitc_asm_laddr(bytewriter_t* writer, void* ptr, jitc_type_kind_t kind, bool is_unsigned) {
+    instr2("mov",
+        unptr(op(push(StackItem_lvalue_abs, kind, is_unsigned))),
+        imm((uint64_t)ptr, Type_Pointer, true)
+    );
+}
+
+static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) {
+    pushi(StackItem_lvalue, offset, kind, is_unsigned);
+}
+
+static void jitc_asm_store(bytewriter_t* writer) {
+    instr2("mov", op(peek(1)), op(peek(0)));
+}
+
+static void jitc_asm_copy(bytewriter_t* writer, uint64_t size, uint64_t alignment) {
+    stack_item_t src = pop();
+    stack_item_t* dst = peek(0);
+    copy(op(dst), op(&src), size, alignment);
+}
+
+static void jitc_asm_add(bytewriter_t* writer) {
+    binaryop("add");
+}
+
+static void jitc_asm_sub(bytewriter_t* writer) {
+    binaryop("sub");
+}
+
+static void jitc_asm_mul(bytewriter_t* writer) {
+    binaryop(isflt(peek(1)->kind) ? "mul" : "imul");
+}
+
+static void jitc_asm_div(bytewriter_t* writer) {
+    divide(rax, false);
+}
+
+static void jitc_asm_mod(bytewriter_t* writer) {
+    divide(rdx, false);
+}
+
+static void jitc_asm_and(bytewriter_t* writer) {
+    binaryop("and");
+}
+
+static void jitc_asm_or(bytewriter_t* writer) {
+    binaryop("and");
+}
+
+static void jitc_asm_xor(bytewriter_t* writer) {
+    binaryop("and");
+}
+
+static void jitc_asm_shl(bytewriter_t* writer) {
+    bitshift(false, false);
+}
+
+static void jitc_asm_shr(bytewriter_t* writer) {
+    bitshift(false, true);
+}
+
+static void jitc_asm_sadd(bytewriter_t* writer) {
+    instr2("add", op(peek(1)), op(peek(0)));
+    pop();
+}
+
+static void jitc_asm_ssub(bytewriter_t* writer) {
+    instr2("sub", op(peek(1)), op(peek(0)));
+    pop();
+}
+
+static void jitc_asm_smul(bytewriter_t* writer) {
+    instr2(isflt(peek(1)->kind) ? "mul" : "imul", op(peek(1)), op(peek(0)));
+    pop();
+}
+
+static void jitc_asm_sdiv(bytewriter_t* writer) {
+    divide(rax, true);
+}
+
+static void jitc_asm_smod(bytewriter_t* writer) {
+    divide(rdx, true);
+}
+
+static void jitc_asm_sand(bytewriter_t* writer) {
+    instr2("and", op(peek(1)), op(peek(0)));
+    pop();
+}
+
+static void jitc_asm_sor(bytewriter_t* writer) {
+    instr2("or", op(peek(1)), op(peek(0)));
+    pop();
+}
+
+static void jitc_asm_sxor(bytewriter_t* writer) {
+    instr2("xor", op(peek(1)), op(peek(0)));
+    pop();
+}
+
+static void jitc_asm_sshl(bytewriter_t* writer) {
+    bitshift(true, false);
+}
+
+static void jitc_asm_sshr(bytewriter_t* writer) {
+    bitshift(true, true);
+}
+
+static void jitc_asm_not(bytewriter_t* writer) {
+    unaryop("not", false);
+}
+
+static void jitc_asm_neg(bytewriter_t* writer) {
+    stack_item_t* op1 = peek(0);
+    if (isflt(op1->kind)) {
+        instr2("mul", op(op1), imm(*(uint64_t*)&(double){-1}, op1->kind, op1->is_unsigned));
+        pop();
+    }
+    else unaryop("neg", false);
+}
+
+static void jitc_asm_inc(bytewriter_t* writer, bool suffix, int32_t step) {
+    increment(step, suffix);
+}
+
+static void jitc_asm_zero(bytewriter_t* writer) {
+    compare_against("sete", imm(0, peek(0)->kind, peek(0)->is_unsigned));
+}
+
+static void jitc_asm_addrof(bytewriter_t* writer) {
     stack_item_t item = pop();
     operand_t op1 = op(&item);
     operand_t res = op(push(StackItem_rvalue, Type_Pointer, true));
@@ -457,7 +575,47 @@ static void addrof() {
     if (item.type != StackItem_rvalue) instr2("lea", res, op1);
 }
 
-static void convert(jitc_type_kind_t kind, bool is_unsigned) {
+static void jitc_asm_eql(bytewriter_t* writer) {
+    compare("sete");
+}
+
+static void jitc_asm_neq(bytewriter_t* writer) {
+    compare("setne");
+}
+
+static void jitc_asm_lst(bytewriter_t* writer) {
+    compare("setl");
+}
+
+static void jitc_asm_lte(bytewriter_t* writer) {
+    compare("setle");
+}
+
+static void jitc_asm_grt(bytewriter_t* writer) {
+    compare("setg");
+}
+
+static void jitc_asm_gte(bytewriter_t* writer) {
+    compare("setge");
+}
+
+static void jitc_asm_swp(bytewriter_t* writer) {
+    stack_item_t tmp = *peek(0);
+    *peek(0) = *peek(1);
+    *peek(1) = tmp;
+}
+
+static void jitc_asm_rval(bytewriter_t* writer) {
+    stack_item_t* item = peek(0);
+    if (item->type == StackItem_literal) {
+        pop();
+        operand_t op1 = op(item);
+        item = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
+        instr2("mov", op(item), op1);
+    }
+}
+
+static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) {
     stack_item_t item = pop();
     operand_t op1 = op(&item);
     operand_t res = op(push(StackItem_rvalue, kind, is_unsigned));
@@ -522,134 +680,47 @@ static void convert(jitc_type_kind_t kind, bool is_unsigned) {
     }
 }
 
-static void rval() {
-    stack_item_t* item = peek(0);
-    if (item->type == StackItem_literal) {
-        pop();
-        operand_t op1 = op(item);
-        item = push(StackItem_rvalue, op1.kind, op1.is_unsigned);
-        instr2("mov", op(item), op1);
-    }
+static stack_item_t* jitc_asm_stackalloc(uint32_t bytes) {
+    if (bytes % 8 != 0) bytes += 8 - (bytes % 8);
+    stack_sub(bytes);
+    stack_item_t* item = push(StackItem_rvalue, Type_Pointer, true);
+    item->extra_storage = bytes;
+    operand_t op1 = op(item);
+    instr2("lea", op1, ptr(rsp, op1.type == OpType_reg ? 0 : 8, Type_Pointer, true));
+    item->type = StackItem_lvalue_abs;
+    return item;
 }
 
-static void swap() {
-    stack_item_t tmp = *peek(0);
-    *peek(0) = *peek(1);
-    *peek(1) = tmp;
-}
-
-static void offset(int32_t off) {
+static void jitc_asm_offset(bytewriter_t* writer, int32_t off) {
     peek(0)->offset += off;
 }
 
 static int branch_id = 0;
 
-static void push_branch() {
+static void jitc_asm_if(bytewriter_t* writer) {
     printf("_L%d:\n", branch_id * 3 + 0);
     branch_id++;
 }
 
-static void branch_then() {
+static void jitc_asm_then(bytewriter_t* writer) {
     stack_item_t item = pop();
     instr2(isflt(item.kind) ? "ucomi" : "cmp", op(&item), op(&item));
     printf("jz _L%d\n", (branch_id - 1) * 3 + 1);
 }
 
-static void branch_else() {
+static void jitc_asm_else(bytewriter_t* writer) {
     printf("jmp _L%d\n", (branch_id - 1) * 3 + 2);
     printf("_L%d:\n", (branch_id - 1) * 3 + 1);
 }
 
-static void pop_branch() {
-    branch_id--;
+static void jitc_asm_end(bytewriter_t* writer) {
     printf("_L%d:\n", branch_id * 3 + 2);
 }
 
-static void goto_start() {
+static void jitc_asm_goto_start(bytewriter_t* writer) {
     printf("jmp _L%d\n", (branch_id - 1) * 3 + 0);
 }
 
-static void goto_end() {
+static void jitc_asm_goto_end(bytewriter_t* writer) {
     printf("jmp _L%d\n", (branch_id - 1) * 3 + 2);
-}
-
-// these are defined in sysv-x86_64.c and later in win-x86_64.c which include this file
-static void call(jitc_type_t* signature);
-static void func_begin(jitc_type_t* signature, size_t stack_size);
-static void ret();
-static void func_end();
-
-static void* jitc_assemble(list_t* list) {
-    stack_t* stack = stack_new();
-    for (size_t i = 0; i < list_size(list); i++) {
-        jitc_ir_t* ir = list_get_ptr(list, i);
-        switch (ir->opcode) {
-            case IROpCode_pushi:
-                pushi(StackItem_literal, ir->params[1].as_integer, ir->params[2].as_integer, ir->params[0].as_integer);
-                break;
-            case IROpCode_pushf:
-            case IROpCode_pushd:
-                pushf(StackItem_literal, ir->opcode == IROpCode_pushf ? Type_Float32 : Type_Float64, false, ir->params[0].as_float);
-                break;
-            case IROpCode_laddr: instr2("mov",
-                unptr(op(push(StackItem_lvalue_abs, ir->params[1].as_integer, ir->params[2].as_integer))),
-                imm(ir->params[0].as_integer, Type_Pointer, true)
-            ); break;
-            case IROpCode_lstack:
-                pushi(StackItem_lvalue, ir->params[1].as_integer, ir->params[2].as_integer, ir->params[0].as_integer);
-                break;
-            case IROpCode_pop: pop(); break;
-            case IROpCode_load: load(ir->params[0].as_integer, ir->params[1].as_integer); break;
-            case IROpCode_store: instr2("mov", op(peek(1)), op(peek(0))); pop(); break;
-            case IROpCode_copy: copy_instr(ir->params[0].as_integer, ir->params[1].as_integer); break;
-            case IROpCode_add: binaryop("add"); break;
-            case IROpCode_sub: binaryop("sub"); break;
-            case IROpCode_mul: binaryop(isflt(peek(1)->kind) ? "mul" : "imul"); break;
-            case IROpCode_div: divide(rax, false); break;
-            case IROpCode_mod: divide(rdx, false); break;
-            case IROpCode_and: binaryop("and"); break;
-            case IROpCode_or:  binaryop("or");  break;
-            case IROpCode_xor: binaryop("xor"); break;
-            case IROpCode_shl: bitshift(false, false); break;
-            case IROpCode_shr: bitshift(false, true); break;
-            case IROpCode_sadd: instr2("add", op(peek(1)), op(peek(0))); pop(); break;
-            case IROpCode_ssub: instr2("sub", op(peek(1)), op(peek(0))); pop(); break;
-            case IROpCode_smul: instr2(isflt(peek(1)->kind) ? "mul" : "imul", op(peek(1)), op(peek(0))); pop(); break;
-            case IROpCode_sdiv: divide(rax, true); break;
-            case IROpCode_smod: divide(rdx, true); break;
-            case IROpCode_sand: instr2("and", op(peek(1)), op(peek(0))); pop(); break;
-            case IROpCode_sor: instr2("or", op(peek(1)), op(peek(0))); pop(); break;
-            case IROpCode_sxor: instr2("xor", op(peek(1)), op(peek(0))); pop(); break;
-            case IROpCode_sshl: bitshift(true, false); break;
-            case IROpCode_sshr: bitshift(true, true); break;
-            case IROpCode_not: unaryop("not", false); break;
-            case IROpCode_neg: negate(); break;
-            case IROpCode_inc: increment(ir->params[1].as_integer, ir->params[0].as_integer); break;
-            case IROpCode_addrof: addrof(); break;
-            case IROpCode_zero: compare_against("sete", imm(0, peek(0)->kind, peek(0)->is_unsigned)); break;
-            case IROpCode_eql: compare("sete"); break;
-            case IROpCode_neq: compare("setne"); break;
-            case IROpCode_lst: compare("setl"); break;
-            case IROpCode_lte: compare("setle"); break;
-            case IROpCode_grt: compare("setg"); break;
-            case IROpCode_gte: compare("setge"); break;
-            case IROpCode_swp: swap(); break;
-            case IROpCode_cvt: convert(ir->params[0].as_integer, ir->params[1].as_integer); break;
-            case IROpCode_rval: rval(); break;
-            case IROpCode_offset: offset(ir->params[0].as_integer); break;
-            case IROpCode_stackalloc: stackalloc(ir->params[0].as_integer); break;
-            case IROpCode_if: push_branch(); break; // todo: remove redundant branching
-            case IROpCode_then: branch_then(); break;
-            case IROpCode_else: branch_else(); break;
-            case IROpCode_end: pop_branch(); break;
-            case IROpCode_goto_start: goto_start(); break;
-            case IROpCode_goto_end: goto_end(); break;
-            case IROpCode_call: call(ir->params[0].as_pointer); break;
-            case IROpCode_ret: ret(); break;
-            case IROpCode_func: func_begin(ir->params[0].as_pointer, ir->params[1].as_integer); break;
-            case IROpCode_func_end: func_end(); break;
-        }
-        free(ir);
-    }
-    return NULL;
 }
