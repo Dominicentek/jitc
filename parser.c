@@ -604,24 +604,26 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     node->binary.right->type.type, true, node->binary.right->token
                 ));
             } break;
-            case Binary_FunctionCall:
+            case Binary_FunctionCall: {
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, &node->exprtype));
                 if (!is_function(node->exprtype)) ERROR(node->token, "Calling a non-function");
                 jitc_type_t* func = node->exprtype->ptr.base;
                 list_t* list = node->binary.right->list.inner;
+                size_t num_fixed_args = func->func.num_params;
+                bool has_varargs = func->func.params[func->func.num_params - 1]->kind == Type_Varargs;
                 node->exprtype = func->func.ret;
-                if (list_size(list) != func->func.num_params) ERROR(node->token,
-                    "Incorrect number of arguments (got %d, expected %d)",
-                    list_size(list), func->func.num_params
+                if (has_varargs) num_fixed_args--;
+                if (list_size(list) < num_fixed_args || (!has_varargs && list_size(list) != num_fixed_args)) ERROR(node->token,
+                    "Incorrect number of arguments (got %d, %s %d)",
+                    list_size(list), has_varargs ? "minimum" : "expected", func->func.num_params
                 );
                 for (size_t i = 0; i < list_size(list); i++) {
                     jitc_ast_t** param = list_get(list, i);
-                    *param = try(jitc_cast(context,
-                        try(jitc_process_ast(context, *param, NULL)),
-                        func->func.params[i], false, (*param)->token
-                    ));
+                    *param = try(jitc_process_ast(context, *param, NULL));
+                    if (i < num_fixed_args)
+                        *param = try(jitc_cast(context, *param, func->func.params[i], false, (*param)->token));
                 }
-                break;
+            } break;
             #define ARITHMETIC(op, can_be_ptr) \
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL)); \
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \

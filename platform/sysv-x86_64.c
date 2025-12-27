@@ -75,54 +75,64 @@ static abi_arg_t classify(jitc_type_t* type, int* int_params, int* float_params,
     return arg;
 }
 
-static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature) {
+static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_type_t** arg_types, size_t num_args) {
     stack_item_t func = pop();
 
     // classify
-    int int_params = 0, float_params = 0, stack_params = 0, stack_size = 0;
-    abi_arg_t args[signature->func.num_params + 1];
+    int int_params = 0, float_params = 0, stack_params = 0, vararg_float_params = 0, stack_size = 0;
+    bool has_varargs = signature->func.params[signature->func.num_params - 1]->kind == Type_Varargs;
+    abi_arg_t args[num_args + 1];
     args[0] = classify(signature->func.ret, &int_params, &float_params, &stack_params);
     int_params = float_params = stack_params = 0;
     if (args[0].is_big) int_params = 1;
-    for (size_t i = 0; i < signature->func.num_params; i++) {
-        args[i + 1] = classify(signature->func.params[i], &int_params, &float_params, &stack_params);
+    for (size_t i = 0; i < num_args; i++) {
+        args[i + 1] = classify(arg_types[i], &int_params, &float_params, &stack_params);
     }
     
     // allocate stack
-    if (signature->func.params[signature->func.num_params - 1]->kind == Type_Varargs) stack_size += 8;
-    for (size_t i = 0; i < signature->func.num_params + 1; i++) {
+    int varargs_offset = 0;
+    for (size_t i = 0; i < num_args + 1; i++) {
         if (!args[i].is_big) continue;
         if (stack_size % args[i].type->alignment) stack_size += args[i].type->alignment - (stack_size % args[i].type->alignment);
         args[i].stack_offset = stack_size;
         stack_size += args[i].type->size;
+    }
+    if (has_varargs) {
+        varargs_offset = stack_size;
+        stack_size += 8;
     }
     stack_size += stack_params * 8;
     if ((stack_size + stack_bytes) % 16 != 0) stack_size += 16 - ((stack_size + stack_bytes) % 16);
     if (stack_size != 0) stack_sub(stack_size);
     
     // copy shit onto stack
-    for (size_t i = 1; i < signature->func.num_params + 1; i++) {
+    for (size_t i = 1; i < num_args + 1; i++) {
         if (!args[i].is_big) continue;
         stack_item_t* item = peek(i - 1);
         copy(ptr(rsp, stack_size - args[i].stack_offset - args[i].type->size, Type_Int64, true), op(item), args[i].type->size, args[i].type->alignment);
     }
     
     // copy args
+    int num_fixed_args = signature->func.num_params;
+    if (has_varargs) num_fixed_args--;
     int_params = float_params = 0;
     if (args[0].is_big) {
         instr2("lea", reg(rdi, Type_Int64, true), ptr(rsp, stack_size - args[0].stack_offset - args[0].type->size, Type_Int64, true));
         int_params = 1;
     }
-    for (size_t i = 1; i < signature->func.num_params + 1; i++) {
+    for (size_t i = 1; i < num_args + 1; i++) {
         stack_item_t item = pop();
         for (size_t j = 0; j <= args[i].is_128bit; j++) {
             abi_class_t class = (&args[i].class)[j];
             if (j != 0) item.offset += 8;
             operand_t op1 = args[i].is_big ? ptr(rsp, stack_size - args[i].stack_offset - args[i].type->size, Type_Int64, true) : op(&item);
             const char* opcode = args[i].is_big ? "lea" : "mov";
-            if (class == ABIClass_FLOATING && float_params < 8) instr2(opcode, reg((reg_t[]){
-                xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7, xmm8
-            }[float_params++], item.kind, item.is_unsigned), op1);
+            if (class == ABIClass_FLOATING && float_params < 8) {
+                if (i > num_fixed_args && has_varargs) vararg_float_params++;
+                instr2(opcode, reg((reg_t[]){
+                    xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7, xmm8
+                }[float_params++], item.kind, item.is_unsigned), op1);
+            }
             else if (int_params < 6) instr2(opcode, reg((reg_t[]){
                 rdi, rsi, rdx, rcx, r8, r9
             }[int_params++], item.kind, item.is_unsigned), op1);
@@ -132,9 +142,9 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature) {
 
     // call the function
     operand_t func_op = reg(rax, Type_Pointer, true);
-    if (signature->func.params[signature->func.num_params - 1]->kind == Type_Varargs)
-        func_op = ptr(rsp, stack_size - 8, Type_Pointer, true);
+    if (has_varargs) func_op = ptr(rsp, stack_size - varargs_offset - 8, Type_Pointer, true);
     instr2("lea", func_op, op(&func));
+    if (has_varargs) instr2("mov", reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
     instr1("call", func_op, false);
     if (stack_size != 0) stack_free(stack_size);
 
@@ -163,6 +173,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature) {
         else
             instr2("mov", op(ret), reg(rax, ret->kind, ret->is_unsigned));
     }
+    else ret = pushi(StackItem_literal, Type_Int32, false, 0);
 }
 
 static jitc_type_t* func_signature = NULL;

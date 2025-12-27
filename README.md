@@ -10,9 +10,7 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 
 ## TODO
 
-- Parameters/returns in function prolog and epilog
-- Varargs
-- Correct codegen for ternary operator
+- Parameters/varargs/returns in function prolog and epilog
 - Short circuiting
 - Switch statements
 - Initializers

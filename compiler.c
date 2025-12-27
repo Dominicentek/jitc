@@ -174,13 +174,17 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
             }
             else if (ast->binary.operation == Binary_CompoundExpr) {}
             else if (ast->binary.operation == Binary_FunctionCall) {
+                size_t num_args = list_size(ast->binary.right->list.inner);
                 jitc_type_t* signature = ast->binary.left->exprtype;
+                jitc_type_t* args[num_args];
                 if (signature->kind == Type_Pointer) signature = signature->ptr.base;
-                for (size_t i = signature->func.num_params - 1; i < signature->func.num_params; i--) {
-                    assemble(writer, list_get_ptr(ast->binary.right->list.inner, i), variable_map);
+                for (size_t i = num_args - 1; i < num_args; i--) {
+                    jitc_ast_t* arg = list_get_ptr(ast->binary.right->list.inner, i);
+                    args[i] = arg->exprtype;
+                    assemble(writer, arg, variable_map);
                 }
                 assemble(writer, ast->binary.left, variable_map);
-                jitc_asm_call(writer, signature);
+                jitc_asm_call(writer, signature, args, num_args);
             }
             else {
                 if (ast->binary.operation == Binary_Comma) {

@@ -104,16 +104,16 @@ static stack_item_t* push(stack_item_type_t type, jitc_type_kind_t kind, bool is
     item->value = 0;
     item->offset = 0;
     item->extra_storage = 0;
-    int* index = &opstack_int_index;
-    if (type == StackItem_rvalue && isflt(item->kind)) index = &opstack_float_index;
     if (type == StackItem_rvalue || type == StackItem_lvalue_abs) {
+        int* index = &opstack_int_index;
+        if (type == StackItem_rvalue && isflt(item->kind)) index = &opstack_float_index;
         if (*index < sizeof(stack_regs)) item->value = *index | (1L << 63);
         else {
             stack_sub(8);
             item->value = stack_bytes;
         }
+        (*index)++;
     }
-    (*index)++;
     return item;
 }
 
@@ -133,9 +133,9 @@ static stack_item_t* peek(int offset) {
 
 static stack_item_t pop() {
     stack_item_t* item = peek(0);
-    if (isflt(item->kind)) opstack_float_index--;
-    else opstack_int_index--;
     if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
+        if (item->type == StackItem_rvalue && isflt(item->kind)) opstack_float_index--;
+        else opstack_int_index--;
         if (!(item->value & (1L << 63))) stack_free(8);
         if (item->extra_storage != 0) stack_free(item->extra_storage);
     }
@@ -220,11 +220,11 @@ static void print_mem(reg_t reg, int32_t disp) {
 
 static void instr2(const char* opcode, operand_t op1, operand_t op2) {
     // god fucking damnit SSE...
-    bool use_tmp = false, tmpptr = false, store_float = false;
+    bool use_tmp = false, tmpptr = false, store_float = false, lea = strcmp(opcode, "lea") == 0;
     reg_t tmpreg = isflt(op2.kind) ? xmm15 : rax;
     if (op2.type == OpType_ptr && (op1.type == OpType_ptr || op1.type == OpType_ptrptr)) {
         use_tmp = true;
-        printf("mov%s %s, ", opcode_suffix[isflt(op2.kind)][op2.kind], reg_names[op2.kind][tmpreg]);
+        printf("%s%s %s, ", lea ? "lea" : "mov", opcode_suffix[isflt(op2.kind)][op2.kind], reg_names[op2.kind][tmpreg]);
         print_mem(op2.reg, op2.value);
         printf("\n");
     }
@@ -234,10 +234,10 @@ static void instr2(const char* opcode, operand_t op1, operand_t op2) {
         print_mem(op2.reg, op2.value);
         printf("\n");
         if (op1.type == OpType_ptr || op1.type == OpType_ptrptr)
-            printf("mov%s %s, [%s]\n", opcode_suffix[isflt(op2.kind)][op2.kind], reg_names[op2.kind][tmpreg], reg_names[Type_Int64][rax]);
+            printf("%s%s %s, [%s]\n", lea ? "lea" : "mov", opcode_suffix[isflt(op2.kind)][op2.kind], reg_names[op2.kind][tmpreg], reg_names[Type_Int64][rax]);
         else tmpptr = true;
     }
-    else if (op2.type == OpType_imm && op2.kind > Type_Int32) {
+    else if (op2.type == OpType_imm && op2.kind > Type_Int32 && (strcmp(opcode, "mov") != 0 || isflt(op1.kind))) {
         use_tmp = true;
         jitc_type_kind_t itype = isflt(op2.kind) ? op2.kind - Type_Float32 + Type_Int32 : op2.kind;
         printf("mov %s, ", reg_names[itype][rax]);
@@ -255,10 +255,10 @@ static void instr2(const char* opcode, operand_t op1, operand_t op2) {
         if (isflt(op1.kind) && strcmp(opcode, "mov") != 0) {
             store_float = true;
             printf("mov%s %s, [%s]\n", opcode_suffix[isflt(op1.kind)][op1.kind], reg_names[op1.kind][xmm0], reg_names[Type_Int64][rcx]);
-            printf("%s%s %s", opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][xmm0]);
+            printf("%s%s %s", use_tmp && lea ? "mov" : opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][xmm0]);
         }
         else {
-            printf("\n%s%s ", opcode, opcode_suffix[isflt(op1.kind)][op2.kind]);
+            printf("\n%s%s ", use_tmp && lea ? "mov" : opcode, opcode_suffix[isflt(op1.kind)][op2.kind]);
             if (op2.type == OpType_imm) printf("%s ptr ", ptr_prefixes[op2.kind]);
             printf("[%s]", reg_names[Type_Int64][rcx]);
         }
@@ -267,14 +267,14 @@ static void instr2(const char* opcode, operand_t op1, operand_t op2) {
         store_float = true;
         printf("mov%s %s, ", opcode_suffix[isflt(op1.kind)][op1.kind], reg_names[op1.kind][xmm0]);
         print_mem(op1.reg, op1.value);
-        printf("\n%s%s %s", opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][xmm0]);
+        printf("\n%s%s %s", use_tmp && lea ? "mov" : opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][xmm0]);
     }
     else if (op1.type == OpType_ptr) {
-        printf("%s%s ", opcode, opcode_suffix[isflt(op1.kind)][op2.kind]);
+        printf("%s%s ", use_tmp && lea ? "mov" : opcode, opcode_suffix[isflt(op1.kind)][op2.kind]);
         if (op2.type == OpType_imm) printf("%s ptr ", ptr_prefixes[op2.kind]);
         print_mem(op1.reg, op1.value);
     }
-    else printf("%s%s %s", opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][op1.reg]);
+    else printf("%s%s %s", use_tmp && lea ? "mov" : opcode, opcode_suffix[isflt(op1.kind)][op2.kind], reg_names[op1.kind][op1.reg]);
     printf(", ");
 
     if (use_tmp) printf(tmpptr ? "[%s]" : "%s", reg_names[op2.kind][tmpreg]);
