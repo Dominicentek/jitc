@@ -610,7 +610,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 jitc_type_t* func = node->exprtype->ptr.base;
                 list_t* list = node->binary.right->list.inner;
                 size_t num_fixed_args = func->func.num_params;
-                bool has_varargs = func->func.params[func->func.num_params - 1]->kind == Type_Varargs;
+                bool has_varargs = func->func.num_params != 0 && func->func.params[func->func.num_params - 1]->kind == Type_Varargs;
                 node->exprtype = func->func.ret;
                 if (has_varargs) num_fixed_args--;
                 if (list_size(list) < num_fixed_args || (!has_varargs && list_size(list) != num_fixed_args)) ERROR(node->token,

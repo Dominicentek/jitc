@@ -142,7 +142,7 @@ static bool try_parse_flt(string_t* string, double* out, jitc_token_flags_t* fla
         if (is_float) return false;
         int digit = 0;
         bool valid = get_hexadecimal(str_data(string)[ptr], &digit) && digit < base;
-        if ((str_data(string)[ptr] == 'f' || str_data(string)[ptr] == 'F') && ((hex && state != Integer && state != Fraction) || !hex)) {
+        if ((str_data(string)[ptr] == 'f' || str_data(string)[ptr] == 'F') && state != Integer) {
             is_float = true;
             continue;
         }

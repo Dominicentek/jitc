@@ -42,19 +42,9 @@ struct queue_t {
     size_t length, capacity, head, tail;
 };
 
-struct structwriter_t {
-    void* data;
-    size_t ptr;
-};
-
 struct bytewriter_t {
     uint8_t* data;
     size_t size, capacity;
-};
-
-struct bytereader_t {
-    uint8_t* data;
-    size_t ptr;
 };
 
 string_t* str_new() {
@@ -533,59 +523,6 @@ void queue_delete(queue_t* queue) {
     free(queue);
 }
 
-structwriter_t* structwriter_new(size_t size) {
-    structwriter_t* writer = malloc(sizeof(structwriter_t));
-    writer->data = malloc(size);
-    writer->ptr = 0;
-    return writer;
-}
-
-static void structwriter_write(structwriter_t* writer, void* ptr, size_t size) {
-    structwriter_align(writer, size);
-    memcpy((uint8_t*)writer->data, ptr, size);
-    writer->ptr += size;
-}
-
-void structwriter_int8(structwriter_t* writer, uint8_t value) {
-    structwriter_write(writer, &value, sizeof(value));
-}
-
-void structwriter_int16(structwriter_t* writer, uint16_t value) {
-    structwriter_write(writer, &value, sizeof(value));
-}
-
-void structwriter_int32(structwriter_t* writer, uint32_t value) {
-    structwriter_write(writer, &value, sizeof(value));
-}
-
-void structwriter_int64(structwriter_t* writer, uint64_t value) {
-    structwriter_write(writer, &value, sizeof(value));
-    writer->ptr += sizeof(value);
-}
-
-void structwriter_float32(structwriter_t* writer, float value) {
-    structwriter_write(writer, &value, sizeof(value));
-}
-
-void structwriter_float64(structwriter_t* writer, double value) {
-    structwriter_write(writer, &value, sizeof(value));
-}
-
-void structwriter_pointer(structwriter_t* writer, void* value) {
-    structwriter_write(writer, &value, sizeof(value));
-}
-
-void structwriter_align(structwriter_t* writer, size_t alignment) {
-    if (writer->ptr % alignment == 0) return;
-    writer->ptr += alignment - writer->ptr % alignment;
-}
-
-void* structwriter_delete(structwriter_t* writer) {
-    void* ptr = writer->data;
-    free(writer);
-    return ptr;
-}
-
 bytewriter_t* bytewriter_new() {
     bytewriter_t* writer = malloc(sizeof(bytewriter_t));
     writer->size = 0;
@@ -596,6 +533,10 @@ bytewriter_t* bytewriter_new() {
 
 size_t bytewriter_size(bytewriter_t* writer) {
     return writer->size;
+}
+
+uint8_t* bytewriter_data(bytewriter_t* writer) {
+    return writer->data;
 }
 
 static void bytewriter_write(bytewriter_t* writer, void* ptr, size_t size) {
@@ -642,49 +583,4 @@ void* bytewriter_delete(bytewriter_t* writer) {
     free(writer->data);
     free(writer);
     return copy;
-}
-
-bytereader_t* bytereader_new(void* ptr) {
-    bytereader_t* reader = malloc(sizeof(bytereader_t));
-    reader->ptr = 0;
-    reader->data = ptr;
-    return reader;
-}
-
-static void* bytereader_read(bytereader_t* reader, size_t size) {
-    void* ptr = (uint8_t*)reader->data + reader->ptr;
-    reader->ptr += size;
-    return ptr;
-}
-
-uint8_t bytereader_int8(bytereader_t* reader) {
-    return *(uint8_t*)bytereader_read(reader, sizeof(uint8_t));
-}
-
-uint16_t bytereader_int16(bytereader_t* reader) {
-    return *(uint16_t*)bytereader_read(reader, sizeof(uint16_t));
-}
-
-uint32_t bytereader_int32(bytereader_t* reader) {
-    return *(uint32_t*)bytereader_read(reader, sizeof(uint32_t));
-}
-
-uint64_t bytereader_int64(bytereader_t* reader) {
-    return *(uint64_t*)bytereader_read(reader, sizeof(uint64_t));
-}
-
-float bytereader_float32(bytereader_t* reader) {
-    return *(float*)bytereader_read(reader, sizeof(float));
-}
-
-double bytereader_float64(bytereader_t* reader) {
-    return *(double*)bytereader_read(reader, sizeof(double));
-}
-
-void* bytereader_pointer(bytereader_t* reader) {
-    return *(void**)bytereader_read(reader, sizeof(void*));
-}
-
-void bytereader_delete(bytereader_t* reader) {
-    free(reader);
 }

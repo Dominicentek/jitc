@@ -12,9 +12,7 @@ typedef struct map_t map_t;
 typedef struct set_t set_t;
 typedef struct stack_t stack_t;
 typedef struct queue_t queue_t;
-typedef struct structwriter_t structwriter_t;
 typedef struct bytewriter_t bytewriter_t;
-typedef struct bytereader_t bytereader_t;
 
 string_t* str_new();
 char* str_data(string_t* str);
@@ -107,19 +105,9 @@ double queue_peek_float(queue_t* queue);
 void* queue_peek_ptr(queue_t* queue);
 void queue_delete(queue_t* queue);
 
-structwriter_t* structwriter_new(size_t size);
-void structwriter_int8(structwriter_t* writer, uint8_t value);
-void structwriter_int16(structwriter_t* writer, uint16_t value);
-void structwriter_int32(structwriter_t* writer, uint32_t value);
-void structwriter_int64(structwriter_t* writer, uint64_t value);
-void structwriter_float32(structwriter_t* writer, float value);
-void structwriter_float64(structwriter_t* writer, double value);
-void structwriter_pointer(structwriter_t* writer, void* value);
-void structwriter_align(structwriter_t* writer, size_t alignment);
-void* structwriter_delete(structwriter_t* writer);
-
 bytewriter_t* bytewriter_new();
 size_t bytewriter_size(bytewriter_t* writer);
+uint8_t* bytewriter_data(bytewriter_t* writer);
 void bytewriter_int8(bytewriter_t* writer, uint8_t value);
 void bytewriter_int16(bytewriter_t* writer, uint16_t value);
 void bytewriter_int32(bytewriter_t* writer, uint32_t value);
@@ -128,15 +116,5 @@ void bytewriter_float32(bytewriter_t* writer, float value);
 void bytewriter_float64(bytewriter_t* writer, double value);
 void bytewriter_pointer(bytewriter_t* writer, void* value);
 void* bytewriter_delete(bytewriter_t* writer);
-
-bytereader_t* bytereader_new(void* ptr);
-uint8_t bytereader_int8(bytereader_t* reader);
-uint16_t bytereader_int16(bytereader_t* reader);
-uint32_t bytereader_int32(bytereader_t* reader);
-uint64_t bytereader_int64(bytereader_t* reader);
-float bytereader_float32(bytereader_t* reader);
-double bytereader_float64(bytereader_t* reader);
-void* bytereader_pointer(bytereader_t* reader);
-void bytereader_delete(bytereader_t* reader);
 
 #endif

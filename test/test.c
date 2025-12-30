@@ -1,5 +1,9 @@
-int printf(const char*, ...);
+struct test {
+    float x;
+};
+
+struct test get_test() {}
 
 int main() {
-    printf("hello world %d %d %d %d %d %d %f\n", 1, 2, 3, 4, 5, 6, 1.0f);
+    struct test test = get_test();
 }

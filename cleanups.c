@@ -16,8 +16,6 @@ cleanup_func(map_t, map_delete)
 cleanup_func(set_t, set_delete)
 cleanup_func(stack_t, stack_delete)
 cleanup_func(queue_t, queue_delete)
-cleanup_func(structwriter_t, structwriter_delete)
 cleanup_func(bytewriter_t, bytewriter_delete)
-cleanup_func(bytereader_t, bytereader_delete)
 
 cleanup_func(jitc_ast_t, jitc_destroy_ast)

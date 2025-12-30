@@ -76,11 +76,11 @@ static abi_arg_t classify(jitc_type_t* type, int* int_params, int* float_params,
 }
 
 static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_type_t** arg_types, size_t num_args) {
-    stack_item_t func = pop();
+    stack_item_t func = pop(writer);
 
     // classify
     int int_params = 0, float_params = 0, stack_params = 0, vararg_float_params = 0, stack_size = 0;
-    bool has_varargs = signature->func.params[signature->func.num_params - 1]->kind == Type_Varargs;
+    bool has_varargs = signature->func.num_params != 0 && signature->func.params[signature->func.num_params - 1]->kind == Type_Varargs;
     abi_arg_t args[num_args + 1];
     args[0] = classify(signature->func.ret, &int_params, &float_params, &stack_params);
     int_params = float_params = stack_params = 0;
@@ -103,13 +103,13 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     }
     stack_size += stack_params * 8;
     if ((stack_size + stack_bytes) % 16 != 0) stack_size += 16 - ((stack_size + stack_bytes) % 16);
-    if (stack_size != 0) stack_sub(stack_size);
+    if (stack_size != 0) stack_sub(writer, stack_size);
     
     // copy shit onto stack
     for (size_t i = 1; i < num_args + 1; i++) {
         if (!args[i].is_big) continue;
         stack_item_t* item = peek(i - 1);
-        copy(ptr(rsp, stack_size - args[i].stack_offset - args[i].type->size, Type_Int64, true), op(item), args[i].type->size, args[i].type->alignment);
+        copy(writer, ptr(rsp, stack_size - args[i].stack_offset - args[i].type->size, Type_Int64, true), op(item), args[i].type->size, args[i].type->alignment);
     }
     
     // copy args
@@ -117,43 +117,43 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     if (has_varargs) num_fixed_args--;
     int_params = float_params = 0;
     if (args[0].is_big) {
-        instr2("lea", reg(rdi, Type_Int64, true), ptr(rsp, stack_size - args[0].stack_offset - args[0].type->size, Type_Int64, true));
+        emit(writer, lea, 2, reg(rdi, Type_Int64, true), ptr(rsp, stack_size - args[0].stack_offset - args[0].type->size, Type_Int64, true));
         int_params = 1;
     }
     for (size_t i = 1; i < num_args + 1; i++) {
-        stack_item_t item = pop();
+        stack_item_t item = pop(writer);
         for (size_t j = 0; j <= args[i].is_128bit; j++) {
             abi_class_t class = (&args[i].class)[j];
             if (j != 0) item.offset += 8;
             operand_t op1 = args[i].is_big ? ptr(rsp, stack_size - args[i].stack_offset - args[i].type->size, Type_Int64, true) : op(&item);
-            const char* opcode = args[i].is_big ? "lea" : "mov";
+            mnemonic_t mnemonic = args[i].is_big ? lea : mov;
             if (class == ABIClass_FLOATING && float_params < 8) {
                 if (i > num_fixed_args && has_varargs) vararg_float_params++;
-                instr2(opcode, reg((reg_t[]){
+                emit(writer, mnemonic, 2, reg((reg_t[]){
                     xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7, xmm8
                 }[float_params++], item.kind, item.is_unsigned), op1);
             }
-            else if (int_params < 6) instr2(opcode, reg((reg_t[]){
+            else if (int_params < 6) emit(writer, mnemonic, 2, reg((reg_t[]){
                 rdi, rsi, rdx, rcx, r8, r9
             }[int_params++], item.kind, item.is_unsigned), op1);
-            else instr2(opcode, ptr(rsp, --stack_params * 8, item.kind, item.is_unsigned), op1);
+            else emit(writer, mnemonic, 2, ptr(rsp, --stack_params * 8, item.kind, item.is_unsigned), op1);
         }
     }
 
     // call the function
     operand_t func_op = reg(rax, Type_Pointer, true);
     if (has_varargs) func_op = ptr(rsp, stack_size - varargs_offset - 8, Type_Pointer, true);
-    instr2("lea", func_op, op(&func));
-    if (has_varargs) instr2("mov", reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
-    instr1("call", func_op, false);
-    if (stack_size != 0) stack_free(stack_size);
+    emit(writer, lea, 2, func_op, op(&func));
+    if (has_varargs) emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
+    emit(writer, call, 1, func_op);
+    if (stack_size != 0) stack_free(writer, stack_size);
 
     // return value
     stack_item_t* ret;
     if (args[0].type->kind == Type_Struct || args[0].type->kind == Type_Union) {
-        ret = jitc_asm_stackalloc(args[0].type->size);
+        ret = jitc_asm_stackalloc(writer, args[0].type->size);
         if (!args[0].is_big) {
-            instr2("mov", op(ret), reg(rax, args[0].class == ABIClass_FLOATING ? Type_Float64 : Type_Int64, true));
+            emit(writer, mov, 2, op(ret), reg(rax, args[0].class == ABIClass_FLOATING ? Type_Float64 : Type_Int64, true));
             if (args[0].is_128bit) {
                 reg_t dst = args[0].class == args[0].class_upper
                     ? args[0].class_upper == ABIClass_FLOATING
@@ -161,42 +161,43 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
                     : args[0].class_upper == ABIClass_FLOATING
                         ? xmm0 : rax;
                 ret->offset += 8;
-                instr2("mov", op(ret), reg(dst, args[0].class_upper == ABIClass_FLOATING ? Type_Float64 : Type_Int64, true));
+                emit(writer, mov, 2, op(ret), reg(dst, args[0].class_upper == ABIClass_FLOATING ? Type_Float64 : Type_Int64, true));
                 ret->offset -= 8;
             }
         }
     }
     else if (args[0].type->kind != Type_Void) {
-        ret = push(StackItem_rvalue, signature->func.ret->kind, signature->func.ret->is_unsigned);
+        ret = push(writer, StackItem_rvalue, signature->func.ret->kind, signature->func.ret->is_unsigned);
         if (isflt(ret->kind))
-            instr2("mov", op(ret), reg(xmm0, ret->kind, false));
+            emit(writer, mov, 2, op(ret), reg(xmm0, ret->kind, false));
         else
-            instr2("mov", op(ret), reg(rax, ret->kind, ret->is_unsigned));
+            emit(writer, mov, 2, op(ret), reg(rax, ret->kind, ret->is_unsigned));
     }
-    else ret = pushi(StackItem_literal, Type_Int32, false, 0);
+    else ret = pushi(writer, StackItem_literal, Type_Int32, false, 0);
 }
 
 static jitc_type_t* func_signature = NULL;
 
 static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t stack_size) {
     func_signature = signature;
-    printf("push rbp\n"); // todo: preserve rbx and r12..r15
-    printf("mov rbp, rsp\n");
+    emit(writer, opc_push, 1, reg(rbp, Type_Int64, true));
+    emit(writer, mov, 2, reg(rbp, Type_Pointer, true), reg(rsp, Type_Pointer, true));
     if (stack_size % 16 != 0) stack_size += 16 - (stack_size % 16);
-    if (stack_size != 0) printf("sub rsp, 0x%lx\n", stack_size);
+    if (stack_size != 0) emit(writer, sub, 2, reg(rsp, Type_Pointer, true), imm(stack_size, Type_Pointer, true));
 }
 
 static void jitc_asm_ret(bytewriter_t* writer) {
     if (isflt(func_signature->func.ret->kind))
-        instr2("mov", reg(xmm0, func_signature->func.ret->kind, false), op(peek(0)));
+        emit(writer, mov, 2, reg(xmm0, func_signature->func.ret->kind, false), op(peek(0)));
     else if (func_signature->func.ret->kind != Type_Void)
-        instr2("mov", reg(rax, func_signature->func.ret->kind, func_signature->func.ret->is_unsigned), op(peek(0)));
-    pop();
-    printf("jmp _ret\n");
+        emit(writer, mov, 2, reg(rax, func_signature->func.ret->kind, func_signature->func.ret->is_unsigned), op(peek(0)));
+    pop(writer);
+    emit(writer, jmp, 1, imm(0, Type_Int32, false));
+    push_return(writer);
 }
 
 static void jitc_asm_func_end(bytewriter_t* writer) {
-    printf("_ret:\n");
-    printf("leave\n");
-    printf("ret\n");
+    pop_return(writer);
+    emit(writer, leave, 0);
+    emit(writer, ret, 0);
 }

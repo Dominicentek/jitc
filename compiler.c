@@ -259,7 +259,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
             }
             return true;
         case AST_Ternary:
-            jitc_asm_if(writer);
+            jitc_asm_if(writer, false);
             if (ast->ternary.when) assemble(writer, ast->ternary.when, variable_map);
             else jitc_asm_pushi(writer, 0, Type_Int32, false);
             jitc_asm_then(writer);
@@ -272,7 +272,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
             jitc_asm_end(writer);
             return true;
         case AST_Branch:
-            jitc_asm_if(writer);
+            jitc_asm_if(writer, false);
             if (ast->ternary.when) assemble(writer, ast->ternary.when, variable_map);
             else jitc_asm_pushi(writer, 0, Type_Int32, false);
             jitc_asm_then(writer);
@@ -288,7 +288,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
             }
             return false;
         case AST_Loop:
-            jitc_asm_if(writer);
+            jitc_asm_if(writer, true);
             if (ast->loop.cond) assemble(writer, ast->loop.cond, variable_map);
             else jitc_asm_pushi(writer, 1, Type_Int32, false);
             jitc_asm_then(writer);
@@ -369,6 +369,14 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 jitc_asm_ret(writer);
             }
             jitc_asm_func_end(writer);
+            size_t size = bytewriter_size(writer);
+            uint8_t* data = bytewriter_data(writer);
+            printf("%s:", ast->func.variable->name);
+            for (size_t i = 0; i < size; i++) {
+                if (i % 16 == 0) printf("\n  ");
+                printf("%02x ", data[i]);
+            }
+            printf("\n");
             *(void**)jitc_get_or_static(context, ast->func.variable->name) = bytewriter_delete(writer);
         } break;
         default: break;
