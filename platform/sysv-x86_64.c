@@ -1,4 +1,5 @@
 #include "x86_64.c"
+#include "unix.c"
 
 // holy FUCK this is some of the worst code ive ever written isftg
 // prepare thyself if youre reading this (minos prime ultrakill reference)

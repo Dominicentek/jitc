@@ -8,7 +8,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <errno.h>
 
 #define FORMAT(fmt) ({ \
     va_list args1, args2; \
@@ -423,24 +423,25 @@ jitc_context_t* jitc_create_context() {
     context->strings = set_new(compare_string);
     context->typecache = map_new(compare_int64);
     context->scopes = list_new();
+    context->memchunks = list_new();
     context->error = NULL;
     jitc_push_scope(context);
     return context;
 }
 
-static bool jitc_get_symbol(jitc_context_t* context, const char* name, void** ptr) {
+static bool jitc_get_symbol(jitc_context_t* context, const char* name, void** ptr, bool force_pointer) {
     jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
     if (!map_find_ptr(scope->variables, (char*)name)) return false;
     jitc_variable_t* var = map_as_ptr(scope->variables);
     if (var->decltype == Decltype_Typedef) return false;
     if (var->decltype == Decltype_Extern) *ptr = (void*)var->value;
-    else *ptr = &var->value;
+    else *ptr = !force_pointer && var->type->kind == Type_Function ? (void*)var->value : &var->value;
     return var->decltype == Decltype_Static;
 }
 
 void* jitc_get_or_static(jitc_context_t* context, const char* name) {
     void* ptr;
-    jitc_get_symbol(context, name, &ptr);
+    jitc_get_symbol(context, name, &ptr, true);
     return ptr;
 }
 
@@ -479,9 +480,34 @@ bool jitc_struct_field_exists_list(list_t* list, const char* name) {
     return false;
 }
 
+jitc_error_t* jitc_parse(jitc_context_t* context, const char* code, const char* filename) {
+    smartptr(queue_t) tokens = jitc_lex(context, code, filename);
+    if (!tokens) return context->error;
+    smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens);
+    while (jitc_pop_scope(context));
+    if (!ast) return context->error;
+    for (size_t i = 0; i < list_size(ast->list.inner); i++) {
+        jitc_compile(context, list_get_ptr(ast->list.inner, i));
+    }
+    return NULL;
+}
+
+jitc_error_t* jitc_parse_file(jitc_context_t* context, const char* filename) {
+    FILE* f = fopen(filename, "r");
+    if (!f) return jitc_error_syntax(filename, 0, 0, "Failed to open: %s", strerror(errno));
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    autofree char* code = malloc(size + 1);
+    fread(code, size, 1, f);
+    code[size] = 0;
+    fclose(f);
+    return jitc_parse(context, code, filename);
+}
+
 void* jitc_get(jitc_context_t* context, const char* name) {
     void* ptr;
-    if (jitc_get_symbol(context, name, &ptr)) return NULL;
+    if (jitc_get_symbol(context, name, &ptr, false)) return NULL;
     return ptr;
 }
 
@@ -501,5 +527,6 @@ void jitc_destroy_context(jitc_context_t* context) {
     while (list_size(context->scopes) > 1) jitc_pop_scope(context);
     jitc_destroy_scope(list_get_ptr(context->scopes, 0));
     list_delete(context->scopes);
+    jitc_delete_memchunks(context);
     free(context);
 }

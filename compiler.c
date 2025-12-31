@@ -346,8 +346,8 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             memcpy(ptr, &ast->binary.right->integer.value, ast->exprtype->size);
         } break;
         case AST_Function: {
-            bytewriter_t* writer = bytewriter_new();
-            map_t* variable_map = map_new(compare_int64);
+            smartptr(bytewriter_t) writer = bytewriter_new();
+            smartptr(map_t) variable_map = map_new(compare_int64);
             bool is_return = false;
             jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
             for (size_t i = 0; i < map_size(global_scope->variables); i++) {
@@ -373,15 +373,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 jitc_asm_ret(writer);
             }
             jitc_asm_func_end(writer);
-            size_t size = bytewriter_size(writer);
-            uint8_t* data = bytewriter_data(writer);
-            //printf("%s:", ast->func.variable->name);
-            for (size_t i = 0; i < size; i++) {
-                if (i != 0 && i % 16 == 0) printf("\n");
-                printf("%02x ", data[i]);
-            }
-            printf("\n");
-            *(void**)jitc_get_or_static(context, ast->func.variable->name) = bytewriter_delete(writer);
+            *(void**)jitc_get_or_static(context, ast->func.variable->name) = make_executable(context, bytewriter_data(writer), bytewriter_size(writer));
         } break;
         default: break;
     }

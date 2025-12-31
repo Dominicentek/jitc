@@ -13,6 +13,7 @@ struct jitc_context_t {
     set_t* strings;
     map_t* typecache;
     list_t* scopes;
+    list_t* memchunks;
     jitc_error_t* error;
 };
 
@@ -430,5 +431,6 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
 void jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
+void jitc_delete_memchunks(jitc_context_t* context);
 
 #endif
