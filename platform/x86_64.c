@@ -453,6 +453,7 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
     reg_t int_tmp = rax;
     reg_t flt_tmp = xmm15;
     operand_t writeback;
+    bool tmp_used = false;
     for (uint8_t i = 0; i < legalization->cost; i++) switch (legalization->steps[i]) {
         case Legal_imm_reg:
             encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0xB0 : 0xB8, int_tmp, 0, Mode_Reg, 0, modrm_opc | get_extra_flags(0, ops[curr_op].kind, true));
@@ -465,11 +466,13 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
             }
             else bytewriter_int64(writer, ops[curr_op].value);
             ops[curr_op] = reg(int_tmp, ops[curr_op].kind, ops[curr_op].is_unsigned);
+            tmp_used = true;
             break;
         case Legal_to_reg: {
             jitc_type_kind_t next_kind = ops[curr_op].kind == Type_Float32 ? Type_Int32 : Type_Int64;
             encode_instruction(writer, 0x7E, int_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | flip_modrm | get_extra_flags(0, next_kind, false));
             ops[curr_op] = reg(int_tmp, next_kind, ops[curr_op].is_unsigned);
+            tmp_used = true;
         } break;
         case Legal_to_xmm: {
             jitc_type_kind_t next_kind = ops[curr_op].kind == Type_Int32 ? Type_Float32 : Type_Float64;
@@ -493,6 +496,7 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
             ops[curr_op] = reg(legalization->steps[i] == Legal_deref_xmm ? flt_tmp : int_tmp, ops[curr_op].kind, ops[curr_op].is_unsigned);
             ops[curr_op].disp = 0;
             if (legalization->steps[i] == Legal_deref_mem) ops[curr_op].type = OpType_ptr;
+            tmp_used = true;
         } break;
         case Legal_perform: {
             opmode_t mode = Mode_Reg;
@@ -534,7 +538,7 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
         } break;
         case Legal_next_op:
             curr_op--;
-            int_tmp++;
+            if (tmp_used) int_tmp++;
             break;
     }
 }

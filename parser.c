@@ -621,6 +621,8 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     *param = try(jitc_process_ast(context, *param, NULL));
                     if (i < num_fixed_args)
                         *param = try(jitc_cast(context, *param, func->func.params[i], false, (*param)->token));
+                    else if ((*param)->exprtype->kind == Type_Float32)
+                        *param = try(jitc_cast(context, *param, jitc_typecache_primitive(context, Type_Float64), false, (*param)->token));
                 }
             } break;
             #define ARITHMETIC(op, can_be_ptr) \

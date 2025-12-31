@@ -116,7 +116,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     // copy args
     int num_fixed_args = signature->func.num_params;
     if (has_varargs) num_fixed_args--;
-    int_params = float_params = 0;
+    int_params = float_params = stack_params = 0;
     if (args[0].is_big) {
         emit(writer, lea, 2, reg(rdi, Type_Int64, true), ptr(rsp, stack_size - args[0].stack_offset - args[0].type->size, Type_Int64, true));
         int_params = 1;
@@ -137,7 +137,10 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
             else if (int_params < 6) emit(writer, mnemonic, 2, reg((reg_t[]){
                 rdi, rsi, rdx, rcx, r8, r9
             }[int_params++], item.kind, item.is_unsigned), op1);
-            else emit(writer, mnemonic, 2, ptr(rsp, --stack_params * 8, item.kind, item.is_unsigned), op1);
+            else {
+                if (item.kind == Type_Float64) item.kind = Type_Int64;
+                emit(writer, mnemonic, 2, ptr(rsp, stack_params++ * 8, item.kind, item.is_unsigned), op1);
+            }
         }
     }
 

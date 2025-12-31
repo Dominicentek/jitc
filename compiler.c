@@ -373,6 +373,11 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 jitc_asm_ret(writer);
             }
             jitc_asm_func_end(writer);
+            for (size_t i = 0; i < bytewriter_size(writer); i++) {
+                if (i != 0 && i % 16 == 0) printf("\n");
+                printf("%02x ", bytewriter_data(writer)[i]);
+            }
+            printf("\n");
             *(void**)jitc_get_or_static(context, ast->func.variable->name) = make_executable(context, bytewriter_data(writer), bytewriter_size(writer));
         } break;
         default: break;
