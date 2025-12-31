@@ -6,7 +6,11 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
-#if defined(_WIN32) && defined(__x86_64__)
+//#define DEBUG
+
+#if defined(DEBUG)
+#include "platform/debug.c"
+#elif defined(_WIN32) && defined(__x86_64__)
 #include "platform/win-x86_64.c"
 #elif defined(__x86_64__)
 #include "platform/sysv-x86_64.c"
@@ -371,9 +375,9 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             jitc_asm_func_end(writer);
             size_t size = bytewriter_size(writer);
             uint8_t* data = bytewriter_data(writer);
-            printf("%s:", ast->func.variable->name);
+            //printf("%s:", ast->func.variable->name);
             for (size_t i = 0; i < size; i++) {
-                if (i % 16 == 0) printf("\n  ");
+                if (i != 0 && i % 16 == 0) printf("\n");
                 printf("%02x ", data[i]);
             }
             printf("\n");

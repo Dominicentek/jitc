@@ -63,15 +63,18 @@ typedef enum: uint8_t {
     cvtsi2ss, cvtsi2sd, cvttss2si, cvttsd2si, cvtss2sd, cvtsd2ss
 } mnemonic_t;
 
-typedef enum: uint8_t {
+typedef enum: uint16_t {
     force_rexw = (1 << 0),
     force_size = (1 << 1),
     has_modrm = (1 << 2),
-    modrm_op2 = (1 << 3) | has_modrm,
+    modrm_op2_mask = (1 << 3),
     modrm_opc = (1 << 4),
     prefix_f2 = (1 << 5),
     prefix_f3 = (1 << 6),
     twobyte = (1 << 7),
+    flip_modrm = (1 << 8),
+
+    modrm_op2 = modrm_op2_mask | has_modrm,
 } instr_flags_t;
 
 typedef enum: uint8_t {
@@ -114,82 +117,82 @@ typedef struct {
 } legalization_t;
 
 static instr_t instructions[] = {
-    { mov, 0x88, has_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
-    { mov, 0x89, has_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
-    { mov, 0x8A, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
-    { mov, 0x8B, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
+    { mov, 0x88, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
+    { mov, 0x89, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
+    { mov, 0x8A, has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
+    { mov, 0x8B, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
     { mov, 0xB0, modrm_opc, { C_REG | C__S8, C_IMM | C__S8 }},
     { mov, 0xB8, modrm_opc, { C_REG | C_NO8, C_IMM | C_NO8 }},
     { mov, 0xC6, has_modrm, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }},
     { mov, 0xC7, has_modrm, { C_REG | C_MEM | C_S16 | C_S32, C_IMM | C_S16 | C_S32 }},
-    { movzx, 0xB6, has_modrm | twobyte, { C_REG | C_NO8, C_REG | C_MEM | C__S8 }},
-    { movzx, 0xB7, has_modrm | twobyte, { C_REG | C_NO8, C_REG | C_MEM | C_S16 }},
-    { movsx, 0xBE, has_modrm | twobyte, { C_REG | C_NO8, C_REG | C_MEM | C__S8 }},
-    { movsx, 0xBF, has_modrm | twobyte, { C_REG | C_NO8, C_REG | C_MEM | C_S16 }},
-    { movsx, 0x63, has_modrm | force_rexw, { C_REG | C_S64, C_REG | C_MEM | C_S32 }},
-    { mov, 0x6E, force_size | has_modrm | twobyte, { C_XMM | C_S32, C_REG | C_MEM | C_S32 }},
+    { movzx, 0xB6, has_modrm | twobyte | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C__S8 }},
+    { movzx, 0xB7, has_modrm | twobyte | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_S16 }},
+    { movsx, 0xBE, has_modrm | twobyte | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C__S8 }},
+    { movsx, 0xBF, has_modrm | twobyte | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_S16 }},
+    { movsx, 0x63, has_modrm | force_rexw | flip_modrm, { C_REG | C_S64, C_REG | C_MEM | C_S32 }},
+    { mov, 0x6E, force_size | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_REG | C_MEM | C_S32 }},
     { mov, 0x7E, force_size | has_modrm | twobyte, { C_REG | C_MEM | C_S32, C_XMM | C_S32 }},
-    { mov, 0x6E, force_size | has_modrm | twobyte | force_rexw, { C_XMM | C_S64, C_REG | C_MEM | C_S64 }},
+    { mov, 0x6E, force_size | has_modrm | twobyte | force_rexw | flip_modrm, { C_XMM | C_S64, C_REG | C_MEM | C_S64 }},
     { mov, 0x7E, force_size | has_modrm | twobyte | force_rexw, { C_REG | C_MEM | C_S64, C_XMM | C_S64 }},
-    { mov, 0x10, prefix_f3 | has_modrm | twobyte, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
-    { mov, 0x10, prefix_f2 | has_modrm | twobyte, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
-    { lea, 0x8D, has_modrm | force_rexw, { C_REG | C_S64, C_MEM | C__S8 | C_NO8 }},
+    { mov, 0x10, prefix_f3 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
+    { mov, 0x10, prefix_f2 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
+    { lea, 0x8D, has_modrm | force_rexw | flip_modrm, { C_REG | C_S64, C_MEM | C__S8 | C_NO8 }},
     { add, 0x00, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
     { add, 0x01, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
-    { add, 0x02, has_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
-    { add, 0x03, has_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
+    { add, 0x02, has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
+    { add, 0x03, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
     { add, 0x80, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b000 },
     { add, 0x83, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b000 },
     { add, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b000 },
-    { add, 0x58, prefix_f3 | has_modrm | twobyte, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
-    { add, 0x58, prefix_f2 | has_modrm | twobyte, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
+    { add, 0x58, prefix_f3 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
+    { add, 0x58, prefix_f2 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
     { sub, 0x28, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
     { sub, 0x29, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
-    { sub, 0x2A, has_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
-    { sub, 0x2B, has_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
+    { sub, 0x2A, has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
+    { sub, 0x2B, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
     { sub, 0x80, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b101 },
     { sub, 0x83, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b101 },
     { sub, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b101 },
-    { sub, 0x5C, prefix_f3 | has_modrm | twobyte, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
-    { sub, 0x5C, prefix_f2 | has_modrm | twobyte, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
-    { imul, 0xF6, has_modrm, { C_REG | C_MEM | C__S8 }, 0b101 },
-    { imul, 0xF7, has_modrm, { C_REG | C_MEM | C_NO8 }, 0b101 },
-    { imul, 0x59, prefix_f3 | has_modrm | twobyte, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
-    { imul, 0x59, prefix_f2 | has_modrm | twobyte, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
-    { idiv, 0xF6, has_modrm, { C_REG | C_MEM | C__S8 }, 0b111 },
-    { idiv, 0xF7, has_modrm, { C_REG | C_MEM | C_NO8 }, 0b111 },
-    { idiv, 0x5E, prefix_f3 | has_modrm | twobyte, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
-    { idiv, 0x5E, prefix_f2 | has_modrm | twobyte, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
+    { sub, 0x5C, prefix_f3 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
+    { sub, 0x5C, prefix_f2 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
+    { imul, 0xF6, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b101 },
+    { imul, 0xF7, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b101 },
+    { imul, 0x59, prefix_f3 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
+    { imul, 0x59, prefix_f2 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
+    { idiv, 0xF6, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b111 },
+    { idiv, 0xF7, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b111 },
+    { idiv, 0x5E, prefix_f3 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
+    { idiv, 0x5E, prefix_f2 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
     { and, 0x20, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
     { and, 0x21, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
-    { and, 0x22, has_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
-    { and, 0x23, has_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
+    { and, 0x22, has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
+    { and, 0x23, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
     { and, 0x80, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b100 },
     { and, 0x83, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b100 },
     { and, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b100 },
     { or, 0x08, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
     { or, 0x09, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
-    { or, 0x0A, has_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
-    { or, 0x0B, has_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
+    { or, 0x0A, has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
+    { or, 0x0B, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
     { or, 0x80, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b001 },
     { or, 0x83, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b001 },
     { or, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b001 },
     { xor, 0x30, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
     { xor, 0x31, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
-    { xor, 0x32, has_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
-    { xor, 0x33, has_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
+    { xor, 0x32, has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
+    { xor, 0x33, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
     { xor, 0x80, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b110 },
     { xor, 0x83, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b110 },
     { xor, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b110 },
     { cmp, 0x38, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
     { cmp, 0x39, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
-    { cmp, 0x3A, has_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
-    { cmp, 0x3B, has_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
+    { cmp, 0x3A, has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
+    { cmp, 0x3B, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
     { cmp, 0x80, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b111 },
     { cmp, 0x83, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b111 },
     { cmp, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b111 },
-    { cmp, 0x2E, has_modrm | twobyte, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
-    { cmp, 0x2E, has_modrm | twobyte | force_size, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
+    { cmp, 0x2E, has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
+    { cmp, 0x2E, has_modrm | twobyte | force_size | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
     { shl, 0xD2, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b100 },
     { shl, 0xD3, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b100 },
     { shr, 0xD2, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b101 },
@@ -217,12 +220,12 @@ static instr_t instructions[] = {
     { cwd, 0x99, force_size },
     { cdq, 0x99 },
     { cqo, 0x99, force_rexw },
-    { cvtsi2ss, 0x2A, twobyte | has_modrm | prefix_f3, { C_XMM | C_S32, C_REG | C_MEM | C_S32 }},
-    { cvtsi2sd, 0x2A, twobyte | has_modrm | prefix_f2 | force_rexw, { C_XMM | C_S64, C_REG | C_MEM | C_S64 }},
-    { cvttss2si, 0x2C, twobyte | has_modrm | prefix_f3, { C_REG | C_S32, C_XMM | C_MEM | C_S32 }},
-    { cvttsd2si, 0x2C, twobyte | has_modrm | prefix_f2 | force_rexw, { C_REG | C_S64, C_XMM | C_MEM | C_S64 }},
-    { cvtss2sd, 0x5A, twobyte | has_modrm | prefix_f3, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
-    { cvtsd2ss, 0x5A, twobyte | has_modrm | prefix_f2, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
+    { cvtsi2ss, 0x2A, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_XMM | C_S32, C_REG | C_MEM | C_S32 }},
+    { cvtsi2sd, 0x2A, twobyte | has_modrm | prefix_f2 | force_rexw | flip_modrm, { C_XMM | C_S64, C_REG | C_MEM | C_S64 }},
+    { cvttss2si, 0x2C, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_REG | C_S32, C_XMM | C_MEM | C_S32 }},
+    { cvttsd2si, 0x2C, twobyte | has_modrm | prefix_f2 | force_rexw | flip_modrm, { C_REG | C_S64, C_XMM | C_MEM | C_S64 }},
+    { cvtss2sd, 0x5A, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S32 }},
+    { cvtsd2ss, 0x5A, twobyte | has_modrm | prefix_f2 | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S64 }},
     { rep_movsb, 0xA4, prefix_f3 },
     { rep_movsw, 0xA5, prefix_f3 | force_size },
     { rep_movsd, 0xA5, prefix_f3 },
@@ -327,7 +330,7 @@ static operand_t op(stack_item_t* item) {
             .kind = item->kind,
             .is_unsigned = item->is_unsigned,
             .reg = rbp,
-            .disp = -item->value + item->offset
+            .disp = -item->offset
         };
         case StackItem_lvalue_abs: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
@@ -370,16 +373,21 @@ static operand_t unptr(operand_t op1) {
     return op1;
 }
 
-static instr_flags_t get_extra_flags(jitc_type_kind_t type) {
+static instr_flags_t get_extra_flags(instr_constraints_t constraints, jitc_type_kind_t type, bool allow_rex_float) {
     if (type == Type_Int16) return force_size;
-    if (type == Type_Int64 || type == Type_Float64 || type == Type_Pointer) return force_rexw;
+    if (type == Type_Int64 || type == Type_Pointer || (allow_rex_float && type == Type_Float64)) {
+        if ((constraints & C_S64) && !(constraints & (C__S8 | C_S16 | C_S32))) return 0;
+        return force_rexw;
+    }
     return 0;
 }
 
 static void encode_instruction(bytewriter_t* writer, uint8_t opcode, reg_t reg1, reg_t reg2, opmode_t mode, uint8_t modrm_bits, instr_flags_t flags) {
     uint8_t rex = 0;
-    if (reg1 >= 8) rex |= 0x40 | 0b0001;
-    if (reg2 >= 8) rex |= 0x40 | 0b0100;
+    reg_t op1 = flags & flip_modrm ? reg2 : reg1;
+    reg_t op2 = flags & flip_modrm ? reg1 : reg2;
+    if (op1 >= 8) rex |= 0x40 | 0b0001;
+    if (op2 >= 8) rex |= 0x40 | 0b0100;
     if (flags & force_rexw) rex |= 0x48;
     if (flags & force_size) bytewriter_int8(writer, 0x66);
     if (flags & prefix_f3) bytewriter_int8(writer, 0xF3);
@@ -388,11 +396,19 @@ static void encode_instruction(bytewriter_t* writer, uint8_t opcode, reg_t reg1,
     if (flags & twobyte) bytewriter_int8(writer, 0x0F);
     bytewriter_int8(writer, opcode | (flags & modrm_opc ? reg1 & 0b111 : 0));
     if (flags & has_modrm) {
+        bool emit_zero = false;
+        if (mode == Mode_Mem && (op1 & 0b111) == 0b101) {
+            mode = Mode_Disp8;
+            emit_zero = true;
+        }
         uint8_t modrm = (mode & 0b11) << 6;
-        if (flags & modrm_op2) modrm |= (modrm_bits & 0b111) << 3;
-        else modrm |= (reg2 & 0b111) << 3;
-        modrm |= (reg1 & 0b111) << 3;
+        if (flags & modrm_op2_mask) modrm |= (modrm_bits & 0b111) << 3;
+        else modrm |= (op2 & 0b111) << 3;
+        modrm |= op1 & 0b111;
         bytewriter_int8(writer, modrm);
+        if ((mode & 0b11) != Mode_Reg && (op1 & 0b111) == 0b100)
+            bytewriter_int8(writer, 0x24); // SID byte
+        if (emit_zero) bytewriter_int8(writer, 0x00);
     }
 }
 
@@ -439,21 +455,25 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
     operand_t writeback;
     for (uint8_t i = 0; i < legalization->cost; i++) switch (legalization->steps[i]) {
         case Legal_imm_reg:
-            encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0xB0 : 0xB8, int_tmp, 0, Mode_Reg, 0, modrm_opc | get_extra_flags(ops[curr_op].kind));
+            encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0xB0 : 0xB8, int_tmp, 0, Mode_Reg, 0, modrm_opc | get_extra_flags(0, ops[curr_op].kind, true));
             if (ops[curr_op].kind == Type_Int8) bytewriter_int8(writer, ops[curr_op].value);
             else if (ops[curr_op].kind == Type_Int16) bytewriter_int16(writer, ops[curr_op].value);
             else if (ops[curr_op].kind == Type_Int32) bytewriter_int32(writer, ops[curr_op].value);
+            else if (ops[curr_op].kind == Type_Float32) {
+                float f = *(double*)&ops[curr_op].value;
+                bytewriter_int32(writer, *(uint32_t*)&f);
+            }
             else bytewriter_int64(writer, ops[curr_op].value);
             ops[curr_op] = reg(int_tmp, ops[curr_op].kind, ops[curr_op].is_unsigned);
             break;
         case Legal_to_reg: {
             jitc_type_kind_t next_kind = ops[curr_op].kind == Type_Float32 ? Type_Int32 : Type_Int64;
-            encode_instruction(writer, 0x7E, int_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | get_extra_flags(next_kind));
+            encode_instruction(writer, 0x7E, int_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | flip_modrm | get_extra_flags(0, next_kind, false));
             ops[curr_op] = reg(int_tmp, next_kind, ops[curr_op].is_unsigned);
         } break;
         case Legal_to_xmm: {
             jitc_type_kind_t next_kind = ops[curr_op].kind == Type_Int32 ? Type_Float32 : Type_Float64;
-            encode_instruction(writer, 0x6E, flt_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | get_extra_flags(ops[curr_op].kind));
+            encode_instruction(writer, 0x6E, flt_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | flip_modrm | get_extra_flags(0, ops[curr_op].kind, true));
             ops[curr_op] = reg(flt_tmp, next_kind, ops[curr_op].is_unsigned);
         } break;
         case Legal_deref_reg:
@@ -464,9 +484,9 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
             else if (ops[curr_op].disp >= INT8_MIN && ops[curr_op].disp <= INT8_MAX) mode = Mode_Disp8;
             else mode = Mode_Disp32;
             if (legalization->steps[i] == Legal_deref_xmm)
-                encode_instruction(writer, 0x10, flt_tmp, ops[curr_op].reg, Mode_Disp32, 0, (ops[curr_op].kind == Type_Float32 ? prefix_f3 : prefix_f2) | has_modrm | twobyte | get_extra_flags(ops[curr_op].kind));
+                encode_instruction(writer, 0x10, flt_tmp, ops[curr_op].reg, mode, 0, (ops[curr_op].kind == Type_Float32 ? prefix_f3 : prefix_f2) | has_modrm | twobyte | flip_modrm | get_extra_flags(0, ops[curr_op].kind, false));
             else
-                encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0x88 : 0x89, int_tmp, ops[curr_op].reg, mode, 0, has_modrm | get_extra_flags(ops[curr_op].kind));
+                encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0x8A : 0x8B, int_tmp, ops[curr_op].reg, mode, 0, has_modrm | flip_modrm | get_extra_flags(0, ops[curr_op].kind, false));
             if (mode == Mode_Disp8)  bytewriter_int8 (writer, ops[curr_op].disp);
             if (mode == Mode_Disp32) bytewriter_int32(writer, ops[curr_op].disp);
             writeback = ops[curr_op];
@@ -485,27 +505,36 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
                 else if (mem->disp >= INT8_MIN && mem->disp <= INT8_MAX) mode = Mode_Disp8;
                 else mode = Mode_Disp32;
             }
-            emit_instruction(writer, &instructions[i], op1->reg, op2->reg, mode, get_extra_flags(op1->kind));
-            if (mode == Mode_Disp8) bytewriter_int8(writer, op1->disp);
-            if (mode == Mode_Disp32) bytewriter_int32(writer, op1->disp);
-            if (op1->kind == Type_Int8) bytewriter_int8(writer, op2->value);
-            if (op1->kind == Type_Int16) bytewriter_int16(writer, op2->value);
-            if (op1->kind == Type_Int32) bytewriter_int32(writer, op2->value);
-            if (op1->kind == Type_Int64) bytewriter_int64(writer, op2->value);
+            emit_instruction(writer, instr, op1->reg, op1 == op2 || op2->type == OpType_imm ? rax : op2->reg, mode, get_extra_flags(instr->constraints[0], op1->kind, false));
+            if (mode == Mode_Disp8) bytewriter_int8(writer, op1->disp == 0 ? op2->disp : op1->disp);
+            if (mode == Mode_Disp32) bytewriter_int32(writer, op1->disp == 0 ? op2->disp : op1->disp);
+            if (op2->type == OpType_imm) {
+                jitc_type_kind_t kind = op1->kind < op2->kind ? op1->kind : op2->kind;
+                if (kind == Type_Int8) bytewriter_int8(writer, op2->value);
+                else if (kind == Type_Int16) bytewriter_int16(writer, op2->value);
+                else if (kind == Type_Int32) bytewriter_int32(writer, op2->value);
+                else if (kind == Type_Float32) {
+                    float f = *(double*)&op2->value;
+                    bytewriter_int32(writer, *(uint32_t*)&f);
+                }
+                else bytewriter_int64(writer, op2->value);
+            }
         } break;
         case Legal_writeback: {
             opmode_t mode;
             if (writeback.disp == 0) mode = Mode_Mem;
             else if (writeback.disp >= INT8_MIN && writeback.disp <= INT8_MAX) mode = Mode_Disp8;
             else mode = Mode_Disp32;
-            encode_instruction(writer, writeback.kind == Type_Int8 ? 0x8A : 0x8B, writeback.reg, ops[curr_op].reg, mode, 0, has_modrm | get_extra_flags(writeback.kind));
+            if (isflt(writeback.kind))
+                encode_instruction(writer, 0x7E, writeback.reg, ops[curr_op].reg, mode, 0, force_size | has_modrm | twobyte | get_extra_flags(0, writeback.kind, true));
+            else
+                encode_instruction(writer, writeback.kind == Type_Int8 ? 0x88 : 0x89, writeback.reg, ops[curr_op].reg, mode, 0, has_modrm | get_extra_flags(0, writeback.kind, false));
             if (mode == Mode_Disp8) bytewriter_int8(writer, writeback.disp);
             if (mode == Mode_Disp32) bytewriter_int32(writer, writeback.disp);
         } break;
         case Legal_next_op:
             curr_op--;
-            int_tmp = (int_tmp + 1) % 16;
-            flt_tmp = (flt_tmp + 1) % 16;
+            int_tmp++;
             break;
     }
 }
@@ -562,8 +591,19 @@ static void binaryop(bytewriter_t* writer, mnemonic_t mnemonic) {
     stack_item_t op2 = pop(writer);
     stack_item_t op1 = pop(writer);
     stack_item_t* res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
-    if (op1.type != StackItem_rvalue) emit(writer, mov, 2, op(res), op(&op1));
+    stack_item_t* writeback = NULL;
+    if (op1.type == StackItem_literal) {
+        if (op2.type == StackItem_rvalue || op2.type == StackItem_lvalue_abs) {
+            writeback = res;
+            res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
+        }
+        emit(writer, mov, 2, op(res), op(&op1));
+    }
     emit(writer, mnemonic, 2, op(res), op(&op2));
+    if (writeback) {
+        emit(writer, mov, 2, op(writeback), op(res));
+        pop(writer);
+    }
 }
 
 static void unaryop(bytewriter_t* writer, mnemonic_t mnemonic, bool flip) {
@@ -683,7 +723,8 @@ static void jitc_asm_laddr(bytewriter_t* writer, void* ptr, jitc_type_kind_t kin
 }
 
 static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) {
-    pushi(writer, StackItem_lvalue, offset, kind, is_unsigned);
+    stack_item_t* item = push(writer, StackItem_lvalue, kind, is_unsigned);
+    item->offset = offset;
 }
 
 static void jitc_asm_store(bytewriter_t* writer) {
@@ -886,10 +927,11 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
             emit(writer, add, 2, res, ftmp);
         }
         else {
-            operand_t newop = op1;
-            newop.kind = Type_Int32;
+            operand_t newop = op(push(writer, StackItem_rvalue, Type_Int32, false));
             if (op1.kind < Type_Int32) emit(writer, op1.is_unsigned ? movzx : movsx, 2, newop, op1);
-            emit(writer, mov, 2, res, newop);
+            else emit(writer, mov, 2, newop, op1);
+            emit(writer, cvtsi2ss, 2, res, newop);
+            pop(writer);
         }
     }
     else if (res.kind == Type_Float64) {
@@ -906,10 +948,11 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
             emit(writer, add, 2, res, ftmp);
         }
         else {
-            operand_t newop = op1;
-            newop.kind = Type_Int64;
+            operand_t newop = op(push(writer, StackItem_rvalue, Type_Int64, false));
             if (op1.kind < Type_Int64) emit(writer, op1.is_unsigned ? movzx : movsx, 2, newop, op1);
-            emit(writer, mov, 2, res, newop);
+            else emit(writer, mov, 2, newop, op1);
+            emit(writer, cvtsi2sd, 2, res, newop);
+            pop(writer);
         }
     }
     else {

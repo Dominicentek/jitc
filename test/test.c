@@ -1,9 +1,9 @@
-struct test {
-    float x;
-};
-
-struct test get_test() {}
-
 int main() {
-    struct test test = get_test();
+    short x = 4;
+    x += 3;
+    x /= x & (x - 1);
+    float y = 3;
+    y -= 8.3 * y / (x + 1.5);
+    x = (double)y;
+    return ++x;
 }

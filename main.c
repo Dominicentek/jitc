@@ -233,21 +233,21 @@ int main() {
     queue_t* tokens2 = queue_new();
     if (!tokens) jitc_report_error(context->error, stderr);
     else {
-        printf("== TOKEN DUMP ==\n");
+        //printf("== TOKEN DUMP ==\n");
         while (queue_size(tokens) > 0) {
             jitc_token_t* token = queue_pop_ptr(tokens);
             queue_push_ptr(tokens1, token);
             queue_push_ptr(tokens2, token);
-            print_token(token);
+            //print_token(token);
         }
         queue_delete(tokens);
         smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens1);
         while (jitc_pop_scope(context));
-        printf("== AST DUMP ==\n");
+        //printf("== AST DUMP ==\n");
         if (!ast) jitc_report_error(context->error, stderr);
         else {
-            print_ast(ast, 0);
-            printf("== GENERATED ASM ==\n");
+            //print_ast(ast, 0);
+            //printf("== GENERATED ASM ==\n");
             for (size_t i = 0; i < list_size(ast->list.inner); i++) {
                 jitc_compile(context, list_get_ptr(ast->list.inner, i));
             }

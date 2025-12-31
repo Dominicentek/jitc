@@ -183,7 +183,7 @@ static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t s
     emit(writer, opc_push, 1, reg(rbp, Type_Int64, true));
     emit(writer, mov, 2, reg(rbp, Type_Pointer, true), reg(rsp, Type_Pointer, true));
     if (stack_size % 16 != 0) stack_size += 16 - (stack_size % 16);
-    if (stack_size != 0) emit(writer, sub, 2, reg(rsp, Type_Pointer, true), imm(stack_size, Type_Pointer, true));
+    if (stack_size != 0) emit(writer, sub, 2, reg(rsp, Type_Pointer, true), imm(stack_size, Type_Int32, true));
 }
 
 static void jitc_asm_ret(bytewriter_t* writer) {

@@ -14,7 +14,6 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - Short circuiting
 - Switch statements
 - Initializers
-- Assembling to machine code
 - Virtual headers (#include)
 - Windows support
 

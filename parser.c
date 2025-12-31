@@ -421,7 +421,6 @@ jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* ty
     if (jitc_typecmp(context, node->exprtype, type)) return node;
     bool is_zero = node->node_type == AST_Integer && node->integer.value == 0;
     if (!jitc_can_cast(node->exprtype, type, explicit, is_zero)) ERROR(cast_token, "Unable to perform cast");
-    node->exprtype = type;
     switch (node->node_type) {
         case AST_Integer:
             if (is_floating(type)) {
