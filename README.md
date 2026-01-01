@@ -2,7 +2,12 @@
 
 **This project is NOT usable yet (check TODO)**
 
-An embeddable C JIT compiler.
+An embeddable C-like JIT compiler.
+
+> [!WARNING]
+> This compiler is **NOT** suited for real-world C code.
+> It's intentionally incomplete and implements only a small subset of C23 (see below).
+> It's meant to compile small files written in C to provide a scripting interface for host programs like game engines.
 
 ## Mission
 
@@ -14,12 +19,12 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - Short circuiting
 - Switch statements
 - Initializers
-- Virtual headers (#include)
+- Compound expressions
+- Preprocessor
 - Windows support
 
 Calling it done here, the things below are planned but not guaranteed
 
-- Implement macro support
 - Implement `goto`
 - aarch64 support
 - Rewrite IR into SSA
@@ -96,11 +101,13 @@ If a feature is not on this list, it's very likely not supported.
   - Variables
   - Dereferences (and as a result, array subscripts)
   - Struct fields
+  - Compound expressions
   - Everything else is an rvalue
 - Variadic arguments (varargs)
 - Initializers
   - Designated initializers
   - Initialized to 0
+  - Compound expressions
 - Integer constant expressions (`1 - 1` is the same as `0`, also applies to casting rules)
 - `typedef`, `static` and `extern`
   - `static` variables are initialized to 0
@@ -112,9 +119,31 @@ If a feature is not on this list, it's very likely not supported.
   - Function calls must have visible prototypes
     - Fixed argument count must match
     - Empty parameter list is the same as `void`
-- `#include` macro directive
-  - Recursive includes are ignored as there's no way to explicitly prevent it
-  - Pasted during lexing as a series of tokens
+- Preprocessor directives
+  - `#error`, `#warning`, `#pragma` and `#line` not supported
+  - `__STDC_HOSTED__` - `1`
+  - `__STDC_NO_ATOMICS__`
+  - `__STDC_NO_COMPLEX__`
+  - `__STDC_NO_THREADS__`
+  - `__STDC_NO_VLA__`
+  - `__JITC__`
+  - `__x86_64__` - Defined only on x86_64 architectures
+  - `__aarch64__` - Defined only on aarch64 architectures
+  - `_WIN32` - Defined only on Windows
+  - `__APPLE__` - Defined only on macOS
+  - `__linux__` - Defined only on Linux
+  - `__unix__` - Defined only on macOS and Linux
+  - `__LINE__` - Current line number
+  - `__FILE__` - Current file (string literal)
+  - `__FUNCTION__` - Current function (string literal)
+    - `__func__` unsupported
+  - `__DATE__` - Compilation date
+  - `__TIME__` - Compilation time
+  - `__VA_ARGS__` - Set of varargs
+  - `__VA_OPT__` - Expands to parameter if there are any varargs
+  - `__COUNTER__` - Expands to a value of counter, then increments it
+  - `__COUNTER_NOINC__` - Expands to a value of counter, but doesn't increment it
+  - Includes and defines pasted during lexing as a series of tokens
 
 Explicitly unsupported features
 
@@ -124,8 +153,7 @@ Explicitly unsupported features
 - Bitfields
 - Variable shadowing
 - Wide strings/characters
-- All preprocessor directives besides `#include`
-  - `#define`, `#undef`, `#ifdef`, `#ifndef`, `#else`, `#if`, `#elif`, `#elifdef`, `#elifndef`, `#endif`, `#error`, `#warning`, `#embed`, `#pragma`, `#line`
+- `#error`, `#warning`, `#pragma` and `#line`
 - Attributes
   - Both GNU `__attribute__` and C23 `[[attribute]]`
 - All underscore-prefixed keywords
