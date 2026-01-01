@@ -363,8 +363,11 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 if      (try_parse_int(state.buffer, &token->value.integer,  &token->flags)) token->type = TOKEN_INTEGER;
                 else if (try_parse_flt(state.buffer, &token->value.floating, &token->flags)) token->type = TOKEN_FLOAT;
                 else {
+                    char last = str_data(state.buffer)[str_length(state.buffer) - 1];
                     if (is_numeric(str_data(state.buffer)[0]) || str_data(state.buffer)[0] == '.')
                         { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid number")); goto error; }
+                    if (last == '+' || last == '-') str_data(state.buffer)[str_length(state.buffer) - 1] = 0;
+                    else last = 0;
                     token->type = TOKEN_IDENTIFIER;
                     for (int i = 0; i < num_token_table_entries; i++) {
                         if (!token_table[i]) continue;
@@ -382,7 +385,11 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                                     curr_token->value.string = append_string(context, buf);
                                     curr_token = NULL;
                                 }
-                                if (!curr_token) curr_token = mktoken(tokens, TOKEN_DOT, file, state.row, state.col + i);
+                                if (!curr_token) curr_token = mktoken(tokens, (jitc_token_type_t[]){
+                                    ['.'] = TOKEN_DOT,
+                                    ['-'] = TOKEN_MINUS,
+                                    ['+'] = TOKEN_PLUS,
+                                }[str_data(state.buffer)[i]], file, state.row, state.col + i);
                                 curr_token = NULL;
                                 ptr = 0;
                                 continue;
@@ -396,6 +403,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                             curr_token = NULL;
                         }
                     }
+                    if (last) ptr--;
                 }
                 state.parse_state = Idle;
                 no_increment = true;

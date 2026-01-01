@@ -1,0 +1,1 @@
+gcc $(find . -maxdepth 1 -name "*.c" ! -name "main.c") -o libjitc.so -lm -g -fPIC -shared

@@ -1,5 +1,7 @@
 #include "../jitc_internal.h"
 
+#include "unix.c"
+
 static void jitc_asm_pushi(bytewriter_t* writer, uint64_t value, jitc_type_kind_t kind, bool is_unsigned) { printf("pushi\n"); }
 static void jitc_asm_pushf(bytewriter_t* writer, float value) { printf("pushf\n"); }
 static void jitc_asm_pushd(bytewriter_t* writer, double value) { printf("pushd\n"); }
@@ -43,8 +45,12 @@ static void jitc_asm_gte(bytewriter_t* writer) { printf("gte\n"); }
 static void jitc_asm_swp(bytewriter_t* writer) { printf("swp\n"); }
 static void jitc_asm_rval(bytewriter_t* writer) { printf("rval\n"); }
 static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { printf("cvt\n"); }
+static void jitc_asm_type(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { printf("type\n"); }
 static void jitc_asm_stackalloc(bytewriter_t* writer, uint32_t bytes) { printf("stackalloc\n"); }
 static void jitc_asm_offset(bytewriter_t* writer, int32_t off) { printf("offset\n"); }
+static void jitc_asm_mul2(bytewriter_t* writer) { printf("mul2\n"); }
+static void jitc_asm_mul4(bytewriter_t* writer) { printf("mul4\n"); }
+static void jitc_asm_mul8(bytewriter_t* writer) { printf("mul8\n"); }
 static void jitc_asm_if(bytewriter_t* writer, bool loop) { printf("if\n"); }
 static void jitc_asm_then(bytewriter_t* writer) { printf("then\n"); }
 static void jitc_asm_else(bytewriter_t* writer) { printf("else\n"); }

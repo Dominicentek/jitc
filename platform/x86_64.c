@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdarg.h>
 
+//#define DEBUG
+
 typedef enum: uint8_t {
     rax, rcx, rdx, rbx,
     rsp, rbp, rsi, rdi,
@@ -73,6 +75,7 @@ typedef enum: uint16_t {
     prefix_f3 = (1 << 6),
     twobyte = (1 << 7),
     flip_modrm = (1 << 8),
+    no_rax = (1 << 9),
 
     modrm_op2 = modrm_op2_mask | has_modrm,
 } instr_flags_t;
@@ -155,12 +158,12 @@ static instr_t instructions[] = {
     { sub, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b101 },
     { sub, 0x5C, prefix_f3 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
     { sub, 0x5C, prefix_f2 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
-    { imul, 0xF6, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b101 },
-    { imul, 0xF7, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b101 },
+    { imul, 0xF6, modrm_op2 | no_rax, { C_REG | C_MEM | C__S8 }, 0b101 },
+    { imul, 0xF7, modrm_op2 | no_rax, { C_REG | C_MEM | C_NO8 }, 0b101 },
     { imul, 0x59, prefix_f3 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
     { imul, 0x59, prefix_f2 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
-    { idiv, 0xF6, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b111 },
-    { idiv, 0xF7, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b111 },
+    { idiv, 0xF6, modrm_op2 | no_rax, { C_REG | C_MEM | C__S8 }, 0b111 },
+    { idiv, 0xF7, modrm_op2 | no_rax, { C_REG | C_MEM | C_NO8 }, 0b111 },
     { idiv, 0x5E, prefix_f3 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
     { idiv, 0x5E, prefix_f2 | has_modrm | twobyte | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
     { and, 0x20, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
@@ -195,6 +198,8 @@ static instr_t instructions[] = {
     { cmp, 0x2E, has_modrm | twobyte | force_size | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
     { shl, 0xD2, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b100 },
     { shl, 0xD3, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b100 },
+    { shl, 0xC0, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b100 },
+    { shl, 0xC1, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b100 },
     { shr, 0xD2, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b101 },
     { shr, 0xD3, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b101 },
     { sar, 0xC0, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b111 },
@@ -203,12 +208,12 @@ static instr_t instructions[] = {
     { not, 0xF7, has_modrm, { C_REG | C_MEM | C_NO8 }, 0b010 },
     { neg, 0xF6, has_modrm, { C_REG | C_MEM | C__S8 }, 0b011 },
     { neg, 0xF7, has_modrm, { C_REG | C_MEM | C_NO8 }, 0b011 },
-    { sete,  0x94, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b000 },
-    { setne, 0x95, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b000 },
-    { setl,  0x9C, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b000 },
-    { setle, 0x9E, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b000 },
-    { setg,  0x9F, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b000 },
-    { setge, 0x9D, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { sete,  0x94, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { setne, 0x95, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { setl,  0x9C, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { setle, 0x9E, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { setg,  0x9F, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { setge, 0x9D, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
     { jmp, 0xE9, 0, { C_IMM | C_S32 }},
     { jz, 0x84, twobyte, { C_IMM | C_S32 }},
     { opc_push, 0x50, modrm_opc, { C_REG | C_S64 }},
@@ -243,7 +248,7 @@ static bool isflt(jitc_type_kind_t kind) {
 }
 
 static void correct_kind(jitc_type_kind_t* kind, bool* is_unsigned) {
-    if (*kind > Type_Pointer) *kind = Type_Pointer;
+    if (*kind > Type_Pointer && *kind != Type_Struct && *kind != Type_Union) *kind = Type_Pointer;
     if (*kind == Type_Pointer) *is_unsigned = true;
     if (isflt(*kind)) *is_unsigned = false;
 }
@@ -276,6 +281,9 @@ static stack_item_t* push(bytewriter_t* writer, stack_item_type_t type, jitc_typ
         }
         (*index)++;
     }
+#ifdef DEBUG
+    printf("PUSH %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[type], opstack_size, opstack_int_index, opstack_float_index);
+#endif
     return item;
 }
 
@@ -302,6 +310,9 @@ static stack_item_t pop(bytewriter_t* writer) {
         if (item->extra_storage != 0) stack_free(writer, item->extra_storage);
     }
     opstack_size--;
+#ifdef DEBUG
+    printf("POP  %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[item->type], opstack_size, opstack_int_index, opstack_float_index);
+#endif
     return *item;
 }
 
@@ -330,7 +341,7 @@ static operand_t op(stack_item_t* item) {
             .kind = item->kind,
             .is_unsigned = item->is_unsigned,
             .reg = rbp,
-            .disp = -item->offset
+            .disp = item->offset
         };
         case StackItem_lvalue_abs: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
@@ -450,7 +461,7 @@ static bool legalize(legalization_t* legalization, operand_t op, instr_constrain
 
 static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization_t* legalization, operand_t* ops, int num_ops) {
     int curr_op = num_ops - 1;
-    reg_t int_tmp = rax;
+    reg_t int_tmp = instr->flags & no_rax ? rcx : rax;
     reg_t flt_tmp = xmm15;
     operand_t writeback;
     bool tmp_used = false;
@@ -544,6 +555,17 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
 }
 
 static void emit(bytewriter_t* writer, mnemonic_t mnemonic, int num_ops, ...) {
+#ifdef DEBUG
+    printf("emitting %s\n", (const char*[]){
+        "mov", "movzx", "movsx", "lea",
+        "add", "sub", "imul", "idiv", "and", "or", "xor", "cmp",
+        "shl", "shr", "sar", "not", "neg", "jmp", "jz", "call", "leave", "ret",
+        "sete", "setne", "setl", "setle", "setg", "setge",
+        "cbw", "cwd", "cdq", "cqo", "opc_push", "opc_pop",
+        "rep_movsb", "rep_movsw", "rep_movsd", "rep_movsq",
+        "cvtsi2ss", "cvtsi2sd", "cvttss2si", "cvttsd2si", "cvtss2sd", "cvtsd2ss"
+    }[mnemonic]);
+#endif
     legalization_t candidates[sizeof(instructions) / sizeof(instr_t)] = {};
     operand_t ops[num_ops];
     int min_cost = 12;
@@ -596,9 +618,10 @@ static void binaryop(bytewriter_t* writer, mnemonic_t mnemonic) {
     stack_item_t op1 = pop(writer);
     stack_item_t* res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
     stack_item_t* writeback = NULL;
-    if (op1.type == StackItem_literal) {
+    if (op1.type != StackItem_rvalue) {
         if (op2.type == StackItem_rvalue || op2.type == StackItem_lvalue_abs) {
             writeback = res;
+            push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
             res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
         }
         emit(writer, mov, 2, op(res), op(&op1));
@@ -607,15 +630,16 @@ static void binaryop(bytewriter_t* writer, mnemonic_t mnemonic) {
     if (writeback) {
         emit(writer, mov, 2, op(writeback), op(res));
         pop(writer);
+        pop(writer);
     }
 }
 
 static void unaryop(bytewriter_t* writer, mnemonic_t mnemonic, bool flip) {
     stack_item_t op1 = pop(writer);
     stack_item_t* res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
-    if (flip) emit(writer, mnemonic, 2, op(res), op(&op1));
+    if (flip) emit(writer, mov, 2, op(res), op(&op1));
     emit(writer, mnemonic, 1, op(&op1));
-    if (!flip) emit(writer, mnemonic, 2, op(res), op(&op1));
+    if (!flip) emit(writer, mov, 2, op(res), op(&op1));
 }
 
 static void copy(bytewriter_t* writer, operand_t dst, operand_t src, uint64_t size, uint64_t alignment) {
@@ -728,11 +752,12 @@ static void jitc_asm_laddr(bytewriter_t* writer, void* ptr, jitc_type_kind_t kin
 
 static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) {
     stack_item_t* item = push(writer, StackItem_lvalue, kind, is_unsigned);
-    item->offset = offset;
+    item->offset = -offset;
 }
 
 static void jitc_asm_store(bytewriter_t* writer) {
     emit(writer, mov, 2, op(peek(1)), op(peek(0)));
+    pop(writer);
 }
 
 static void jitc_asm_copy(bytewriter_t* writer, uint64_t size, uint64_t alignment) {
@@ -978,6 +1003,12 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
     }
 }
 
+static void jitc_asm_type(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) {
+    correct_kind(&kind, &is_unsigned);
+    peek(0)->kind = kind;
+    peek(0)->is_unsigned = is_unsigned;
+}
+
 static stack_item_t* jitc_asm_stackalloc(bytewriter_t* writer, uint32_t bytes) {
     if (bytes % 8 != 0) bytes += 8 - (bytes % 8);
     stack_sub(writer, bytes);
@@ -1017,8 +1048,8 @@ static void push_branch(bytewriter_t* writer, bool loop) {
     branch_t* branch = malloc(sizeof(branch_t));
     branch->end_stack = stack_new();
     branch->is_loop = loop;
-    if (loop) branch->branch_start = stack_size(branches) == 0 ? 0 : ((branch_t*)stack_peek_ptr(branches))->branch_start;
-    else branch->branch_start = bytewriter_size(writer);
+    if (loop) branch->branch_start = bytewriter_size(writer);
+    else branch->branch_start = stack_size(branches) == 0 ? 0 : ((branch_t*)stack_peek_ptr(branches))->branch_start;
     stack_push_ptr(branches, branch);
 }
 
@@ -1052,13 +1083,28 @@ static void jitc_asm_offset(bytewriter_t* writer, int32_t off) {
     peek(0)->offset += off;
 }
 
+static void jitc_asm_mul2(bytewriter_t* writer) {
+    if (peek(0)->type == StackItem_literal || peek(0)->type == StackItem_lvalue) jitc_asm_rval(writer);
+    emit(writer, shl, 2, op(peek(0)), imm(1, Type_Int8, true));
+}
+
+static void jitc_asm_mul4(bytewriter_t* writer) {
+    if (peek(0)->type == StackItem_literal || peek(0)->type == StackItem_lvalue) jitc_asm_rval(writer);
+    emit(writer, shl, 2, op(peek(0)), imm(2, Type_Int8, true));
+}
+
+static void jitc_asm_mul8(bytewriter_t* writer) {
+    if (peek(0)->type == StackItem_literal || peek(0)->type == StackItem_lvalue) jitc_asm_rval(writer);
+    emit(writer, shl, 2, op(peek(0)), imm(3, Type_Int8, true));
+}
+
 static void jitc_asm_if(bytewriter_t* writer, bool loop) {
     push_branch(writer, loop);
 }
 
 static void jitc_asm_then(bytewriter_t* writer) {
     stack_item_t item = pop(writer);
-    emit(writer, cmp, 2, op(&item), op(&item));
+    emit(writer, cmp, 2, op(&item), imm(0, item.kind, item.is_unsigned));
     emit(writer, jz, 1, imm(0, Type_Int32, true));
     set_jump(writer);
 }
@@ -1076,7 +1122,8 @@ static void jitc_asm_end(bytewriter_t* writer) {
 
 static void jitc_asm_goto_start(bytewriter_t* writer) {
     branch_t* branch = stack_peek_ptr(branches);
-    emit(writer, jmp, 1, imm(branch->branch_start - bytewriter_size(writer) - 5, Type_Int32, false));
+    emit(writer, jmp, 1, imm(0, Type_Int32, false));
+    ((int32_t*)(bytewriter_data(writer) + bytewriter_size(writer)))[-1] = branch->branch_start - bytewriter_size(writer);
 }
 
 static void jitc_asm_goto_end(bytewriter_t* writer) {

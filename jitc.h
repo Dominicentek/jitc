@@ -17,6 +17,6 @@ jitc_error_t* jitc_parse_file(jitc_context_t* context, const char* filename);
 void* jitc_get(jitc_context_t* context, const char* name);
 void jitc_destroy_context(jitc_context_t* context);
 
-void jitc_report_errors(jitc_error_t* error, FILE* stream);
+void jitc_report_error(jitc_error_t* error, FILE* stream);
 
 #endif

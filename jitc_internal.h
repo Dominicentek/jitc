@@ -219,13 +219,13 @@ struct jitc_ast_t {
             jitc_ast_t* expr;
         } ret;
         struct {
+            uint64_t value;
             jitc_type_kind_t type_kind;
             bool is_unsigned;
-            uint64_t value;
         } integer;
         struct {
-            bool is_single_precision;
             double value;
+            bool is_single_precision;
         } floating;
         struct {
             const char* ptr;
@@ -420,7 +420,6 @@ jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const ch
 jitc_error_t* jitc_error_parser(jitc_token_t* token, const char* str, ...);
 void jitc_error_set(jitc_context_t* context, jitc_error_t* error);
 
-void jitc_report_error(jitc_error_t* error, FILE* file);
 void jitc_free_error(jitc_error_t* error);
 
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);

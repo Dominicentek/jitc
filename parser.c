@@ -499,9 +499,9 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             jitc_type_t* type;
             node->walk_struct.struct_ptr = try(jitc_process_ast(context, node->walk_struct.struct_ptr, &type));
             if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) {
-                jitc_type_t* resolved = jitc_get_tagged_type(context, type->ptr.base->kind, type->ptr.base->ref.name);
+                jitc_type_t* resolved = jitc_get_tagged_type(context, type->kind, type->ref.name);
                 if (!resolved) ERROR(node->token, "Cannot access an incomplete struct");
-                node->walk_struct.struct_ptr->exprtype = resolved;
+                type = node->walk_struct.struct_ptr->exprtype = resolved;
             }
             if (!is_struct(type)) ERROR(node->token, "Not a struct type");
             if (!jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset))
@@ -517,7 +517,9 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
                 if (node->unary.operation == Unary_AddressOf) {
                     if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_Dereference) {
-                        replace(node) = replace(node->unary.inner) = node->unary.inner->unary.inner;
+                        jitc_ast_t* tmp = node->unary.inner->unary.inner;
+                        replace(node->unary.inner) = tmp;
+                        replace(node) = tmp;
                         break;
                     }
                     else node->exprtype = jitc_typecache_pointer(context, node->exprtype);
@@ -531,8 +533,11 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 break;
             case Unary_Dereference:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
-                if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_AddressOf)
-                    replace(node) = replace(node->unary.inner) = node->unary.inner->unary.inner;
+                if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_AddressOf) {
+                    jitc_ast_t* tmp = node->unary.inner->unary.inner;
+                    replace(node->unary.inner) = tmp;
+                    replace(node) = tmp;
+                }
                 else {
                     if (!is_pointer(node->exprtype)) ERROR(node->token, "Operand must be a pointer type");
                     if (is_function(node->exprtype)) ERROR(node->token, "Cannot dereference a function");
@@ -556,8 +561,11 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                         inner->floating.value = -inner->floating.value;
                         replace(node) = inner;
                     }
-                    else if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_ArithNegate)
-                        replace(node) = replace(node->unary.inner) = node->unary.inner->unary.inner;
+                    else if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_ArithNegate) {
+                        jitc_ast_t* tmp = node->unary.inner->unary.inner;
+                        replace(node->unary.inner) = tmp;
+                        replace(node) = tmp;
+                    }
                 }
                 break;
             case Unary_BinaryNegate:
@@ -568,16 +576,23 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                     inner->integer.value = ~inner->integer.value;
                     replace(node) = inner;
                 }
-                else if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_BinaryNegate)
-                    replace(node) = replace(node->unary.inner) = node->unary.inner->unary.inner;
+                else if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_BinaryNegate) {
+                    jitc_ast_t* tmp = node->unary.inner->unary.inner;
+                    replace(node->unary.inner) = tmp;
+                    replace(node) = tmp;
+                }
                 break;
             case Unary_LogicNegate:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
                 if (is_struct(node->exprtype)) ERROR(node->token, "Negating a non-scalar type");
                 if (node->unary.inner->node_type == AST_Unary && node->unary.inner->unary.operation == Unary_LogicNegate) {
                     jitc_ast_t* inner = node->unary.inner;
-                    if (inner->unary.inner->node_type == AST_Unary && inner->unary.inner->unary.operation == Unary_LogicNegate)
-                        replace(node->unary.inner) = replace(inner->unary.inner) = replace(inner->unary.inner->unary.inner);
+                    if (inner->unary.inner->node_type == AST_Unary && inner->unary.inner->unary.operation == Unary_LogicNegate) {
+                        jitc_ast_t* tmp = inner->unary.inner->unary.inner;
+                        replace(inner->unary.inner) = tmp;
+                        replace(node->unary.inner) = tmp;
+                        replace(node) = tmp;
+                    }
                 }
                 if (is_constant(node->unary.inner)) {
                     jitc_ast_t* inner = node->unary.inner;
@@ -598,9 +613,11 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
         case AST_Binary: switch (node->binary.operation) {
             case Binary_CompoundExpr: break;
             case Binary_Cast: {
+                jitc_ast_t* left = node->binary.left;
+                jitc_ast_t* right = node->binary.right;
                 replace(node) = try(jitc_cast(context,
-                    try(jitc_process_ast(context, node->binary.left, NULL)),
-                    node->binary.right->type.type, true, node->binary.right->token
+                    try(jitc_process_ast(context, left, NULL)),
+                    right->type.type, true, right->token
                 ));
             } break;
             case Binary_FunctionCall: {
@@ -783,7 +800,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
         case AST_Branch: {
             node->ternary.when = try(jitc_process_ast(context, node->ternary.when, NULL));
             node->ternary.then = try(jitc_process_ast(context, node->ternary.then, NULL));
-            node->ternary.otherwise = try(jitc_process_ast(context, node->ternary.otherwise, NULL));
+            node->ternary.otherwise = node->ternary.otherwise ? try(jitc_process_ast(context, node->ternary.otherwise, NULL)) : NULL;
             if (is_struct(node->ternary.when->exprtype)) ERROR(node->token, "Condition must be a scalar value");
             if (is_constant(node->ternary.when)) {
                 bool cond = is_decayed_pointer(node->ternary.when->exprtype) ? 1 : node->ternary.when->node_type == AST_Floating
@@ -1032,52 +1049,6 @@ static struct {
     [TOKEN_COMMA]                      = { false, 1,  Binary_Comma },
 };
 
-/*jitc_ast_t* jitc_shunting_yard(jitc_context_t* context, list_t* expr) {
-    #define reduce() { \
-        jitc_token_t* op = stack_pop_ptr(op_stack); \
-        jitc_ast_t* node  = mknode(AST_Binary, op); \
-        node->binary.right = stack_pop_ptr(node_stack); \
-        node->binary.left = stack_pop_ptr(node_stack); \
-        node->binary.operation = op_info[op->type].type; \
-        stack_push_ptr(node_stack, node); \
-    }
-    smartptr(stack_t) op_stack = stack_new();
-    smartptr(stack_t) node_stack = stack_new();
-    for (int i = 0; i < list_size(expr); i++) {
-        if (i % 2 == 0) {
-            stack_push_ptr(node_stack, list_get_ptr(expr, i));
-            continue;
-        }
-        jitc_token_t* op = list_get_ptr(expr, i);
-        while (stack_size(op_stack) > 0) {
-            jitc_token_t* top = stack_peek_ptr(op_stack);
-            int top_precedence = op_info[top->type].precedence;
-            int cur_precedence = op_info[ op->type].precedence;
-            bool rtl_associativity = op_info[op->type].rtl_assoc;
-            if (( rtl_associativity && top_precedence <= cur_precedence) ||
-                (!rtl_associativity && top_precedence <  cur_precedence)
-            ) break;
-            reduce();
-        }
-        stack_push_ptr(op_stack, op);
-    }
-    while (stack_size(op_stack) > 0) reduce();
-    return stack_pop_ptr(node_stack);
-}
-
-jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, bool comma_allowed, jitc_type_t** exprtype) {
-    smartptr(list_t) expr = list_new();
-    while (true) {
-        jitc_ast_t* operand = try(jitc_parse_expression_operand(context, tokens));
-        jitc_token_t* token = queue_peek_ptr(tokens);
-        list_add_ptr(expr, operand);
-        if (op_info[token->type].precedence == 0) break;
-        if (!comma_allowed && token->type == TOKEN_COMMA) break;
-        list_add_ptr(expr, queue_pop_ptr(tokens));
-    }
-    return jitc_process_ast(context, jitc_shunting_yard(context, expr), exprtype);
-}*/
-
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int min_prec, jitc_type_t** exprtype) {
     smartptr(jitc_ast_t) left = try(jitc_parse_expression_operand(context, tokens));
     while (true) {
@@ -1152,13 +1123,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         smartptr(jitc_ast_t) node = mknode(AST_Scope, token);
         smartptr(jitc_ast_t) loop = mknode(AST_Loop, token);
         smartptr(jitc_ast_t) scope = mknode(AST_Scope, token);
-        if (!jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) ERROR(NEXT_TOKEN, "Expected '{'");
-        jitc_push_scope(context);
-        while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
-            if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
-            list_add_ptr(scope->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression)));
-        }
-        jitc_pop_scope(context);
+        list_add_ptr(scope->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression)));
         if (!jitc_token_expect(tokens, TOKEN_while)) ERROR(NEXT_TOKEN, "Expected 'while'");
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN))  ERROR(NEXT_TOKEN, "Expected '('");
         smartptr(jitc_ast_t) condition = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
@@ -1179,9 +1144,9 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         smartptr(jitc_ast_t) node = mknode(AST_Scope, token);
         smartptr(jitc_ast_t) loop = mknode(AST_Loop, token);
         smartptr(jitc_ast_t) body = mknode(AST_List, token);
-        smartptr(jitc_ast_t) init;
-        smartptr(jitc_ast_t) cond;
-        smartptr(jitc_ast_t) expr;
+        smartptr(jitc_ast_t) init = NULL;
+        smartptr(jitc_ast_t) cond = NULL;
+        smartptr(jitc_ast_t) expr = NULL;
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) ERROR(NEXT_TOKEN, "Expected '('");
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON))
             init = try(jitc_parse_statement(context, tokens, ParseType_Expression | ParseType_Declaration));
@@ -1306,6 +1271,9 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             ERROR(NEXT_TOKEN, "Expected ',' or ';'");
         }
         return move(list);
+    }
+    if ((token = jitc_token_expect(tokens, TOKEN_SEMICOLON))) {
+        return mknode(AST_List, token);
     }
     if (allowed & ParseType_Expression) {
         smartptr(jitc_ast_t) node = try(jitc_parse_expression(context, tokens, true, NULL));

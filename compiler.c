@@ -155,6 +155,7 @@ static size_t get_stack_size(map_t* variable_map, jitc_ast_t* ast) {
 }
 
 static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map) {
+    if (!ast) return false;
     size_t step = 1;
     switch (ast->node_type) {
         case AST_Unary: switch(ast->unary.operation) {
@@ -162,7 +163,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
             case Unary_ArithNegate: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_neg(writer); break;
             case Unary_LogicNegate: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_zero(writer); break;
             case Unary_BinaryNegate: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_not(writer); break;
-            case Unary_Dereference: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_load(writer, ast->exprtype->kind, ast->exprtype->is_unsigned); break;
+            case Unary_Dereference: assemble(writer, ast->unary.inner, variable_map); promote(writer, ast->unary.inner); jitc_asm_load(writer, type(ast->exprtype)); break;
             case Unary_AddressOf: assemble(writer, ast->unary.inner, variable_map); jitc_asm_addrof(writer); break;
             case Unary_PtrPrefixIncrement: case Unary_PtrPrefixDecrement: case Unary_PtrSuffixIncrement: case Unary_PtrSuffixDecrement:
                 step = ast->exprtype->ptr.base->kind == Type_Function ? 1 : ast->exprtype->ptr.base->size;
@@ -247,15 +248,14 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
                     case Binary_AssignPtrAddition:
                     case Binary_AssignPtrSubtraction: {
                         size_t size = ast->exprtype->ptr.base->kind == Type_Function ? 1 : ast->exprtype->ptr.base->size;
-                        if (size != 1) {
-                            jitc_asm_pushi(writer, size, ast->binary.right->exprtype->kind, ast->binary.right->exprtype->is_unsigned);
-                            jitc_asm_mul(writer);
-                        }
+                        if (size == 2) jitc_asm_mul2(writer);
+                        if (size == 4) jitc_asm_mul4(writer);
+                        if (size == 8) jitc_asm_mul8(writer);
                         (void(*[])(bytewriter_t*)){
-                            jitc_asm_add,
-                            jitc_asm_sub,
-                            jitc_asm_sadd,
-                            jitc_asm_ssub,
+                            [Binary_PtrAddition] = jitc_asm_add,
+                            [Binary_PtrSubtraction] = jitc_asm_sub,
+                            [Binary_AssignPtrAddition] = jitc_asm_sadd,
+                            [Binary_AssignPtrSubtraction] = jitc_asm_ssub,
                         }[ast->binary.operation](writer);
                     }
                     default: break;
@@ -313,10 +313,8 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
             jitc_asm_ret(writer);
             return false;
         case AST_Integer:
-            jitc_asm_pushi(writer, ast->integer.value, ast->exprtype->kind, ast->exprtype->is_unsigned);
-            return true;
         case AST_StringLit:
-            jitc_asm_pushi(writer, (uint64_t)ast->string.ptr, ast->exprtype->kind, ast->exprtype->is_unsigned);
+            jitc_asm_pushi(writer, ast->integer.value, type(ast->exprtype));
             return true;
         case AST_Floating:
             if (ast->floating.is_single_precision) jitc_asm_pushf(writer, ast->floating.value);
@@ -332,6 +330,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
             return true;
         case AST_WalkStruct:
             assemble(writer, ast->walk_struct.struct_ptr, variable_map);
+            jitc_asm_type(writer, type(ast->exprtype));
             jitc_asm_offset(writer, ast->walk_struct.offset);
             break;
         default: break;
@@ -348,6 +347,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
         case AST_Function: {
             smartptr(bytewriter_t) writer = bytewriter_new();
             smartptr(map_t) variable_map = map_new(compare_int64);
+            bytewriter_int32(writer, 0);
             bool is_return = false;
             jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
             for (size_t i = 0; i < map_size(global_scope->variables); i++) {
@@ -357,7 +357,8 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 stackvar_t* stackvar = malloc(sizeof(stackvar_t));
                 stackvar->is_global = stackvar->is_leaf = true;
                 stackvar->var.type = var->type;
-                if (var->decltype == Decltype_Extern) stackvar->var.ptr = (void*)var->value;
+                if (var->decltype == Decltype_Extern || var->type->kind == Type_Function)
+                    stackvar->var.ptr = (void*)var->value;
                 else stackvar->var.ptr = &var->value;
                 map_get_ptr(variable_map, (char*)name);
                 map_store_ptr(variable_map, stackvar);
@@ -373,12 +374,8 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 jitc_asm_ret(writer);
             }
             jitc_asm_func_end(writer);
-            for (size_t i = 0; i < bytewriter_size(writer); i++) {
-                if (i != 0 && i % 16 == 0) printf("\n");
-                printf("%02x ", bytewriter_data(writer)[i]);
-            }
-            printf("\n");
-            *(void**)jitc_get_or_static(context, ast->func.variable->name) = make_executable(context, bytewriter_data(writer), bytewriter_size(writer));
+            *(uint32_t*)bytewriter_data(writer) = bytewriter_size(writer) - 4;
+            *(void**)jitc_get_or_static(context, ast->func.variable->name) = (char*)make_executable(context, bytewriter_data(writer), bytewriter_size(writer)) + 4;
         } break;
         default: break;
     }

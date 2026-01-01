@@ -267,7 +267,7 @@ jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from) {
     if (from->kind != Type_Array && from->kind != Type_Function) return from;
     jitc_type_t type = {};
     type.kind = Type_Pointer;
-    type.ptr.base = from;
+    type.ptr.base = from->kind == Type_Array ? from->ptr.base : from;
     type.ptr.prev = from->kind;
     type.size = type.alignment = 8;
     type.hash = 0;
@@ -527,6 +527,5 @@ void jitc_destroy_context(jitc_context_t* context) {
     while (list_size(context->scopes) > 1) jitc_pop_scope(context);
     jitc_destroy_scope(list_get_ptr(context->scopes, 0));
     list_delete(context->scopes);
-    jitc_delete_memchunks(context);
     free(context);
 }
