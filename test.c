@@ -1,13 +1,13 @@
 #include "jitc.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <setjmp.h>
 #include <signal.h>
 
 const char* skipped_tests[256] = {
     [10] = "goto not supported",
     [21] = "function params not implemented yet",
-    [33] = "short circuiting not implemented yet"
 };
 
 jmp_buf buffer;
@@ -19,14 +19,18 @@ static void handle_segfault(int signal, siginfo_t* info, void* ptr) {
     longjmp(buffer, 0);
 }
 
-int main() {
+int main(int argc, char** argv) {
     struct sigaction sa = {};
     sigemptyset(&sa.sa_mask);
     sa.sa_flags     = SA_NODEFER;
     sa.sa_sigaction = handle_segfault;
     sigaction(SIGSEGV, &sa, NULL);
-    
+    int tests_to_run[argc - 1];
+    for (int i = 1; i < argc; i++) {
+        tests_to_run[i - 1] = atoi(argv[i]);
+    }
     for (int i = 1; i <= 220; i++) {
+        if (i != 33) continue;
         char path[256];
         sprintf(path, "c-testsuite/tests/single-exec/%05d.c", i);
         
@@ -69,10 +73,10 @@ int main() {
             uint32_t size = ((uint32_t*)main_func)[-1];
             printf("Machine code dump:\n");
             for (uint32_t i = 0; i < size; i++) {
-                if (i != 0 && i % 16 == 0) printf("\n");
-                printf("%02x ", ((uint8_t*)main_func)[i]);
+                if (i != 0 && i % 16 == 0) fprintf(stderr, "\n");
+                fprintf(stderr, "%02x ", ((uint8_t*)main_func)[i]);
             }
-            printf("\n");
+            fprintf(stderr, "\n");
         }
         jitc_destroy_context(context);
     }

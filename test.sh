@@ -1,1 +1,1 @@
-./compile.sh && gcc test.c -L. -ljitc -g -o jitc && ./jitc
+./compile.sh && gcc test.c -L. -ljitc -g -o jitc && ./jitc $1

@@ -44,6 +44,10 @@ static void jitc_asm_grt(bytewriter_t* writer) { printf("grt\n"); }
 static void jitc_asm_gte(bytewriter_t* writer) { printf("gte\n"); }
 static void jitc_asm_swp(bytewriter_t* writer) { printf("swp\n"); }
 static void jitc_asm_rval(bytewriter_t* writer) { printf("rval\n"); }
+static void jitc_asm_sc_begin(bytewriter_t* writer) { printf("sc_begin\n"); }
+static void jitc_asm_land(bytewriter_t* writer) { printf("land\n"); }
+static void jitc_asm_lor(bytewriter_t* writer) { printf("lor\n"); }
+static void jitc_asm_sc_end(bytewriter_t* writer) { printf("sc_end\n"); }
 static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { printf("cvt\n"); }
 static void jitc_asm_type(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { printf("type\n"); }
 static void jitc_asm_stackalloc(bytewriter_t* writer, uint32_t bytes) { printf("stackalloc\n"); }
