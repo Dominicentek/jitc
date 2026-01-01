@@ -648,8 +648,16 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->exprtype = jitc_type_promotion(context, node->binary.left->exprtype, node->binary.right->exprtype, true); \
                 if (can_be_ptr && is_pointer(node->exprtype)) { \
                     if (is_pointer(node->binary.right->exprtype)) { \
-                        if (node->binary.operation == Binary_Subtraction) \
-                            ERROR(node->token, "Pointer subtraction with pointer on RHS of expression"); \
+                        if (node->binary.operation == Binary_Subtraction) { \
+                            if (is_pointer(node->binary.left->exprtype)) { \
+                                if (node->binary.left->exprtype->ptr.base->size != node->binary.right->exprtype->ptr.base->size) \
+                                    ERROR(node->token, "Pointed-to objects have different sizes"); \
+                                node->binary.operation = Binary_PtrDiff; \
+                                node->exprtype = jitc_typecache_unsigned(context, jitc_typecache_primitive(context, Type_Int64)); \
+                                break; \
+                            } \
+                            else ERROR(node->token, "Pointer subtraction with pointer on RHS of expression"); \
+                        } \
                         jitc_ast_t* tmp = node->binary.left; \
                         node->binary.left = node->binary.right; \
                         node->binary.right = tmp; \
@@ -754,9 +762,17 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 if (is_decayed_pointer(node->unary.inner->exprtype)) ERROR(node->token, "Assigning to an object"); \
                 if (!(check)) ERROR(node->token, errmsg); \
                 if (is_pointer(node->binary.left->exprtype) && node->binary.operation != Binary_Assignment) { \
-                    if (!is_integer(node->binary.right->exprtype)) \
-                        ERROR(node->token, "Pointer arithmetic with a non-integer type"); \
-                    node->binary.operation += Binary_AssignPtrAddition - Binary_AssignAddition; \
+                    if (is_pointer(node->binary.right->exprtype) && node->binary.operation == Binary_AssignSubtraction) { \
+                        if (node->binary.left->exprtype->ptr.base->size != node->binary.right->exprtype->ptr.base->size) \
+                            ERROR(node->token, "Pointed-to objects have different sizes"); \
+                        node->binary.operation = Binary_AssignPtrDiff; \
+                        node->exprtype = jitc_typecache_unsigned(context, jitc_typecache_primitive(context, Type_Int64)); \
+                    } \
+                    else { \
+                        if (!is_integer(node->binary.right->exprtype)) \
+                            ERROR(node->token, "Pointer arithmetic with a non-integer type"); \
+                        node->binary.operation += Binary_AssignPtrAddition - Binary_AssignAddition; \
+                    } \
                 } \
                 else node->binary.right = try(jitc_cast(context, node->binary.right, node->exprtype, false, node->token)); \
                 break

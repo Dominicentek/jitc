@@ -48,9 +48,7 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
 static void jitc_asm_type(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { printf("type\n"); }
 static void jitc_asm_stackalloc(bytewriter_t* writer, uint32_t bytes) { printf("stackalloc\n"); }
 static void jitc_asm_offset(bytewriter_t* writer, int32_t off) { printf("offset\n"); }
-static void jitc_asm_mul2(bytewriter_t* writer) { printf("mul2\n"); }
-static void jitc_asm_mul4(bytewriter_t* writer) { printf("mul4\n"); }
-static void jitc_asm_mul8(bytewriter_t* writer) { printf("mul8\n"); }
+static void jitc_asm_normalize(bytewriter_t* writer, int32_t size) { printf("normalize\n"); }
 static void jitc_asm_if(bytewriter_t* writer, bool loop) { printf("if\n"); }
 static void jitc_asm_then(bytewriter_t* writer) { printf("then\n"); }
 static void jitc_asm_else(bytewriter_t* writer) { printf("else\n"); }

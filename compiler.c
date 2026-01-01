@@ -248,16 +248,24 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map)
                     case Binary_AssignPtrAddition:
                     case Binary_AssignPtrSubtraction: {
                         size_t size = ast->exprtype->ptr.base->kind == Type_Function ? 1 : ast->exprtype->ptr.base->size;
-                        if (size == 2) jitc_asm_mul2(writer);
-                        if (size == 4) jitc_asm_mul4(writer);
-                        if (size == 8) jitc_asm_mul8(writer);
+                        jitc_asm_normalize(writer, size);
                         (void(*[])(bytewriter_t*)){
                             [Binary_PtrAddition] = jitc_asm_add,
                             [Binary_PtrSubtraction] = jitc_asm_sub,
                             [Binary_AssignPtrAddition] = jitc_asm_sadd,
                             [Binary_AssignPtrSubtraction] = jitc_asm_ssub,
                         }[ast->binary.operation](writer);
-                    }
+                    } break;
+                    case Binary_PtrDiff:
+                    case Binary_AssignPtrDiff: {
+                        jitc_type_t* type = ast->binary.left->exprtype->ptr.base;
+                        size_t size = type->kind == Type_Function ? 1 : type->size;
+                        (void(*[])(bytewriter_t*)){
+                            [Binary_PtrDiff] = jitc_asm_sub,
+                            [Binary_AssignPtrDiff] = jitc_asm_ssub,
+                        }[ast->binary.operation](writer);
+                        jitc_asm_normalize(writer, -size);
+                    } break;
                     default: break;
                 }
             }

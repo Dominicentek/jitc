@@ -60,7 +60,7 @@ int main() {
         }
         if (!segfault && retval == 0) printf("PASSED\n");
         else {
-            if (!script_segfault) {
+            if (segfault && !script_segfault) {
                 printf("Outside of script\n");
                 continue;
             }

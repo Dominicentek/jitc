@@ -202,12 +202,14 @@ static instr_t instructions[] = {
     { shl, 0xC1, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b100 },
     { shr, 0xD2, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b101 },
     { shr, 0xD3, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b101 },
+    { shr, 0xC0, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b101 },
+    { shr, 0xC1, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b101 },
     { sar, 0xC0, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b111 },
     { sar, 0xC1, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b111 },
-    { not, 0xF6, has_modrm, { C_REG | C_MEM | C__S8 }, 0b010 },
-    { not, 0xF7, has_modrm, { C_REG | C_MEM | C_NO8 }, 0b010 },
-    { neg, 0xF6, has_modrm, { C_REG | C_MEM | C__S8 }, 0b011 },
-    { neg, 0xF7, has_modrm, { C_REG | C_MEM | C_NO8 }, 0b011 },
+    { not, 0xF6, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b010 },
+    { not, 0xF7, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b010 },
+    { neg, 0xF6, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b011 },
+    { neg, 0xF7, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b011 },
     { sete,  0x94, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
     { setne, 0x95, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
     { setl,  0x9C, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
@@ -699,7 +701,7 @@ static void bitshift(bytewriter_t* writer, bool store, bool is_right) {
         if (op1.type != StackItem_rvalue) emit(writer, mov, 2, op(res), op(&op1));
     }
     emit(writer, mov, 2, reg(rcx, op2.kind, op2.is_unsigned), op(&op2));
-    emit(writer, is_right, 1 ? shr : shl, op(res));
+    emit(writer, 1 ? shr : shl, 1, op(res));
 }
 
 static void compare(bytewriter_t* writer, mnemonic_t mnemonic) {
@@ -1083,19 +1085,14 @@ static void jitc_asm_offset(bytewriter_t* writer, int32_t off) {
     peek(0)->offset += off;
 }
 
-static void jitc_asm_mul2(bytewriter_t* writer) {
+static void jitc_asm_normalize(bytewriter_t* writer, int32_t size) {
     if (peek(0)->type == StackItem_literal || peek(0)->type == StackItem_lvalue) jitc_asm_rval(writer);
-    emit(writer, shl, 2, op(peek(0)), imm(1, Type_Int8, true));
-}
-
-static void jitc_asm_mul4(bytewriter_t* writer) {
-    if (peek(0)->type == StackItem_literal || peek(0)->type == StackItem_lvalue) jitc_asm_rval(writer);
-    emit(writer, shl, 2, op(peek(0)), imm(2, Type_Int8, true));
-}
-
-static void jitc_asm_mul8(bytewriter_t* writer) {
-    if (peek(0)->type == StackItem_literal || peek(0)->type == StackItem_lvalue) jitc_asm_rval(writer);
-    emit(writer, shl, 2, op(peek(0)), imm(3, Type_Int8, true));
+    if (size == 0) return;
+    mnemonic_t mnemonic = size < 0 ? shr : shl;
+    size = abs(size);
+    int amount = 0;
+    while (size >>= 1) amount++;
+    emit(writer, mnemonic, 2, op(peek(0)), imm(amount, Type_Int8, true));
 }
 
 static void jitc_asm_if(bytewriter_t* writer, bool loop) {
