@@ -1088,7 +1088,7 @@ jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int 
             left->exprtype = then_type;
             continue;
         }
-        jitc_ast_t* right = jitc_parse_expression(context, tokens, precedence + !op_info[token->type].rtl_assoc, NULL);
+        jitc_ast_t* right = try(jitc_parse_expression(context, tokens, precedence + !op_info[token->type].rtl_assoc, NULL));
         jitc_ast_t* node = mknode(AST_Binary, token);
         node->binary.operation = op_info[token->type].type;
         node->binary.left = move(left);
@@ -1121,7 +1121,9 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             node->ternary.otherwise = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
             jitc_pop_scope(context);
         }
-        return jitc_process_ast(context, move(node), NULL);
+        node = jitc_process_ast(context, move(node), NULL);
+        if (!node) return mknode(AST_List, token);
+        return move(node);
     }
     if ((token = jitc_token_expect(tokens, TOKEN_while))) {
         if (!(allowed & ParseType_Command)) ERROR(token, "'while' not allowed here");
@@ -1240,7 +1242,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 }
                 node->decl.symbol_ptr = symbol_ptr;
             }
-            if (node->decl.decltype != Decltype_Typedef && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
+            if (node->decl.decltype != Decltype_Typedef && type->name && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
                 ERROR(token, "Declaration of incomplete type");
             if (decltype != Decltype_Typedef) list_add_ptr(list->list.inner, move(node));
             if (!jitc_declare_variable(context, type, decltype, 0)) ERROR(token, "Symbol '%s' already declared", type->name);

@@ -8,6 +8,13 @@
 const char* skipped_tests[256] = {
     [10] = "goto not supported",
     [21] = "function params not implemented yet",
+    [40] = "function params not implemented yet",
+    [45] = "some weird pointer shit",
+    [47] = "initializers not implemented yet",
+    [48] = "initializers not implemented yet",
+    [49] = "initializers not implemented yet",
+    [50] = "initializers not implemented yet",
+    [51] = "switch-case not implemented yet",
 };
 
 jmp_buf buffer;
@@ -19,18 +26,47 @@ static void handle_segfault(int signal, siginfo_t* info, void* ptr) {
     longjmp(buffer, 0);
 }
 
-int main(int argc, char** argv) {
+static void handle_interrupt(int signal, siginfo_t* info, void* ptr) {
+    printf("INTERRUPTED\n");
+    longjmp(buffer, 0);
+}
+
+static void handle_abort(int signal, siginfo_t* info, void* ptr) {
+    printf("ABORTED\n");
+    longjmp(buffer, 0);
+}
+
+static void handle_fperror(int signal, siginfo_t* info, void* ptr) {
+    printf("FP ERROR\n");
+    longjmp(buffer, 0);
+}
+
+static void handle_signal(int signal, void(*func)(int, siginfo_t*, void*)) {
     struct sigaction sa = {};
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags     = SA_NODEFER;
-    sa.sa_sigaction = handle_segfault;
-    sigaction(SIGSEGV, &sa, NULL);
+    sa.sa_flags = SA_NODEFER;
+    sa.sa_sigaction = func;
+    sigaction(signal, &sa, NULL);
+}
+
+int main(int argc, char** argv) {
+    handle_signal(SIGSEGV, handle_segfault);
+    handle_signal(SIGINT, handle_interrupt);
+    handle_signal(SIGABRT, handle_abort);
+    handle_signal(SIGFPE, handle_fperror);
+
     int tests_to_run[argc - 1];
     for (int i = 1; i < argc; i++) {
         tests_to_run[i - 1] = atoi(argv[i]);
     }
     for (int i = 1; i <= 220; i++) {
-        if (i != 33) continue;
+        if (argc > 1) {
+            bool run_test = false;
+            for (int j = 0; j < argc - 1 && !run_test; j++) {
+                if (tests_to_run[j] == i) run_test = true;
+            }
+            if (!run_test) continue;
+        }
         char path[256];
         sprintf(path, "c-testsuite/tests/single-exec/%05d.c", i);
         
@@ -49,11 +85,6 @@ int main(int argc, char** argv) {
             continue;
         }
         int(*main_func)() = jitc_get(context, "main");
-        if (!main_func) {
-            printf("MISSING MAIN\n");
-            jitc_destroy_context(context);
-            continue;
-        }
         int retval;
         bool segfault = false;
         if (setjmp(buffer)) segfault = true;

@@ -16,7 +16,6 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 ## TODO
 
 - Parameters/varargs/returns in function prolog and epilog
-- Short circuiting
 - Switch statements
 - Initializers
 - Compound expressions
@@ -120,6 +119,9 @@ If a feature is not on this list, it's very likely not supported.
     - Fixed argument count must match
     - Empty parameter list is the same as `void`
 - Preprocessor directives
+  - `#define`, `#undef`, `#include`, `#embed`, `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#elifdef`, `#elifndef`, `#error`
+    - `defined` operator is supported, but `__has_include` is not
+    - `embed` has no parameters
   - `#error`, `#warning`, `#pragma` and `#line` not supported
   - `__STDC_HOSTED__` - `1`
   - `__STDC_NO_ATOMICS__`
@@ -135,14 +137,11 @@ If a feature is not on this list, it's very likely not supported.
   - `__unix__` - Defined only on macOS and Linux
   - `__LINE__` - Current line number
   - `__FILE__` - Current file (string literal)
-  - `__FUNCTION__` - Current function (string literal)
-    - `__func__` unsupported
   - `__DATE__` - Compilation date
   - `__TIME__` - Compilation time
   - `__VA_ARGS__` - Set of varargs
   - `__VA_OPT__` - Expands to parameter if there are any varargs
-  - `__COUNTER__` - Expands to a value of counter, then increments it
-  - `__COUNTER_NOINC__` - Expands to a value of counter, but doesn't increment it
+  - `__DEFINE__`, `__UNDEF__`, `__RECURSE__`, `__IF__`, `__EVAL__` - Check [preprocessor extensions](#preprocessor-extensions)
   - Includes and defines pasted during lexing as a series of tokens
 
 Explicitly unsupported features
@@ -153,13 +152,41 @@ Explicitly unsupported features
 - Bitfields
 - Variable shadowing
 - Wide strings/characters
-- `#error`, `#warning`, `#pragma` and `#line`
+- `#warning`, `#pragma` and `#line`
 - Attributes
   - Both GNU `__attribute__` and C23 `[[attribute]]`
 - All underscore-prefixed keywords
   - `_Alignas`, `_Alignof` (supported via `alignof`), `_Atomic`, `_Bool` (supported via `bool`), `_Complex`, `_DecimalX`, `_Generic`, `_Imaginary`, `_Noreturn`, `_Static_assert`, `_Thread_local`
 - `asm` and `fortran`
 - K&R-style function definitions and syntax
+
+### Preprocessor Extensions
+
+jitc's preprocessor aims to be a turing complete extension of the C preprocessor. It achieves this by adding some special macros.
+
+#### `__DEFINE__(name, ...)`
+
+Expands to nothing.
+
+Defines a new macro `name` that expands to `__VA_ARGS__`.
+
+#### `__UNDEF__(macro)`
+
+Expands to nothing.
+
+Undefines a macro.
+
+#### `__RECURSE__(...)`
+
+Forces an expansion of `__VA_ARGS__` bypassing the recursion check. Has a hard limit of 1024 expansions per run.
+
+#### `__IF__(cond, ...)`
+
+Expands to `__VA_ARGS__` if `cond` doesn't evaluate to `0` and isn't empty. `cond` has the semantics as with the `#if` directive.
+
+#### `__EVAL__(expr)`
+
+Evaluates the expression `expr`. Same semantics as with the `#if` directive.
 
 ## API
 
@@ -172,9 +199,8 @@ Explicitly unsupported features
 
 - `jitc_context_t* jitc_create_context()`
   - Creates a new context
-- `bool jitc_include(jitc_context_t* context, const char* file)`
-  - Includes a header into the context
-  - Returns `true` on success, `false` if the header isn't found or if it was already included
+- `void jitc_create_header(jitc_context_t* context, const char* name, const char* content)`
+  - Creates a virtual header
 - `jitc_error_t* jitc_parse(jitc_context_t* context, const char* code, const char* filename)`
   - Parses source code from memory, returns `NULL` if successful, an error object if not
   - `filename`: Can be `NULL`, specifies the filename for the lexer
@@ -184,7 +210,5 @@ Explicitly unsupported features
   - Returns a symbol from the context, `NULL` if it doesn't exist
 - `void jitc_destroy_context(jitc_context_t* context)`
   - Destroys a context and all the variables and functions declared with it
-- `void jitc_create_header(const char* name, const char* content)`
-  - Creates a virtual header
 
 To use a symbol from the host, use `extern`. `extern` cannot be used to reference symbols from other contexts.

@@ -418,10 +418,19 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
     return true;
 }
 
+char* jitc_append_string(jitc_context_t* context, const char* str) {
+    char** ptr = (char**)set_find_ptr(context->strings, (char*)str);
+    if (ptr) return *ptr;
+    char* string = strdup(str);
+    set_add_ptr(context->strings, string);
+    return string;
+}
+
 jitc_context_t* jitc_create_context() {
     jitc_context_t* context = malloc(sizeof(jitc_context_t));
     context->strings = set_new(compare_string);
     context->typecache = map_new(compare_int64);
+    context->headers = map_new(compare_string);
     context->scopes = list_new();
     context->memchunks = list_new();
     context->error = NULL;
@@ -480,8 +489,42 @@ bool jitc_struct_field_exists_list(list_t* list, const char* name) {
     return false;
 }
 
+static char* read_whole_file(jitc_context_t* context, const char* filename) {
+    FILE* f = fopen(filename, "r");
+    if (!f) {
+        context->error = jitc_error_syntax(filename, 0, 0, "Failed to open: %s", strerror(errno));
+        return NULL;
+    }
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* code = malloc(size + 1);
+    fread(code, size, 1, f);
+    code[size] = 0;
+    fclose(f);
+    return code;
+}
+
+queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* filename, map_t* macros) {
+    smartptr(queue_t) tokens = NULL;
+    if (!map_find_ptr(context->headers, (char*)filename)) {
+        autofree char* content = try(read_whole_file(context, filename));
+        tokens = try(jitc_lex(context, content, filename));
+    }
+    else tokens = try(jitc_lex(context, map_as_ptr(context->headers), filename));
+    tokens = try(jitc_preprocess(context, move(tokens), macros));
+    return move(tokens);
+}
+
+void jitc_create_header(jitc_context_t* context, const char* name, const char* content) {
+    map_get_ptr(context->headers, (char*)name);
+    map_store_ptr(context->headers, jitc_append_string(context, content));
+}
+
 jitc_error_t* jitc_parse(jitc_context_t* context, const char* code, const char* filename) {
     smartptr(queue_t) tokens = jitc_lex(context, code, filename);
+    if (!tokens) return context->error;
+    tokens = jitc_preprocess(context, move(tokens), NULL);
     if (!tokens) return context->error;
     smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens);
     while (jitc_pop_scope(context));
@@ -493,15 +536,8 @@ jitc_error_t* jitc_parse(jitc_context_t* context, const char* code, const char* 
 }
 
 jitc_error_t* jitc_parse_file(jitc_context_t* context, const char* filename) {
-    FILE* f = fopen(filename, "r");
-    if (!f) return jitc_error_syntax(filename, 0, 0, "Failed to open: %s", strerror(errno));
-    fseek(f, 0, SEEK_END);
-    size_t size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    autofree char* code = malloc(size + 1);
-    fread(code, size, 1, f);
-    code[size] = 0;
-    fclose(f);
+    autofree char* code = read_whole_file(context, filename);
+    if (!code) return context->error;
     return jitc_parse(context, code, filename);
 }
 

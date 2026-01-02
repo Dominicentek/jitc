@@ -12,6 +12,7 @@ typedef void*(*job_func_t)(void* ctx);
 struct jitc_context_t {
     set_t* strings;
     map_t* typecache;
+    map_t* headers;
     list_t* scopes;
     list_t* memchunks;
     jitc_error_t* error;
@@ -351,6 +352,11 @@ typedef struct {
     SYMBOL("~", TILDE) \
     SYMBOL("!", EXCLAMATION_MARK) \
     SYMBOL("...", TRIPLE_DOT) \
+    SYMBOL("#", HASHTAG) \
+    SYMBOL("##", DOUBLE_HASHTAG) \
+    SYMBOL("\\", BACKSLASH) \
+    SYMBOL("//", COMMENT) \
+    SYMBOL("/""*", MULTILINE_COMMENT) \
 
 typedef enum: uint8_t {
     PROCESS_TOKENS(ENUM)
@@ -386,6 +392,7 @@ struct jitc_token_t {
 
 jitc_token_t* jitc_token_expect(queue_t* token_queue, jitc_token_type_t kind);
 queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filename);
+queue_t* jitc_preprocess(jitc_context_t* context, queue_t* tokens, map_t* macros);
 
 jitc_type_t* jitc_typecache_primitive(jitc_context_t* context, jitc_type_kind_t kind);
 jitc_type_t* jitc_typecache_unsigned(jitc_context_t* context, jitc_type_t* base);
@@ -425,6 +432,9 @@ void jitc_error_set(jitc_context_t* context, jitc_error_t* error);
 void jitc_free_error(jitc_error_t* error);
 
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
+
+char* jitc_append_string(jitc_context_t* context, const char* string);
+queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* filename, map_t* macros);
 
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype);
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int min_prec, jitc_type_t** exprtype);

@@ -12,6 +12,7 @@ typedef struct {
 } jitc_error_t;
 
 jitc_context_t* jitc_create_context();
+void jitc_create_header(jitc_context_t* context, const char* name, const char* content);
 jitc_error_t* jitc_parse(jitc_context_t* context, const char* code, const char* filename);
 jitc_error_t* jitc_parse_file(jitc_context_t* context, const char* filename);
 void* jitc_get(jitc_context_t* context, const char* name);

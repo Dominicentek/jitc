@@ -87,26 +87,30 @@ static bool try_parse_int(string_t* string, uint64_t* out, jitc_token_flags_t* f
     if (str_data(string)[ptr] == 0) return false;
     char last_suffix = 0;
     bool is_unsigned = false;
+    bool any_digits = false;
     int longs = 0;
     *out = 0;
     for (; str_data(string)[ptr]; ptr++) {
         int digit;
-        if (str_data(string)[ptr] == 'U' || str_data(string)[ptr] == 'u') {
-            if (is_unsigned) return false;
-            last_suffix = str_data(string)[ptr];
-            is_unsigned = true;
-            continue;
-        }
-        if (str_data(string)[ptr] == 'L' || str_data(string)[ptr] == 'l') {
-            if ((last_suffix == 'u' || last_suffix == 'U') && longs == 1) return false;
-            if (longs == 2) return false;
-            last_suffix = str_data(string)[ptr];
-            longs++;
-            continue;
+        if (any_digits) {
+            if (str_data(string)[ptr] == 'U' || str_data(string)[ptr] == 'u') {
+                if (is_unsigned) return false;
+                last_suffix = str_data(string)[ptr];
+                is_unsigned = true;
+                continue;
+            }
+            if (str_data(string)[ptr] == 'L' || str_data(string)[ptr] == 'l') {
+                if ((last_suffix == 'u' || last_suffix == 'U') && longs == 1) return false;
+                if (longs == 2) return false;
+                last_suffix = str_data(string)[ptr];
+                longs++;
+                continue;
+            }
         }
         if (is_unsigned || longs != 0) return false;
         if (!get_hexadecimal(str_data(string)[ptr], &digit)) return false;
         if (digit >= base) return false;
+        any_digits = true;
         *out = *out * base + digit;
     }
     if (flags) {
@@ -193,22 +197,15 @@ static jitc_token_t* mktoken(queue_t* tokens, jitc_token_type_t type, const char
     return token;
 }
 
-static char* append_string(jitc_context_t* context, const char* str) {
-    char** ptr = (char**)set_find_ptr(context->strings, (char*)str);
-    if (ptr) return *ptr;
-    char* string = strdup(str);
-    set_add_ptr(context->strings, string);
-    return string;
-}
-
 queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filename) {
     char c;
     size_t ptr = 0;
     bool no_increment = false;
     bool zero = false;
+    bool asterisk = false;
     int digit = 0;
     int row = 1, col = 0;
-    char* file = append_string(context, filename);
+    char* file = jitc_append_string(context, filename);
     queue_t* tokens = queue_new();
     struct {
         enum State {
@@ -217,6 +214,8 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             ParsingSymbol,
             ParsingStringLiteral,
             ParsingCharLiteral,
+            ParsingComment,
+            ParsingMultilineComment
         } parse_state;
         string_t* buffer;
         int row, col;
@@ -255,9 +254,16 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             }
         }
         no_increment = false;
-        if (state.parse_state == Idle) {
-            if      (c == '"' )                  state.parse_state = ParsingStringLiteral;
-            else if (c == '\'')                  state.parse_state = ParsingCharLiteral;
+        if (state.parse_state == ParsingComment) {
+            if (c == '\n') state.parse_state = Idle;
+        }
+        else if (state.parse_state == ParsingMultilineComment) {
+            if (c == '/' && asterisk) state.parse_state = Idle;
+            asterisk = c == '*';
+        }
+        else if (state.parse_state == Idle) {
+            if      (c == '"' )                       state.parse_state = ParsingStringLiteral;
+            else if (c == '\'')                       state.parse_state = ParsingCharLiteral;
             else if (is_alphanumeric(c) || (c == '.' && is_numeric(code[ptr]))) state.parse_state = ParsingWord;
             else if (is_symbol      (c)) state.parse_state = ParsingSymbol;
             else if (is_whitespace  (c)) continue;
@@ -278,7 +284,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                     if (c == '\\') state.string_state.state = Backslash;
                     else if (c == '"' && state.parse_state == ParsingStringLiteral) {
                         jitc_token_t* token = mktoken(tokens, TOKEN_STRING, file, state.row, state.col);
-                        token->value.string = append_string(context, str_data(state.buffer));
+                        token->value.string = jitc_append_string(context, str_data(state.buffer));
                         state.parse_state = Idle;
                     }
                     else if (c == '\'' && state.parse_state == ParsingCharLiteral) {
@@ -382,7 +388,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                                 if (ptr != 0) {
                                     buf[ptr] = 0;
                                     if (!curr_token) curr_token = mktoken(tokens, TOKEN_IDENTIFIER, file, state.row, state.col + i - strlen(buf));
-                                    curr_token->value.string = append_string(context, buf);
+                                    curr_token->value.string = jitc_append_string(context, buf);
                                     curr_token = NULL;
                                 }
                                 if (!curr_token) curr_token = mktoken(tokens, (jitc_token_type_t[]){
@@ -399,7 +405,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                         if (ptr != 0) {
                             buf[ptr] = 0;
                             if (!curr_token) curr_token = mktoken(tokens, TOKEN_IDENTIFIER, file, state.row, state.col + str_length(state.buffer) - strlen(buf));
-                            curr_token->value.string = append_string(context, buf);
+                            curr_token->value.string = jitc_append_string(context, buf);
                             curr_token = NULL;
                         }
                     }
@@ -418,6 +424,10 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 if (strcmp(str_data(state.buffer), token_table[i]) == 0) exact_match = i;
             }
             if (exact_match != -1 && (starts_with == 1 || !is_symbol(c))) {
+                if (exact_match == TOKEN_COMMENT || exact_match == TOKEN_MULTILINE_COMMENT) {
+                    state.parse_state = exact_match == TOKEN_COMMENT ? ParsingComment : ParsingMultilineComment;
+                    continue;
+                }
                 mktoken(tokens, exact_match, file, state.row, state.col);
                 state.parse_state = Idle;
                 no_increment = true;
@@ -431,6 +441,10 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                     if (strncmp(str_data(state.buffer), token_table[i], str_length(state.buffer)) == 0) starts_with++;
                 }
                 if (starts_with == 0 && exact_match != -1) {
+                    if (exact_match == TOKEN_COMMENT || exact_match == TOKEN_MULTILINE_COMMENT) {
+                        state.parse_state = exact_match == TOKEN_COMMENT ? ParsingComment : ParsingMultilineComment;
+                        continue;
+                    }
                     mktoken(tokens, exact_match, file, state.row, state.col);
                     state.parse_state = Idle;
                     no_increment = true;

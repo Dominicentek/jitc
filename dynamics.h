@@ -57,6 +57,7 @@ void* map_index(map_t* map, size_t index);
 uint64_t map_get_int_key(map_t* map, size_t index);
 double map_get_float_key(map_t* map, size_t index);
 void* map_get_ptr_key(map_t* map, size_t index);
+void map_remove(map_t* map);
 void map_delete(map_t* map);
 
 set_t* set_new(compare_t compare);

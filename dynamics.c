@@ -275,6 +275,19 @@ void* map_get_ptr_key(map_t* map, size_t index) {
     return *(void**)&map->entries[index].key;
 }
 
+void map_remove(map_t* map) {
+    if (!map->cursor) return;
+    kvpair_t* entry = (kvpair_t*)&((uint64_t*)map->cursor)[-1];
+    size_t index = entry - map->entries;
+    map->length--;
+    if (index != map->length) memmove(
+        map->entries + index, map->entries + index + 1,
+        sizeof(kvpair_t) * (map->length - index)
+    );
+}
+
+#define COUNTDOWN(x) x __IF__(x > 0, __RECURSE__(COUNTDOWN(__EVAL__(x - 1))))
+
 void map_delete(map_t* map) {
     free(map->entries);
     free(map);
