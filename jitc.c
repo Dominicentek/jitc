@@ -419,7 +419,7 @@ void jitc_destroy_error(jitc_error_t* error) {
 }
 
 void jitc_error_set(jitc_context_t* context, jitc_error_t* error) {
-    jitc_destroy_error(error);
+    jitc_destroy_error(context->error);
     context->error = error;
 }
 
