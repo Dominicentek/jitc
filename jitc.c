@@ -101,7 +101,9 @@ static jitc_type_t jitc_copy_type(jitc_type_t* type) {
     jitc_type_t copy = *type;
     if (copy.kind == Type_Struct || copy.kind == Type_Union) {
         copy.str.fields = malloc(sizeof(jitc_type_t*) * copy.str.num_fields);
+        copy.str.offsets = malloc(sizeof(size_t) * copy.str.num_fields);
         memcpy(copy.str.fields, type->str.fields, sizeof(jitc_type_t*) * copy.str.num_fields);
+        memcpy(copy.str.offsets, type->str.offsets, sizeof(size_t) * copy.str.num_fields);
     }
     if (copy.kind == Type_Function) {
         copy.func.params = malloc(sizeof(jitc_type_t*) * copy.func.num_params);
@@ -295,8 +297,9 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     autofree jitc_variable_t* var = malloc(sizeof(jitc_variable_t));
     var->type = type;
     var->decltype = decltype;
-    var->value = value;
+    var->enum_value = value;
     var->defined = false;
+    var->dependants = var->dependencies = NULL;
     map_get_ptr(scope->variables, (void*)type->name);
     map_store_ptr(scope->variables, move(var));
     return true;
@@ -398,15 +401,26 @@ jitc_error_t* jitc_error_parser(jitc_token_t* token, const char* str, ...) {
     return error;
 }
 
-void jitc_error_set(jitc_context_t* context, jitc_error_t* error) {
-    free(context->error);
-    context->error = error;
+void jitc_report_error(jitc_context_t* context, FILE* file) {
+    jitc_error_t* error = move(context->error);
+    if (!error) return;
+    fprintf(file, "Error: %s (in %s at %d:%d)\n", error->msg, error->file, error->row, error->col);
+    jitc_destroy_error(error);
 }
 
-void jitc_report_error(jitc_error_t* error, FILE* file) {
-    fprintf(file, "Error: %s (in %s at %d:%d)\n", error->msg, error->file, error->row, error->col);
-    free((void*)error->msg);
-    free((void*)error);
+jitc_error_t* jitc_get_error(jitc_context_t* context) {
+    return move(context->error);
+}
+
+void jitc_destroy_error(jitc_error_t* error) {
+    if (!error) return;
+    free((char*)error->msg);
+    free(error);
+}
+
+void jitc_error_set(jitc_context_t* context, jitc_error_t* error) {
+    jitc_destroy_error(error);
+    context->error = error;
 }
 
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
@@ -438,20 +452,17 @@ jitc_context_t* jitc_create_context() {
     return context;
 }
 
-static bool jitc_get_symbol(jitc_context_t* context, const char* name, void** ptr, bool force_pointer) {
+static jitc_variable_t* jitc_get_symbol(jitc_context_t* context, const char* name, bool disallow_static) {
     jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
-    if (!map_find_ptr(scope->variables, (char*)name)) return false;
+    if (!map_find_ptr(scope->variables, (char*)name)) return NULL;
     jitc_variable_t* var = map_as_ptr(scope->variables);
-    if (var->decltype == Decltype_Typedef) return false;
-    if (var->decltype == Decltype_Extern) *ptr = (void*)var->value;
-    else *ptr = !force_pointer && var->type->kind == Type_Function ? (void*)var->value : &var->value;
-    return var->decltype == Decltype_Static;
+    if (var->decltype == Decltype_Typedef) return NULL;
+    if (var->decltype == Decltype_Static && disallow_static) return NULL;
+    return var;
 }
 
-void* jitc_get_or_static(jitc_context_t* context, const char* name) {
-    void* ptr;
-    jitc_get_symbol(context, name, &ptr, true);
-    return ptr;
+jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name) {
+    return jitc_get_symbol(context, name, false);
 }
 
 bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_type, size_t* offset) {
@@ -492,7 +503,7 @@ bool jitc_struct_field_exists_list(list_t* list, const char* name) {
 static char* read_whole_file(jitc_context_t* context, const char* filename) {
     FILE* f = fopen(filename, "r");
     if (!f) {
-        context->error = jitc_error_syntax(filename, 0, 0, "Failed to open: %s", strerror(errno));
+        replace(context->error) = jitc_error_syntax(filename, 0, 0, "Failed to open: %s", strerror(errno));
         return NULL;
     }
     fseek(f, 0, SEEK_END);
@@ -521,30 +532,26 @@ void jitc_create_header(jitc_context_t* context, const char* name, const char* c
     map_store_ptr(context->headers, jitc_append_string(context, content));
 }
 
-jitc_error_t* jitc_parse(jitc_context_t* context, const char* code, const char* filename) {
-    smartptr(queue_t) tokens = jitc_lex(context, code, filename);
-    if (!tokens) return context->error;
-    tokens = jitc_preprocess(context, move(tokens), NULL);
-    if (!tokens) return context->error;
+bool jitc_parse(jitc_context_t* context, const char* code, const char* filename) {
+    smartptr(queue_t) tokens = try(jitc_lex(context, code, filename));
+    tokens = try(jitc_preprocess(context, move(tokens), NULL));
     smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens);
     while (jitc_pop_scope(context));
-    if (!ast) return context->error;
+    if (!ast) return false;
     for (size_t i = 0; i < list_size(ast->list.inner); i++) {
-        jitc_compile(context, list_get_ptr(ast->list.inner, i));
+        try(jitc_compile(context, list_get_ptr(ast->list.inner, i)));
     }
-    return NULL;
+    return true;
 }
 
-jitc_error_t* jitc_parse_file(jitc_context_t* context, const char* filename) {
+bool jitc_parse_file(jitc_context_t* context, const char* filename) {
     autofree char* code = read_whole_file(context, filename);
-    if (!code) return context->error;
-    return jitc_parse(context, code, filename);
+    if (!code) return false;
+    return try(jitc_parse(context, code, filename));
 }
 
 void* jitc_get(jitc_context_t* context, const char* name) {
-    void* ptr;
-    if (jitc_get_symbol(context, name, &ptr, false)) return NULL;
-    return ptr;
+    return try(jitc_get_symbol(context, name, true))->ptr;
 }
 
 void jitc_destroy_context(jitc_context_t* context) {
@@ -556,7 +563,10 @@ void jitc_destroy_context(jitc_context_t* context) {
         map_index(context->typecache, i);
         jitc_type_t* type = map_as_ptr(context->typecache);
         if (type->kind == Type_Function) free(type->func.params);
-        if (type->kind == Type_Struct || type->kind == Type_Union) free(type->str.fields);
+        if (type->kind == Type_Struct || type->kind == Type_Union) {
+            free(type->str.fields);
+            free(type->str.offsets);
+        }
         free(type);
     }
     map_delete(context->typecache);

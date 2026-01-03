@@ -130,6 +130,7 @@ static instr_t instructions[] = {
     { mov, 0xC7, has_modrm, { C_REG | C_MEM | C_S16 | C_S32, C_IMM | C_S16 | C_S32 }},
     { movzx, 0xB6, has_modrm | twobyte | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C__S8 }},
     { movzx, 0xB7, has_modrm | twobyte | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_S16 }},
+    { movzx, 0x8B, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_S32 }}, // this is actually mov in disguise
     { movsx, 0xBE, has_modrm | twobyte | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C__S8 }},
     { movsx, 0xBF, has_modrm | twobyte | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_S16 }},
     { movsx, 0x63, has_modrm | force_rexw | flip_modrm, { C_REG | C_S64, C_REG | C_MEM | C_S32 }},
@@ -702,7 +703,7 @@ static void bitshift(bytewriter_t* writer, bool store, bool is_right) {
         if (op1.type != StackItem_rvalue) emit(writer, mov, 2, op(res), op(&op1));
     }
     emit(writer, mov, 2, reg(rcx, op2.kind, op2.is_unsigned), op(&op2));
-    emit(writer, 1 ? shr : shl, 1, op(res));
+    emit(writer, is_right ? shr : shl, 1, op(res));
 }
 
 static void compare(bytewriter_t* writer, mnemonic_t mnemonic) {

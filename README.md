@@ -195,20 +195,27 @@ Evaluates the expression `expr`. Same semantics as with the `#if` directive.
   - `const char* file` - Name of the file where the error occured
   - `int row` - Line number of the error location
   - `int col` - Column number of the error location
-  - It is the caller's responsibility to `free` the object if it receives it from `jitc_parse` or `jitc_parse_file`
 
 - `jitc_context_t* jitc_create_context()`
   - Creates a new context
 - `void jitc_create_header(jitc_context_t* context, const char* name, const char* content)`
   - Creates a virtual header
-- `jitc_error_t* jitc_parse(jitc_context_t* context, const char* code, const char* filename)`
-  - Parses source code from memory, returns `NULL` if successful, an error object if not
+- `bool jitc_parse(jitc_context_t* context, const char* code, const char* filename)`
+  - Parses source code from memory, returns `false` on error
   - `filename`: Can be `NULL`, specifies the filename for the lexer
-- `jitc_error_t* jitc_parse_file(jitc_context* context, const char* file)`
-  - Reads a file from the filesystem and parses its contents, returns `NULL` if successful, an error object if not
+- `bool jitc_parse_file(jitc_context* context, const char* file)`
+  - Reads a file from the filesystem and parses its contents, returns `false` on error
 - `void* jitc_get(jitc_context* context, const char* name)`
-  - Returns a symbol from the context, `NULL` if it doesn't exist
+  - Returns a symbol from the context, `NULL` on error
 - `void jitc_destroy_context(jitc_context_t* context)`
   - Destroys a context and all the variables and functions declared with it
+- `jitc_error_t* jitc_get_error(jitc_context_t* context)`
+  - Returns the current error, `NULL` if no errors, clears the current error
+- `void jitc_destroy_error(jitc_error_t* error)`
+  - Destroys an error
+- `void jitc_report_error(jitc_context_t* context, FILE* stream)`
+  - Logs an error to `stream`, does nothing if no errors
+
+When a function fails, you can use `jitc_report_error` to log the error to a stream or `jitc_get_error` and `jitc_destroy_error` to handle it yourself.
 
 To use a symbol from the host, use `extern`. `extern` cannot be used to reference symbols from other contexts.

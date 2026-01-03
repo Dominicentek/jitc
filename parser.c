@@ -94,8 +94,7 @@ static bool is_lvalue(jitc_ast_t* ast) {
 }
 
 bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
-    jitc_token_t* token = queue_peek_ptr(tokens);
-    switch (token->type) {
+    switch (NEXT_TOKEN->type) {
         case TOKEN_extern:
         case TOKEN_static:
         case TOKEN_typedef:
@@ -118,7 +117,7 @@ bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
         case TOKEN_enum:
             return true;
         case TOKEN_IDENTIFIER: {
-            jitc_variable_t* var = jitc_get_variable(context, token->value.string);
+            jitc_variable_t* var = jitc_get_variable(context, NEXT_TOKEN->value.string);
             if (var == NULL) return false;
             return var->decltype == Decltype_Typedef;
         }
@@ -157,7 +156,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
             size_t size = -1;
             jitc_token_t* starting_token = token;
             if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) {
-                token = queue_peek_ptr(tokens);
+                token = NEXT_TOKEN;
                 smartptr(jitc_ast_t) ast = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
                 if (ast->node_type != AST_Integer) ERROR(token, "Expected integer constant");
                 size = ast->integer.value;
@@ -203,17 +202,23 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
             if (!jitc_validate_type(*type, TypePolicy_NoDerived)) ERROR(starting_token, "Function cannot return an array or function");
             while (queue_size(queue) > 1) {
                 comma = NULL;
-                if (((jitc_token_t*)queue_peek_ptr(queue))->type == TOKEN_TRIPLE_DOT) {
+                token = queue_peek_ptr(queue);
+                if (token->type == TOKEN_TRIPLE_DOT) {
                     queue_pop(queue);
                     list_add_ptr(list, jitc_typecache_primitive(context, Type_Varargs));
                     if (!jitc_token_expect(queue, TOKEN_PARENTHESIS_CLOSE)) ERROR(queue_pop_ptr(queue), "Expected ')'");
                     break;
                 }
-                jitc_type_t* param_type = jitc_parse_type(context, queue, NULL);
-                if (!param_type) return NULL;
+                jitc_type_t* param_type = try(jitc_parse_type(context, queue, NULL));
+                if (param_type->kind == Type_Void) {
+                    if (param_type->name) ERROR(token, "'void' cannot have a name");
+                    if (list_size(list) > 0) ERROR(token, "'void' must be the only parameter");
+                    break;
+                }
                 list_add_ptr(list, param_type);
                 comma = jitc_token_expect(queue, TOKEN_COMMA);
             }
+            if (queue_size(queue) > 1) ERROR(queue_peek_ptr(queue), "Expected ')'");
             if (comma) ERROR(comma, "Expected type");
             *type = jitc_typecache_function(context, *type, list);
         } break;
@@ -260,7 +265,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
             new_specs |= Spec_Char;
             is_unsigned = true;
         }
-        else if ((token = (jitc_token_t*)queue_peek_ptr(tokens))->type == TOKEN_IDENTIFIER) {
+        else if ((token = NEXT_TOKEN)->type == TOKEN_IDENTIFIER) {
             jitc_variable_t* variable = jitc_get_variable(context, token->value.string);
             if (specs != 0 || !variable || variable->decltype != Decltype_Typedef) break;
             type = jitc_typecache_named(context, variable->type, NULL);
@@ -308,7 +313,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
             bool force_definition = false;
             if (jitc_token_expect(tokens, TOKEN_COLON)) {
                 force_definition = true;
-                jitc_token_t* type_token = queue_peek_ptr(tokens);
+                jitc_token_t* type_token = NEXT_TOKEN;
                 jitc_type_t* type = try(jitc_parse_base_type(context, tokens, NULL));
                 if (!is_integer(type)) ERROR(type_token, "Enum base type must be an integer");
                 kind = type->kind;
@@ -491,7 +496,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->node_type = AST_Integer;
                 node->integer.type_kind = variable->type->kind;
                 node->integer.is_unsigned = variable->type->is_unsigned;
-                node->integer.value = variable->value;
+                node->integer.value = variable->enum_value;
             }
             node->exprtype = jitc_typecache_decay(context, variable->type);
         } break;
@@ -1068,7 +1073,7 @@ static struct {
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int min_prec, jitc_type_t** exprtype) {
     smartptr(jitc_ast_t) left = try(jitc_parse_expression_operand(context, tokens));
     while (true) {
-        jitc_token_t* token = queue_peek_ptr(tokens);
+        jitc_token_t* token = NEXT_TOKEN;
         int precedence = op_info[token->type].precedence;
         if (precedence < min_prec) break;
         queue_pop(tokens);
@@ -1222,7 +1227,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
     }
     if (jitc_peek_type(context, tokens)) {
         if (!(allowed & ParseType_Declaration)) ERROR(NEXT_TOKEN, "Declaration not allowed here");
-        token = queue_peek_ptr(tokens);
+        token = NEXT_TOKEN;
         smartptr(jitc_ast_t) list = mknode(AST_List, token);
         jitc_decltype_t decltype = Decltype_None;
         jitc_type_t* base_type = try(jitc_parse_base_type(context, tokens, &decltype));
@@ -1233,21 +1238,11 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             if (type->kind == Type_Function && NEXT_TOKEN->type == TOKEN_SEMICOLON && decltype != Decltype_Typedef) decltype = Decltype_Extern;
             node->decl.type = type;
             node->decl.decltype = decltype;
-            void* symbol_ptr = NULL;
-            if (decltype == Decltype_Extern) {
-                symbol_ptr = jitc_get_or_static(context, type->name);
-                if (!symbol_ptr) {
-                    symbol_ptr = dlsym(RTLD_DEFAULT, type->name);
-                    if (!symbol_ptr) ERROR(token, "Cannot resolve symbol '%s'", type->name);
-                }
-                node->decl.symbol_ptr = symbol_ptr;
-            }
             if (node->decl.decltype != Decltype_Typedef && type->name && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
                 ERROR(token, "Declaration of incomplete type");
             if (decltype != Decltype_Typedef) list_add_ptr(list->list.inner, move(node));
             if (!jitc_declare_variable(context, type, decltype, 0)) ERROR(token, "Symbol '%s' already declared", type->name);
             jitc_variable_t* var = jitc_get_variable(context, type->name);
-            if (var) var->value = (uint64_t)symbol_ptr;
 
             if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
                 if (decltype == Decltype_Extern) ERROR(token, "Cannot attach code to an extern function");
@@ -1302,7 +1297,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
 }
 
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* tokens) {
-    smartptr(jitc_ast_t) ast = mknode(AST_List, queue_peek_ptr(tokens));
+    smartptr(jitc_ast_t) ast = mknode(AST_List, NEXT_TOKEN);
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
         if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
         list_add_ptr(ast->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Declaration)));

@@ -5,6 +5,7 @@
 
 #include <stdlib.h>
 #include <stdarg.h>
+#include <dlfcn.h>
 
 //#define DEBUG
 
@@ -344,7 +345,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
             stackvar_t* var = map_as_ptr(variable_map);
             if (var->is_global) jitc_asm_laddr(writer, var->var.ptr, type(var->var.type));
             else jitc_asm_lstack(writer, var->var.offset, type(var->var.type));
-            if (var->var.type->kind == Type_Array)
+            if (var->var.type->kind == Type_Array || var->var.type->kind == Type_Function)
                 jitc_asm_addrof(writer);
             return true;
         case AST_WalkStruct:
@@ -357,11 +358,30 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
     return false;
 }
 
-void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
+bool jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
     switch (ast->node_type) {
+        case AST_Declaration: {
+            if (!ast->decl.type->name) break;
+            jitc_variable_t* var = jitc_get_or_static(context, ast->decl.type->name);
+            if (var->decltype == Decltype_Static || var->decltype == Decltype_None)
+                var->ptr = malloc(var->type->size);
+            else if (var->decltype == Decltype_Extern) {
+                void* symbol_ptr = NULL;
+                jitc_variable_t* symbol = jitc_get_or_static(context, ast->decl.type->name);
+                if (!symbol || !symbol->ptr) {
+                    symbol_ptr = dlsym(RTLD_DEFAULT, ast->decl.type->name);
+                    if (!symbol_ptr) {
+                        context->error = jitc_error_parser(ast->token, "Cannot resolve symbol '%s'", ast->decl.type->name);
+                        return false;
+                    }   
+                }
+                else symbol_ptr = symbol->ptr;
+                ast->decl.symbol_ptr = var->ptr = symbol_ptr;
+            }
+        } break;
         case AST_Binary: {
-            void* ptr = jitc_get_or_static(context, ast->binary.left->variable.name);
-            memcpy(ptr, &ast->binary.right->integer.value, ast->exprtype->size);
+            jitc_variable_t* var = jitc_get_or_static(context, ast->binary.left->variable.name);
+            memcpy(var->ptr, &ast->binary.right->integer.value, ast->exprtype->size);
         } break;
         case AST_Function: {
             smartptr(bytewriter_t) writer = bytewriter_new();
@@ -376,9 +396,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 stackvar_t* stackvar = malloc(sizeof(stackvar_t));
                 stackvar->is_global = stackvar->is_leaf = true;
                 stackvar->var.type = var->type;
-                if (var->decltype == Decltype_Extern || var->type->kind == Type_Function)
-                    stackvar->var.ptr = (void*)var->value;
-                else stackvar->var.ptr = &var->value;
+                stackvar->var.ptr = var->ptr;
                 map_get_ptr(variable_map, (char*)name);
                 map_store_ptr(variable_map, stackvar);
             }
@@ -394,8 +412,9 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             }
             jitc_asm_func_end(writer);
             *(uint32_t*)bytewriter_data(writer) = bytewriter_size(writer) - 4;
-            *(void**)jitc_get_or_static(context, ast->func.variable->name) = (char*)make_executable(context, bytewriter_data(writer), bytewriter_size(writer)) + 4;
+            jitc_get_or_static(context, ast->func.variable->name)->ptr = (char*)make_executable(context, bytewriter_data(writer), bytewriter_size(writer)) + 4;
         } break;
         default: break;
     }
+    return true;
 }

@@ -248,7 +248,12 @@ typedef struct {
     jitc_type_t* type;
     jitc_decltype_t decltype;
     bool defined;
-    uint64_t value;
+    list_t* dependencies;
+    list_t* dependants;
+    union {
+        void* ptr;
+        uint64_t enum_value;
+    };
 } jitc_variable_t;
 
 #define PROCESS_TOKENS(type) TOKENS(type##_KEYWORD, type##_SYMBOL, type##_SPECIAL)
@@ -417,7 +422,7 @@ bool jitc_set_defined(jitc_context_t* context, const char* name);
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
-void* jitc_get_or_static(jitc_context_t* context, const char* name);
+jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name);
 
 bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_type, size_t* offset);
 bool jitc_struct_field_exists_list(list_t* list, const char* name);
@@ -429,8 +434,6 @@ jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const ch
 jitc_error_t* jitc_error_parser(jitc_token_t* token, const char* str, ...);
 void jitc_error_set(jitc_context_t* context, jitc_error_t* error);
 
-void jitc_free_error(jitc_error_t* error);
-
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 
 char* jitc_append_string(jitc_context_t* context, const char* string);
@@ -439,7 +442,7 @@ queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* 
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype);
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int min_prec, jitc_type_t** exprtype);
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
-void jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
+bool jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
 void jitc_delete_memchunks(jitc_context_t* context);

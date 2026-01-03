@@ -145,11 +145,28 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     }
 
     // call the function
-    operand_t func_op = reg(rax, Type_Pointer, true);
-    if (has_varargs) func_op = ptr(rsp, stack_size - varargs_offset - 8, Type_Pointer, true);
-    emit(writer, lea, 2, func_op, op(&func));
-    if (has_varargs) emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
-    emit(writer, call, 1, func_op);
+    if (func.type == StackItem_literal) {
+        if (!has_varargs) emit(writer, call, 1, op(&func));
+        else {
+            operand_t func_op = ptr(rsp, stack_size - varargs_offset - 8, Type_Pointer, true);
+            emit(writer, mov, 2, func_op, op(&func));
+            emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
+            emit(writer, call, 1, func_op);
+        }
+    }
+    else if (func.type != StackItem_lvalue_abs) emit(writer, call, 1, op(&func));
+    else {
+        operand_t func_op = op(&func);
+        if (func_op.type == OpType_ptrptr) emit(writer, call, 1, unptr(op(&func)));
+        else if (func_op.disp == 0) emit(writer, call, 1, op(&func));
+        else {
+            func_op = reg(rax, Type_Pointer, true);
+            if (has_varargs) func_op = ptr(rsp, stack_size - varargs_offset - 8, Type_Pointer, true);
+            emit(writer, lea, 2, func_op, op(&func));
+            if (has_varargs) emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
+            emit(writer, call, 1, func_op);
+        }
+    }
     if (stack_size != 0) stack_free(writer, stack_size);
 
     // return value

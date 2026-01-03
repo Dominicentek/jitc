@@ -78,9 +78,10 @@ int main(int argc, char** argv) {
         }
         jitc_context_t* context = jitc_create_context();
         jitc_error_t* error = NULL;
-        if ((error = jitc_parse_file(context, path))) {
+        jitc_create_header(context, "stdio.h", "int printf(const char*, ...);");
+        if (!jitc_parse_file(context, path)) {
             printf("FAILED (compile error): ");
-            jitc_report_error(error, stdout);
+            jitc_report_error(context, stdout);
             jitc_destroy_context(context);
             continue;
         }
