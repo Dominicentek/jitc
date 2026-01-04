@@ -269,6 +269,7 @@ jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from) {
     if (from->kind != Type_Array && from->kind != Type_Function) return from;
     jitc_type_t type = {};
     type.kind = Type_Pointer;
+    type.name = from->name;
     type.ptr.base = from->kind == Type_Array ? from->ptr.base : from;
     type.ptr.prev = from->kind;
     type.size = type.alignment = 8;

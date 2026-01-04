@@ -7,8 +7,6 @@
 
 const char* skipped_tests[256] = {
     [10] = "goto not supported",
-    [21] = "function params not implemented yet",
-    [40] = "function params not implemented yet",
     [45] = "some weird pointer shit",
     [47] = "initializers not implemented yet",
     [48] = "initializers not implemented yet",
@@ -79,6 +77,7 @@ int main(int argc, char** argv) {
         jitc_context_t* context = jitc_create_context();
         jitc_error_t* error = NULL;
         jitc_create_header(context, "stdio.h", "int printf(const char*, ...);");
+        jitc_create_header(context, "stdlib.h", "void* calloc(unsigned long a, unsigned long b);");
         if (!jitc_parse_file(context, path)) {
             printf("FAILED (compile error): ");
             jitc_report_error(context, stdout);
@@ -102,6 +101,7 @@ int main(int argc, char** argv) {
             }
             script_segfault = false;
             if (!segfault) printf("FAILED (returned %d)\n", retval);
+            int(*main_func)() = jitc_get(context, "foo");
             uint32_t size = ((uint32_t*)main_func)[-1];
             printf("Machine code dump:\n");
             for (uint32_t i = 0; i < size; i++) {

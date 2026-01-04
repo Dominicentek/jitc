@@ -147,10 +147,18 @@ static size_t process_size_tree(map_t* variable_map, stackvar_t* tree, size_t pa
     return max_size;
 }
 
-static size_t get_stack_size(map_t* variable_map, jitc_ast_t* ast) {
+static size_t get_stack_size(map_t* variable_map, jitc_ast_t* ast, jitc_type_t* type) {
     stackvar_t* size = malloc(sizeof(stackvar_t));
     size->is_leaf = false;
     size->list = list_new();
+    for (size_t i = 0; i < type->func.num_params; i++) {
+        if (!type->func.params[i]->name) continue;
+        stackvar_t* param = malloc(sizeof(stackvar_t));
+        param->is_leaf = true;
+        param->is_global = false;
+        param->var.type = type->func.params[i];
+        list_add_ptr(size->list, param);
+    }
     append_to_size_tree(size->list, ast);
     return process_size_tree(variable_map, size, 0);
 }
@@ -364,7 +372,7 @@ bool jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             if (!ast->decl.type->name) break;
             jitc_variable_t* var = jitc_get_or_static(context, ast->decl.type->name);
             if (var->decltype == Decltype_Static || var->decltype == Decltype_None)
-                var->ptr = malloc(var->type->size);
+                var->ptr = calloc(var->type->size, 1);
             else if (var->decltype == Decltype_Extern) {
                 void* symbol_ptr = NULL;
                 jitc_variable_t* symbol = jitc_get_or_static(context, ast->decl.type->name);
@@ -400,7 +408,7 @@ bool jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 map_get_ptr(variable_map, (char*)name);
                 map_store_ptr(variable_map, stackvar);
             }
-            jitc_asm_func(writer, ast->func.variable, get_stack_size(variable_map, ast->func.body));
+            jitc_asm_func(writer, ast->func.variable, get_stack_size(variable_map, ast->func.body, ast->func.variable));
             for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
                 jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
                 if (assemble(writer, node, variable_map, 0)) jitc_asm_pop(writer);

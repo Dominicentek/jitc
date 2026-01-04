@@ -209,7 +209,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
                     if (!jitc_token_expect(queue, TOKEN_PARENTHESIS_CLOSE)) ERROR(queue_pop_ptr(queue), "Expected ')'");
                     break;
                 }
-                jitc_type_t* param_type = try(jitc_parse_type(context, queue, NULL));
+                jitc_type_t* param_type = jitc_typecache_decay(context, try(jitc_parse_type(context, queue, NULL)));
                 if (param_type->kind == Type_Void) {
                     if (param_type->name) ERROR(token, "'void' cannot have a name");
                     if (list_size(list) > 0) ERROR(token, "'void' must be the only parameter");
@@ -433,28 +433,46 @@ jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* ty
                 else node->floating.value = (int64_t)node->integer.value;
                 node->floating.is_single_precision = type->kind == Type_Float32;
                 node->node_type = AST_Floating;
+                node->exprtype = jitc_typecache_primitive(context,
+                    node->floating.is_single_precision
+                    ? Type_Float32
+                    : Type_Float64
+                );
             }
             else {
                 bool is_negative = !node->integer.is_unsigned && ((node->integer.value >> 63) & 1);
                 node->integer.type_kind = is_pointer(type) ? Type_Int64 : type->kind;
                 node->integer.is_unsigned = is_pointer(type) ? true : type->is_unsigned;
                 memset((char*)&node->integer.value + type->size, is_negative ? 0xFF : 0x00, 8 - type->size);
+                node->exprtype = jitc_typecache_primitive(context, node->integer.type_kind);
+                if (node->integer.is_unsigned) node->exprtype = jitc_typecache_unsigned(context, node->exprtype);
             }
             break;
         case AST_Floating:
-            if (is_floating(type))
+            if (is_floating(type)) {
                 node->floating.is_single_precision = type->kind == Type_Float32;
+                node->exprtype = jitc_typecache_primitive(context,
+                    node->floating.is_single_precision
+                    ? Type_Float32
+                    : Type_Float64
+                );
+            }
             else {
                 node->node_type = AST_Integer;
                 node->integer.value = node->floating.value;
                 node->integer.type_kind = type->kind;
                 node->integer.is_unsigned = type->is_unsigned;
+                node->exprtype = jitc_typecache_primitive(context, node->integer.type_kind);
+                if (node->integer.is_unsigned) node->exprtype = jitc_typecache_unsigned(context, node->exprtype);
             }
             break;
         case AST_StringLit:
             node->node_type = AST_Integer;
             node->integer.type_kind = is_pointer(type) ? Type_Int64 : type->kind;
             node->integer.is_unsigned = is_pointer(type) ? true : type->is_unsigned;
+            node->exprtype = jitc_typecache_primitive(context, Type_Int8);
+            node->exprtype = jitc_typecache_const(context, node->exprtype);
+            node->exprtype = jitc_typecache_pointer(context, node->exprtype);
             break;
         default: {
             jitc_ast_t* cast = mknode(AST_Binary, node->token);

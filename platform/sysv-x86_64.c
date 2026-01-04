@@ -205,6 +205,33 @@ static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t s
     emit(writer, mov, 2, reg(rbp, Type_Pointer, true), reg(rsp, Type_Pointer, true));
     if (stack_size % 16 != 0) stack_size += 16 - (stack_size % 16);
     if (stack_size != 0) emit(writer, sub, 2, reg(rsp, Type_Pointer, true), imm(stack_size, Type_Int32, true));
+
+    int int_params = 0, float_params = 0, stack_params = 2, offset = 0;
+    for (size_t i = 0; i < signature->func.num_params; i++) {
+        jitc_type_t* param = signature->func.params[i];
+        if (offset % param->alignment != 0) offset += param->alignment - (offset % param->alignment);
+        if (!param->name) {
+            if (isflt(param->kind) && float_params < 8) float_params++;
+            else if (!isflt(param->kind) && int_params < 6) int_params++;
+            else stack_params++;
+            continue;
+        }
+        if (isflt(param->kind) && float_params < 8)
+            emit(writer, mov, 2, ptr(rbp, -offset - param->size, param->kind, param->is_unsigned), reg((reg_t[]){
+                xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7, xmm8
+            }[float_params++], param->kind, param->is_unsigned));
+        else if (!isflt(param->kind) && int_params < 6)
+            emit(writer, mov, 2, ptr(rbp, -offset - param->size, param->kind, param->is_unsigned), reg((reg_t[]){
+                rdi, rsi, rdx, rcx, r8, r9
+            }[int_params++], param->kind, param->is_unsigned));
+        else
+            emit(writer, mov, 2,
+                ptr(rbp, -offset - param->size, param->kind, param->is_unsigned),
+                ptr(rbp, stack_params++ * 8, param->kind, param->is_unsigned),
+                param->kind, param->is_unsigned
+            );
+        offset += param->size;
+    }
 }
 
 static void jitc_asm_ret(bytewriter_t* writer) {
