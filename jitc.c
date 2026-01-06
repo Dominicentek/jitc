@@ -4,6 +4,7 @@
 #include "cleanups.h"
 #include "compares.h"
 
+#include <dlfcn.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -283,24 +284,35 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
     return jitc_typecache_named(context, a, NULL) == jitc_typecache_named(context, b, NULL);
 }
 
-bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value) {
+bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, jitc_preserve_t preserve_policy, uint64_t value) {
     if (!type->name) return true;
     jitc_variable_t* prev = jitc_get_variable(context, type->name);
     if (prev) {
         if (list_size(context->scopes) == 1 && prev->decltype == decltype && prev->type == type) return true;
         if (decltype == Decltype_Extern && prev->decltype != Decltype_Typedef) return true;
+        if (decltype == Decltype_None && prev->decltype == Decltype_Extern) {
+            prev->decltype = decltype;
+            return true;
+        }
         if (type->kind == Type_Function && prev->type == type) return true;
+        if (preserve_policy == prev->preserve_policy
+            || preserve_policy == Preserve_IfConst
+            || prev->preserve_policy == Preserve_IfConst
+        ) {
+            prev->preserve_policy = preserve_policy;
+            return true;
+        }
         return false;
     }
     jitc_scope_t* scope = NULL;
     if (decltype == Decltype_Static) scope = list_get_ptr(context->scopes, 0);
     else scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
+    bool global = scope == list_get_ptr(context->scopes, 0);
     autofree jitc_variable_t* var = malloc(sizeof(jitc_variable_t));
     var->type = type;
     var->decltype = decltype;
     var->enum_value = value;
     var->defined = false;
-    var->dependants = var->dependencies = NULL;
     map_get_ptr(scope->variables, (void*)type->name);
     map_store_ptr(scope->variables, move(var));
     return true;
@@ -405,7 +417,11 @@ jitc_error_t* jitc_error_parser(jitc_token_t* token, const char* str, ...) {
 void jitc_report_error(jitc_context_t* context, FILE* file) {
     jitc_error_t* error = move(context->error);
     if (!error) return;
-    fprintf(file, "Error: %s (in %s at %d:%d)\n", error->msg, error->file, error->row, error->col);
+    fprintf(file, "Error: %s ", error->msg);
+    if (error->col == 0 && error->row == 0) {
+        fprintf(file, "(in %s)\n", error->file ?: "linker");
+    }
+    else fprintf(file, "(in %s at %d:%d)\n", error->file ?: "<memory>", error->row, error->col);
     jitc_destroy_error(error);
 }
 
@@ -434,6 +450,7 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
 }
 
 char* jitc_append_string(jitc_context_t* context, const char* str) {
+    if (!str) return NULL;
     char** ptr = (char**)set_find_ptr(context->strings, (char*)str);
     if (ptr) return *ptr;
     char* string = strdup(str);
@@ -453,13 +470,34 @@ jitc_context_t* jitc_create_context() {
     return context;
 }
 
-static jitc_variable_t* jitc_get_symbol(jitc_context_t* context, const char* name, bool disallow_static) {
+static jitc_variable_t* jitc_get_symbol(jitc_context_t* context, const char* name, bool normal_only) {
     jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
     if (!map_find_ptr(scope->variables, (char*)name)) return NULL;
     jitc_variable_t* var = map_as_ptr(scope->variables);
     if (var->decltype == Decltype_Typedef) return NULL;
-    if (var->decltype == Decltype_Static && disallow_static) return NULL;
+    if (var->decltype == Decltype_Extern && normal_only) return NULL;
+    if (var->decltype == Decltype_Static && normal_only) return NULL;
     return var;
+}
+
+static bool jitc_link(jitc_context_t* context) {
+    jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
+    for (size_t i = 0; i < map_size(scope->variables); i++) {
+        map_index(scope->variables, i);
+        jitc_variable_t* var = map_as_ptr(scope->variables);
+        if (var->decltype == Decltype_EnumItem || var->decltype == Decltype_Typedef || var->ptr) continue;
+        if (var->decltype != Decltype_Extern) {
+            jitc_error_set(context, jitc_error_syntax(NULL, 0, 0, "Non-extern variable isn't resolved (how? idfk. internal bug)"));
+            return false;
+        }
+        jitc_variable_t* symbol = jitc_get_symbol(context, var->type->name, true);
+        var->ptr = symbol ? symbol->ptr : dlsym(RTLD_DEFAULT, var->type->name);
+        if (!var->ptr) {
+            jitc_error_set(context, jitc_error_syntax(NULL, 0, 0, "Unable to resolve symbol '%s'", var->type->name));
+            return false;
+        }
+    }
+    return true;
 }
 
 jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name) {
@@ -540,19 +578,34 @@ bool jitc_parse(jitc_context_t* context, const char* code, const char* filename)
     while (jitc_pop_scope(context));
     if (!ast) return false;
     for (size_t i = 0; i < list_size(ast->list.inner); i++) {
-        try(jitc_compile(context, list_get_ptr(ast->list.inner, i)));
+        jitc_compile(context, list_get_ptr(ast->list.inner, i));
     }
     return true;
 }
 
 bool jitc_parse_file(jitc_context_t* context, const char* filename) {
-    autofree char* code = read_whole_file(context, filename);
-    if (!code) return false;
+    autofree char* code = try(read_whole_file(context, filename));
     return try(jitc_parse(context, code, filename));
 }
 
+bool jitc_reload_file(jitc_context_t* context, const char* filename) {
+    autofree char* code = try(read_whole_file(context, filename));
+    smartptr(jitc_context_t) new_context = jitc_create_context();
+    smartptr(queue_t) tokens = try(jitc_lex(context, code, filename));
+    tokens = try(jitc_preprocess(context, move(tokens), NULL));
+    smartptr(jitc_ast_t) ast = try(jitc_parse_ast(context, tokens));
+    jitc_merge_contexts(context, new_context, ast);
+    return true;
+}
+
 void* jitc_get(jitc_context_t* context, const char* name) {
-    return try(jitc_get_symbol(context, name, true))->ptr;
+    try(jitc_link(context));
+    jitc_variable_t* var = jitc_get_symbol(context, name, true);
+    if (!var) {
+        jitc_error_set(context, jitc_error_syntax(NULL, 0, 0, "Unable to resolve symbol '%s'", name));
+        return NULL;
+    }
+    return var->ptr;
 }
 
 void jitc_destroy_context(jitc_context_t* context) {

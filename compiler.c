@@ -29,7 +29,7 @@ typedef struct {
         struct {
             jitc_type_t* type;
             union {
-                void* ptr;
+                jitc_variable_t* ptr;
                 size_t offset;
             };
         } var;
@@ -76,7 +76,7 @@ static void append_to_size_tree(list_t* list, jitc_ast_t* node) {
             size->var.type = node->decl.type;
             if (node->decl.decltype == Decltype_Extern) {
                 size->is_global = true;
-                size->var.ptr = node->decl.symbol_ptr;
+                size->var.ptr = node->decl.variable;
             }
             list_add_ptr(list, size);
         } break;
@@ -366,35 +366,22 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
     return false;
 }
 
-bool jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
+void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
     switch (ast->node_type) {
         case AST_Declaration: {
             if (!ast->decl.type->name) break;
             jitc_variable_t* var = jitc_get_or_static(context, ast->decl.type->name);
             if (var->decltype == Decltype_Static || var->decltype == Decltype_None)
                 var->ptr = calloc(var->type->size, 1);
-            else if (var->decltype == Decltype_Extern) {
-                void* symbol_ptr = NULL;
-                jitc_variable_t* symbol = jitc_get_or_static(context, ast->decl.type->name);
-                if (!symbol || !symbol->ptr) {
-                    symbol_ptr = dlsym(RTLD_DEFAULT, ast->decl.type->name);
-                    if (!symbol_ptr) {
-                        context->error = jitc_error_parser(ast->token, "Cannot resolve symbol '%s'", ast->decl.type->name);
-                        return false;
-                    }   
-                }
-                else symbol_ptr = symbol->ptr;
-                ast->decl.symbol_ptr = var->ptr = symbol_ptr;
-            }
+            ast->decl.variable = var;
         } break;
         case AST_Binary: {
             jitc_variable_t* var = jitc_get_or_static(context, ast->binary.left->variable.name);
             memcpy(var->ptr, &ast->binary.right->integer.value, ast->exprtype->size);
         } break;
         case AST_Function: {
-            smartptr(bytewriter_t) writer = bytewriter_new();
             smartptr(map_t) variable_map = map_new(compare_int64);
-            bytewriter_int32(writer, 0);
+            bytewriter_t* writer = bytewriter_new();
             bool is_return = false;
             jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
             for (size_t i = 0; i < map_size(global_scope->variables); i++) {
@@ -404,11 +391,13 @@ bool jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 stackvar_t* stackvar = malloc(sizeof(stackvar_t));
                 stackvar->is_global = stackvar->is_leaf = true;
                 stackvar->var.type = var->type;
-                stackvar->var.ptr = var->ptr;
+                stackvar->var.ptr = var;
                 map_get_ptr(variable_map, (char*)name);
                 map_store_ptr(variable_map, stackvar);
             }
             jitc_asm_func(writer, ast->func.variable, get_stack_size(variable_map, ast->func.body, ast->func.variable));
+            map_find_ptr(global_scope->variables, (void*)ast->func.variable->name);
+            jitc_variable_t* var = map_as_ptr(global_scope->variables);
             for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
                 jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
                 if (assemble(writer, node, variable_map, 0)) jitc_asm_pop(writer);
@@ -419,10 +408,18 @@ bool jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 jitc_asm_ret(writer);
             }
             jitc_asm_func_end(writer);
-            *(uint32_t*)bytewriter_data(writer) = bytewriter_size(writer) - 4;
-            jitc_get_or_static(context, ast->func.variable->name)->ptr = (char*)make_executable(context, bytewriter_data(writer), bytewriter_size(writer)) + 4;
+            autofree jitc_func_trampoline_t* func = malloc(sizeof(jitc_func_trampoline_t));
+            func->size = bytewriter_size(writer);
+            autofree void* data = bytewriter_delete(writer);
+            func->addr = make_executable(context, data, func->size);
+            func->mov_rax[0] = 0x48; func->mov_rax[1] = 0xB8;
+            func->jmp_rax[0] = 0xFF; func->jmp_rax[1] = 0xE0;
+            jitc_get_or_static(context, ast->func.variable->name)->func = make_executable(context, func, sizeof(jitc_func_trampoline_t));
         } break;
         default: break;
     }
-    return true;
+}
+
+void jitc_merge_contexts(jitc_context_t* to, jitc_context_t* from, jitc_ast_t* ast) {
+    // todo
 }

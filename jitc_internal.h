@@ -19,6 +19,20 @@ struct jitc_context_t {
 };
 
 typedef enum: uint8_t {
+    Decltype_None,
+    Decltype_Static,
+    Decltype_Extern,
+    Decltype_Typedef,
+    Decltype_EnumItem,
+} jitc_decltype_t;
+
+typedef enum: uint8_t {
+    Preserve_IfConst,
+    Preserve_Always,
+    Preserve_Never
+} jitc_preserve_t;
+
+typedef enum: uint8_t {
     Type_Int8,
     Type_Int16,
     Type_Int32,
@@ -58,14 +72,6 @@ typedef enum: uint8_t {
     AST_Variable,
     AST_WalkStruct,
 } jitc_ast_type_t;
-
-typedef enum: uint8_t {
-    Decltype_None,
-    Decltype_Static,
-    Decltype_Extern,
-    Decltype_Typedef,
-    Decltype_EnumItem,
-} jitc_decltype_t;
 
 typedef enum: uint8_t {
     Unary_PrefixIncrement,
@@ -178,6 +184,27 @@ struct jitc_type_t {
     };
 };
 
+typedef struct {
+    struct __attribute__((packed)) {
+        char mov_rax[2];
+        void* addr;
+        char jmp_rax[2];
+    };
+    int size;
+} jitc_func_trampoline_t;
+
+typedef struct {
+    jitc_type_t* type;
+    jitc_decltype_t decltype;
+    jitc_preserve_t preserve_policy;
+    bool defined;
+    union {
+        void* ptr;
+        uint64_t enum_value;
+        jitc_func_trampoline_t* func;
+    };
+} jitc_variable_t;
+
 typedef struct jitc_ast_t jitc_ast_t;
 struct jitc_ast_t {
     jitc_ast_type_t node_type;
@@ -208,7 +235,7 @@ struct jitc_ast_t {
         struct {
             jitc_decltype_t decltype;
             jitc_type_t* type;
-            void* symbol_ptr;
+            jitc_variable_t* variable;
         } decl;
         struct {
             jitc_type_t* variable;
@@ -244,18 +271,6 @@ struct jitc_ast_t {
     };
 };
 
-typedef struct {
-    jitc_type_t* type;
-    jitc_decltype_t decltype;
-    bool defined;
-    list_t* dependencies;
-    list_t* dependants;
-    union {
-        void* ptr;
-        uint64_t enum_value;
-    };
-} jitc_variable_t;
-
 #define PROCESS_TOKENS(type) TOKENS(type##_KEYWORD, type##_SYMBOL, type##_SPECIAL)
 
 #define ENUM_KEYWORD(x) TOKEN_##x,
@@ -289,12 +304,14 @@ typedef struct {
     KEYWORD(float) \
     KEYWORD(for) \
     KEYWORD(goto) \
+    KEYWORD(hotswap) \
     KEYWORD(if) \
     KEYWORD(inline) \
     KEYWORD(int) \
     KEYWORD(long) \
     KEYWORD(nullptr) \
     KEYWORD(offsetof) \
+    KEYWORD(preserve) \
     KEYWORD(register) \
     KEYWORD(restrict) \
     KEYWORD(return) \
@@ -416,7 +433,7 @@ jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, co
 jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from);
 bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 
-bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, uint64_t value);
+bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, jitc_preserve_t preserve_policy, uint64_t value);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name);
 bool jitc_set_defined(jitc_context_t* context, const char* name);
 
@@ -439,10 +456,12 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 char* jitc_append_string(jitc_context_t* context, const char* string);
 queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* filename, map_t* macros);
 
-jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype);
+jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype, jitc_preserve_t* preserve_policy);
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int min_prec, jitc_type_t** exprtype);
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
-bool jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
+void* jitc_compile_func(jitc_context_t* context, jitc_ast_t* ast, int* size);
+void jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
+void jitc_merge_contexts(jitc_context_t* to, jitc_context_t* from, jitc_ast_t* ast);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
 void jitc_delete_memchunks(jitc_context_t* context);

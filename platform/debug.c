@@ -7,7 +7,7 @@ static void jitc_asm_pushf(bytewriter_t* writer, float value) { printf("pushf\n"
 static void jitc_asm_pushd(bytewriter_t* writer, double value) { printf("pushd\n"); }
 static void jitc_asm_pop(bytewriter_t* writer) { printf("pop\n"); }
 static void jitc_asm_load(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { printf("load\n"); }
-static void jitc_asm_laddr(bytewriter_t* writer, void* ptr, jitc_type_kind_t kind, bool is_unsigned) { printf("laddr\n"); }
+static void jitc_asm_laddr(bytewriter_t* writer, jitc_variable_t* var, jitc_type_kind_t kind, bool is_unsigned) { printf("laddr\n"); }
 static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) { printf("lstack\n"); }
 static void jitc_asm_store(bytewriter_t* writer) { printf("store\n"); }
 static void jitc_asm_copy(bytewriter_t* writer, uint64_t size, uint64_t alignment) { printf("copy\n"); }

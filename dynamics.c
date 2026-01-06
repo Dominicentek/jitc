@@ -286,8 +286,6 @@ void map_remove(map_t* map) {
     );
 }
 
-#define COUNTDOWN(x) x __IF__(x > 0, __RECURSE__(COUNTDOWN(__EVAL__(x - 1))))
-
 void map_delete(map_t* map) {
     free(map->entries);
     free(map);

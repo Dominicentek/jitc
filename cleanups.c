@@ -19,3 +19,4 @@ cleanup_func(queue_t, queue_delete)
 cleanup_func(bytewriter_t, bytewriter_delete)
 
 cleanup_func(jitc_ast_t, jitc_destroy_ast)
+cleanup_func(jitc_context_t, jitc_destroy_context)

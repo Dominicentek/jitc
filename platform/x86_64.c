@@ -827,11 +827,10 @@ static void jitc_asm_load(bytewriter_t* writer, jitc_type_kind_t kind, bool is_u
     res->type = StackItem_lvalue_abs;
 }
 
-static void jitc_asm_laddr(bytewriter_t* writer, void* ptr, jitc_type_kind_t kind, bool is_unsigned) {
-    emit(writer, mov, 2,
-        unptr(op(push(writer, StackItem_lvalue_abs, kind, is_unsigned))),
-        imm((uint64_t)ptr, Type_Pointer, true)
-    );
+static void jitc_asm_laddr(bytewriter_t* writer, jitc_variable_t* var, jitc_type_kind_t kind, bool is_unsigned) {
+    operand_t op1 = op(push(writer, StackItem_lvalue_abs, kind, is_unsigned));
+    emit(writer, mov, 2, unptr(op1), imm((uint64_t)&var->ptr, Type_Pointer, true));
+    emit(writer, mov, 2, unptr(op1), op1);
 }
 
 static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) {

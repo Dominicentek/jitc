@@ -36,5 +36,6 @@ void __cleanup_queue_t(void* queue);
 void __cleanup_bytewriter_t(void* writer);
 
 void __cleanup_jitc_ast_t(void* type);
+void __cleanup_jitc_context_t(void* context);
 
 #endif

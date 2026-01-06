@@ -15,12 +15,12 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 
 ## TODO
 
-- Parameters/varargs/returns in function prolog and epilog
+- Struct parameters/returns and varargs in function prolog and epilog
 - Switch statements
 - Initializers
 - Compound expressions
 - Preprocessor
-- Windows support
+- Windows support (x64 ABI)
 
 Calling it done here, the things below are planned but not guaranteed
 
@@ -29,12 +29,14 @@ Calling it done here, the things below are planned but not guaranteed
 - Rewrite IR into SSA
 - Implement custom extensions
   - GNU statement expressions
-  - GNU ternary syntax (`x ? : y`)
+  - GNU ternary syntax (`x ?: y`)
   - switch expressions
-  - Zig's `defer` or GNU `__attribute__((cleanup))`, either one of the two
-  - C++ lambdas
+  - Zig's `defer` or GNU `__attribute__((cleanup))`, either one of the two (or both)
+  - C++ lambdas (and closures)
   - C++ templates (won't blow up to the complexity of C++)
-  - C++ operator overloading (also won't blow up to C++'s complexity)
+  - C++ operator overloading (also won't blow up to C++'s complexity, likely only arithmetic/bitwise/deref operators)
+  - Methods in structs (implicit `this` pointer)
+  - Ability to make a struct truthy via a specific method (via overloading `!`? or disallow overloading of `!` and imply it instead via the truthy method)
   
 Note to self: When implementing extension features, still make programs as explicit as possible (minimal implicit behavior *cough cough C++ cough*)
 
@@ -160,33 +162,76 @@ Explicitly unsupported features
 - `asm` and `fortran`
 - K&R-style function definitions and syntax
 
-### Preprocessor Extensions
+## Preprocessor Extensions
 
 jitc's preprocessor aims to be a turing complete extension of the C preprocessor. It achieves this by adding some special macros.
 
-#### `__DEFINE__(name, ...)`
+### `__DEFINE__(name, ...)`
 
 Expands to nothing.
 
 Defines a new macro `name` that expands to `__VA_ARGS__`.
 
-#### `__UNDEF__(macro)`
+### `__UNDEF__(macro)`
 
 Expands to nothing.
 
 Undefines a macro.
 
-#### `__RECURSE__(...)`
+### `__RECURSE__(...)`
 
 Forces an expansion of `__VA_ARGS__` bypassing the recursion check. Has a hard limit of 1024 expansions per run.
 
-#### `__IF__(cond, ...)`
+### `__IF__(cond, ...)`
 
 Expands to `__VA_ARGS__` if `cond` doesn't evaluate to `0` and isn't empty. `cond` has the semantics as with the `#if` directive.
 
-#### `__EVAL__(expr)`
+### `__EVAL__(expr)`
 
 Evaluates the expression `expr`. Same semantics as with the `#if` directive.
+
+## Hotswapping
+
+jitc provides a way to modify functions or change the values of variables at runtime.
+
+In order to control the reloading process, you can use `preserve` and `hotswap` keywords.
+
+Variables marked as `preserve` have their values preserved across reloads,
+and variables marked as `hotswap` have their values set to a new value the new script specifies.
+
+If preservation policy is unspecified, immutables have their policy set to `hotswap` by default
+and mutables have their policy set to `preserve` by default.
+
+If the policy changes across reload, the old policy is discarded and the new one is used.
+If the old policy was specified and the new policy is unspecified, the default of the mutable state is used.
+
+If the type changed across reloads and the value is marked as `preserve`, the value is casted to.
+If casting is not allowed, the value gets treated as `hotswap` even if it's marked as `preserve`.
+
+If the storage class changes, the new storage class is used and the value gets reset.
+
+### Pointer lifetime
+
+If the host program (via `jitc_get`) or a script receives a pointer to a symbol,
+the pointer is no longer valid once reloaded. This does __not__ apply to functions, they are safe.
+
+### Migration Rules
+
+- Integers/floats/enums can be migrated to different integers/floats/enums
+- Pointers can be migrated to different pointers
+- Functions can be migrated to different functions no matter their return type or argument types
+- 64-bit integers CANNOT be migrated to pointers and vice-versa
+- When storage class changes (`static`, `extern`, `typedef`), the value is immediately invalidated
+- If migration isn't possible, the value is not preserved and gets initialized to a new one
+- Structs
+  - Old layout tries to match new layout by field name and path (via anonymous structs)
+  - Removed fields are discarded
+  - New fields are initialized
+  - Unions reset if their size or alignment doesn't match, otherwise they're kept as-is
+  - If a field gets invalidated, only the invalidated field gets initialized, not the whole struct
+- Arrays
+  - Rules apply for each element individually
+  - If the old size is smaller than new size, new elements are initialized
 
 ## API
 
@@ -195,6 +240,9 @@ Evaluates the expression `expr`. Same semantics as with the `#if` directive.
   - `const char* file` - Name of the file where the error occured
   - `int row` - Line number of the error location
   - `int col` - Column number of the error location
+
+If `row` and `col` are both `0` then it's a system error.
+If `file` is `NULL`, it's a linker error, otherwise it's a file IO error.
 
 - `jitc_context_t* jitc_create_context()`
   - Creates a new context
@@ -205,8 +253,12 @@ Evaluates the expression `expr`. Same semantics as with the `#if` directive.
   - `filename`: Can be `NULL`, specifies the filename for the lexer
 - `bool jitc_parse_file(jitc_context* context, const char* file)`
   - Reads a file from the filesystem and parses its contents, returns `false` on error
+- `bool jitc_reload_file(jitc_context_t* context, const char* file)`
+  - Reads a file from the filesystem and hotswaps all symbols defined in it , returns `false` on error
 - `void* jitc_get(jitc_context* context, const char* name)`
   - Returns a symbol from the context, `NULL` on error
+  - If the pointer is not to a function, it's only valid until the next reload.
+    Reloading destroys the pointer if it's not preserved or its type changes.
 - `void jitc_destroy_context(jitc_context_t* context)`
   - Destroys a context and all the variables and functions declared with it
 - `jitc_error_t* jitc_get_error(jitc_context_t* context)`
