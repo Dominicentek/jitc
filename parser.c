@@ -287,7 +287,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* tokens, jitc
             if (jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) {
                 smartptr(list_t) list = list_new();
                 while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
-                    if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
+                    while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
                     jitc_type_t* field_type = try(jitc_parse_base_type(context, tokens, NULL, NULL));
                     while (true) {
                         field_type = jitc_typecache_named(context, field_type, NULL);
@@ -1064,7 +1064,7 @@ static struct {
     bool rtl_assoc;
     int precedence;
     jitc_binary_op_t type;
-} op_info[] = {
+} op_info[TOKEN_COUNT] = {
     [TOKEN_ASTERISK]                   = { false, 13, Binary_Multiplication },
     [TOKEN_SLASH]                      = { false, 13, Binary_Division },
     [TOKEN_PERCENT]                    = { false, 13, Binary_Modulo },
@@ -1083,7 +1083,7 @@ static struct {
     [TOKEN_PIPE]                       = { false, 6,  Binary_Or },
     [TOKEN_DOUBLE_AMPERSAND]           = { false, 5,  Binary_LogicAnd },
     [TOKEN_DOUBLE_PIPE]                = { false, 4,  Binary_LogicOr },
-    [TOKEN_QUESTION_MARK]              = { true,  3   },
+    [TOKEN_QUESTION_MARK]              = { false, 3   },
     [TOKEN_EQUALS]                     = { true,  2,  Binary_Assignment },
     [TOKEN_PLUS_EQUALS]                = { true,  2,  Binary_AssignAddition },
     [TOKEN_MINUS_EQUALS]               = { true,  2,  Binary_AssignSubtraction },
@@ -1247,7 +1247,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         smartptr(jitc_ast_t) node = mknode(AST_Scope, token);
         jitc_push_scope(context);
         while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
-            if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
+            while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
             list_add_ptr(node->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Any)));
         }
         jitc_pop_scope(context);
@@ -1314,9 +1314,6 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         }
         return move(list);
     }
-    if ((token = jitc_token_expect(tokens, TOKEN_SEMICOLON))) {
-        return mknode(AST_List, token);
-    }
     if (allowed & ParseType_Expression) {
         smartptr(jitc_ast_t) node = try(jitc_parse_expression(context, tokens, true, NULL));
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) ERROR(NEXT_TOKEN, "Expected ';'");
@@ -1328,7 +1325,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* tokens) {
     smartptr(jitc_ast_t) ast = mknode(AST_List, NEXT_TOKEN);
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
-        if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) continue;
+        while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
         list_add_ptr(ast->list.inner, try(jitc_parse_statement(context, tokens, ParseType_Declaration)));
     }
     return jitc_flatten_ast(move(ast), NULL);

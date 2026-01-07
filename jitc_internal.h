@@ -379,6 +379,7 @@ struct jitc_ast_t {
     SYMBOL("\\", BACKSLASH) \
     SYMBOL("//", COMMENT) \
     SYMBOL("/""*", MULTILINE_COMMENT) \
+    SPECIAL(COUNT) \
 
 typedef enum: uint8_t {
     PROCESS_TOKENS(ENUM)

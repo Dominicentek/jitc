@@ -7,20 +7,20 @@
 #define move(ptr) ({ \
     typeof(ptr)* _ptr = &(ptr); \
     typeof(ptr) _tmp = *_ptr; \
-    *_ptr = NULL; \
+    *_ptr = 0; \
     _tmp; \
 })
 
 #define try(x) ({ \
     typeof(x) _tmp = (x); \
-    if (!_tmp) return NULL; \
+    if (!_tmp) return 0; \
     _tmp; \
 })
 
 #define replace(x) *({ \
     typeof(x)* _tmp = &(x); \
     free(*_tmp); \
-    *_tmp = NULL; \
+    *_tmp = 0; \
     _tmp; \
 })
 

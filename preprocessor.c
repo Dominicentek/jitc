@@ -1,3 +1,4 @@
+#include "dynamics.h"
 #include "jitc_internal.h"
 
 #include "compares.h"
@@ -5,7 +6,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define ERROR(...) ({ jitc_error_set(context, jitc_error_parser(__VA_ARGS__)); return NULL; })
+#define ERROR(token, ...) ({ jitc_error_set(context, jitc_error_parser(token, "(Preprocessor) " __VA_ARGS__)); return 0; })
 
 typedef enum {
     MacroType_Ordinary,
@@ -124,9 +125,9 @@ static bool is_identifier(jitc_token_t* token, const char* id) {
         (token_table[token->type] && strcmp(token_table[token->type], id) == 0);
 }
 
-#define optional(x) ({ \
+#define optional(x, y) ({ \
     typeof(x) _tmp = (x); \
-    if (!_tmp) continue; \
+    if (!_tmp) y; \
     _tmp; \
 })
 
@@ -144,14 +145,112 @@ static bool is_identifier(jitc_token_t* token, const char* id) {
 
 static void run_macro(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* macros);
 
-static size_t get_operand(map_t* macros, token_stream_t* stream) {
-
+static bool get_operand(jitc_context_t* context, map_t* macros, token_stream_t* stream, int64_t* value) {
+    jitc_token_t* token;
+    smartptr(stack_t) stack = stack_new();
+    while (true) {
+        token = expect(list_get_ptr(stream->tokens, stream->ptr++), "Expected operand");
+        if (
+            token->type == TOKEN_MINUS ||
+            token->type == TOKEN_PLUS ||
+            token->type == TOKEN_TILDE ||
+            token->type == TOKEN_EXCLAMATION_MARK
+        ) stack_push_int(stack, token->type);
+        else break;
+    }
+    if (is_identifier(token, "defined")) {
+        token = expect_and(
+            (jitc_token_t*)list_get_ptr(stream->tokens, stream->ptr++),
+            this->type == TOKEN_IDENTIFIER || this->type == TOKEN_PARENTHESIS_OPEN,
+            "Macro name expected"
+        );
+        const char* name = NULL;
+        if (token->type == TOKEN_IDENTIFIER) name = token->value.string;
+        else if (token->type == TOKEN_PARENTHESIS_OPEN) {
+            token = expect_and((jitc_token_t*)list_get_ptr(stream->tokens, stream->ptr++), this->type == TOKEN_IDENTIFIER, "Macro name expected");
+            name = token->value.string;
+            token = expect_and((jitc_token_t*)list_get_ptr(stream->tokens, stream->ptr++), this->type == TOKEN_PARENTHESIS_CLOSE, "Expected ')'");
+        }
+        if (map_find_ptr(macros, (char*)name)) *value = 1;
+        else *value = 0;
+    }
+    else if (token->type == TOKEN_INTEGER) *value = token->value.integer;
+    else ERROR(token, "Expected operand");
+    while (stack_size(stack)) {
+        jitc_token_type_t type = stack_pop_int(stack);
+        if (type == TOKEN_PLUS) continue;
+        else if (type == TOKEN_MINUS) *value = -*value;
+        else if (type == TOKEN_TILDE) *value = ~*value;
+        else if (type == TOKEN_EXCLAMATION_MARK) *value = !*value;
+    }
+    return true;
 }
 
-static jitc_token_t* compute_expression(map_t* macros, token_stream_t* stream) {
-    list_t* expr = list_new();
-    // todo
-    return NULL;
+static struct {
+    bool rtl_assoc;
+    int precedence;
+} op_info[TOKEN_COUNT] = {
+    [TOKEN_ASTERISK]                   = { false, 11, },
+    [TOKEN_SLASH]                      = { false, 11, },
+    [TOKEN_PERCENT]                    = { false, 11, },
+    [TOKEN_PLUS]                       = { false, 10, },
+    [TOKEN_MINUS]                      = { false, 10, },
+    [TOKEN_DOUBLE_LESS_THAN]           = { false, 9,  },
+    [TOKEN_DOUBLE_GREATER_THAN]        = { false, 9,  },
+    [TOKEN_LESS_THAN]                  = { false, 8,  },
+    [TOKEN_GREATER_THAN]               = { false, 8,  },
+    [TOKEN_LESS_THAN_EQUALS]           = { false, 8,  },
+    [TOKEN_GREATER_THAN_EQUALS]        = { false, 8,  },
+    [TOKEN_DOUBLE_EQUALS]              = { false, 7,  },
+    [TOKEN_NOT_EQUALS]                 = { false, 7,  },
+    [TOKEN_AMPERSAND]                  = { false, 6,  },
+    [TOKEN_HAT]                        = { false, 5,  },
+    [TOKEN_PIPE]                       = { false, 4,  },
+    [TOKEN_DOUBLE_AMPERSAND]           = { false, 3,  },
+    [TOKEN_DOUBLE_PIPE]                = { false, 2,  },
+    [TOKEN_QUESTION_MARK]              = { false, 1   },
+};
+
+static bool compute_expression(jitc_context_t* context, map_t* macros, token_stream_t* stream, int64_t* left, int min_prec) {
+    try(get_operand(context, macros, stream, left));
+    while (true) {
+        jitc_token_t* token = optional(list_get_ptr(stream->tokens, stream->ptr), break);
+        int precedence = op_info[token->type].precedence;
+        if (precedence < min_prec) break;
+        stream->ptr++;
+        if (token->type == TOKEN_QUESTION_MARK) {
+            int64_t then, otherwise;
+            try(compute_expression(context, macros, stream, &then, precedence));
+            expect_and((jitc_token_t*)list_get_ptr(stream->tokens, stream->ptr++), this->type == TOKEN_COLON, "Expected ':'");
+            try(compute_expression(context, macros, stream, &otherwise, precedence));
+            *left = *left != 0 ? then : otherwise;
+            continue;
+        }
+        if (*left == 0 && token->type == TOKEN_DOUBLE_AMPERSAND) return 0;
+        if (*left != 0 && token->type == TOKEN_DOUBLE_PIPE)      return 1;
+        int64_t right;
+        compute_expression(context, macros, stream, &right, precedence + !op_info[token->type].rtl_assoc);
+        switch (token->type) {
+            case TOKEN_PLUS: *left += right; break;
+            case TOKEN_MINUS: *left -= right; break;
+            case TOKEN_ASTERISK: *left *= right; break;
+            case TOKEN_SLASH: if (right == 0) ERROR(token, "Division by 0"); *left /= right; break;
+            case TOKEN_PERCENT: if (right == 0) ERROR(token, "Division by 0"); *left %= right; break;
+            case TOKEN_AMPERSAND: *left &= right; break;
+            case TOKEN_PIPE: *left |= right; break;
+            case TOKEN_HAT: *left ^= right; break;
+            case TOKEN_DOUBLE_LESS_THAN: *left <<= right; break;
+            case TOKEN_DOUBLE_GREATER_THAN: *left <<= right; break;
+            case TOKEN_DOUBLE_EQUALS: *left = *left == right; break;
+            case TOKEN_NOT_EQUALS: *left = *left == right; break;
+            case TOKEN_LESS_THAN: *left = *left < right; break;
+            case TOKEN_GREATER_THAN: *left = *left > right; break;
+            case TOKEN_LESS_THAN_EQUALS: *left = *left <= right; break;
+            case TOKEN_GREATER_THAN_EQUALS: *left = *left >= right; break;
+            default: break;
+        }
+    }
+    return true;
 }
 
 static void expand(jitc_context_t* context, jitc_token_t* base, map_t* macros, token_stream_t* dest, token_stream_t* tokens, map_t* args, list_t* varargs, set_t* used_macros, int recurse_uses) {
@@ -252,7 +351,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* token_queue, map_t* m
         if (stack_size(cond_stack) > 0) do_things = ((cond_t*)stack_peek_ptr(cond_stack))->state == Cond_Expanding;
         if (token->type == TOKEN_HASHTAG && curr_line != token->row) {
             curr_line = token->row;
-            token = optional(advance(&stream, &curr_line));
+            token = optional(advance(&stream, &curr_line), continue);
             if (is_identifier(token, "define")) {
                 token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_IDENTIFIER, "Expected identifier");
                 macro_t* macro = new_macro(macros, token->value.string, MacroType_Ordinary);
@@ -284,10 +383,28 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* token_queue, map_t* m
                 // skip over EOF token
             }
             else if (is_identifier(token, "if")) {
-                // todo
+                smartptr(list_t) list = list_new();
+                token_stream_t expr = {list};
+                while ((token = advance(&stream, &curr_line))) list_add_ptr(expr.tokens, token);
+                int64_t value = 0;
+                try(compute_expression(context, macros, &expr, &value, 0));
+                cond_t* cond = malloc(sizeof(cond_t));
+                cond->start = token;
+                cond->state = do_things ? value != 0 ? Cond_Expanding : Cond_WillExpand : Cond_Expanded;
+                cond->has_else = false;
+                stack_push_ptr(cond_stack, move(cond));
             }
             else if (is_identifier(token, "elif")) {
-                // todo
+                if (stack_size(cond_stack) == 0) ERROR(token, "else without if");
+                smartptr(list_t) list = list_new();
+                token_stream_t expr = {list};
+                while ((token = advance(&stream, &curr_line))) list_add_ptr(expr.tokens, token);
+                int64_t value;
+                try(compute_expression(context, macros, &expr, &value, 0));
+                cond_t* cond = stack_peek_ptr(cond_stack);
+                if (cond->has_else) ERROR(token, "Duplicate else");
+                cond->start = token;
+                cond->state = cond->state != Cond_Expanded ? value != 0 ? Cond_Expanding : Cond_WillExpand : Cond_Expanded;
             }
             else if (is_identifier(token, "else")) {
                 if (stack_size(cond_stack) == 0) ERROR(token, "else without if");
