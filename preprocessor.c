@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define ERROR(token, ...) ({ jitc_error_set(context, jitc_error_parser(token, "(Preprocessor) " __VA_ARGS__)); return 0; })
+#define throw_impl(token, ...) jitc_error_set(context, jitc_error_parser(token, "(Preprocessor) " __VA_ARGS__))
 
 typedef enum {
     MacroType_Ordinary,
@@ -133,17 +133,18 @@ static bool is_identifier(jitc_token_t* token, const char* id) {
 
 #define expect(x, msg, ...) ({ \
     typeof(x) _tmp = (x); \
-    if (!_tmp) ERROR(token, msg __VA_OPT__(,) __VA_ARGS__); \
+    if (!_tmp) throw(token, msg __VA_OPT__(,) __VA_ARGS__); \
     _tmp; \
 })
 
 #define expect_and(x, cond, msg, ...) ({ \
     typeof(x) this = (x); \
-    if (!this || !(cond)) ERROR(token, msg __VA_OPT__(,) __VA_ARGS__); \
+    if (!this || !(cond)) throw(token, msg __VA_OPT__(,) __VA_ARGS__); \
     this; \
 })
 
 static void run_macro(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* macros);
+static bool compute_expression(jitc_context_t* context, map_t* macros, token_stream_t* stream, int64_t* left, int min_prec);
 
 static bool get_operand(jitc_context_t* context, map_t* macros, token_stream_t* stream, int64_t* value) {
     jitc_token_t* token;
@@ -175,7 +176,11 @@ static bool get_operand(jitc_context_t* context, map_t* macros, token_stream_t* 
         else *value = 0;
     }
     else if (token->type == TOKEN_INTEGER) *value = token->value.integer;
-    else ERROR(token, "Expected operand");
+    else if (token->type == TOKEN_PARENTHESIS_OPEN) {
+        try(compute_expression(context, macros, stream, value, 1));
+        expect_and((jitc_token_t*)list_get_ptr(stream->tokens, stream->ptr++), this->type == TOKEN_PARENTHESIS_CLOSE, "Expected ')'");
+    }
+    else throw(token, "Expected operand");
     while (stack_size(stack)) {
         jitc_token_type_t type = stack_pop_int(stack);
         if (type == TOKEN_PLUS) continue;
@@ -226,27 +231,27 @@ static bool compute_expression(jitc_context_t* context, map_t* macros, token_str
             *left = *left != 0 ? then : otherwise;
             continue;
         }
-        if (*left == 0 && token->type == TOKEN_DOUBLE_AMPERSAND) return 0;
-        if (*left != 0 && token->type == TOKEN_DOUBLE_PIPE)      return 1;
         int64_t right;
-        compute_expression(context, macros, stream, &right, precedence + !op_info[token->type].rtl_assoc);
+        try(compute_expression(context, macros, stream, &right, precedence + !op_info[token->type].rtl_assoc));
         switch (token->type) {
             case TOKEN_PLUS: *left += right; break;
             case TOKEN_MINUS: *left -= right; break;
             case TOKEN_ASTERISK: *left *= right; break;
-            case TOKEN_SLASH: if (right == 0) ERROR(token, "Division by 0"); *left /= right; break;
-            case TOKEN_PERCENT: if (right == 0) ERROR(token, "Division by 0"); *left %= right; break;
+            case TOKEN_SLASH: if (right == 0) throw(token, "Division by 0"); *left /= right; break;
+            case TOKEN_PERCENT: if (right == 0) throw(token, "Division by 0"); *left %= right; break;
             case TOKEN_AMPERSAND: *left &= right; break;
             case TOKEN_PIPE: *left |= right; break;
             case TOKEN_HAT: *left ^= right; break;
             case TOKEN_DOUBLE_LESS_THAN: *left <<= right; break;
-            case TOKEN_DOUBLE_GREATER_THAN: *left <<= right; break;
+            case TOKEN_DOUBLE_GREATER_THAN: *left >>= right; break;
             case TOKEN_DOUBLE_EQUALS: *left = *left == right; break;
             case TOKEN_NOT_EQUALS: *left = *left == right; break;
             case TOKEN_LESS_THAN: *left = *left < right; break;
             case TOKEN_GREATER_THAN: *left = *left > right; break;
             case TOKEN_LESS_THAN_EQUALS: *left = *left <= right; break;
             case TOKEN_GREATER_THAN_EQUALS: *left = *left >= right; break;
+            case TOKEN_DOUBLE_AMPERSAND: *left = *left && right; break;
+            case TOKEN_DOUBLE_PIPE: *left = *left || right; break;
             default: break;
         }
     }
@@ -377,7 +382,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* token_queue, map_t* m
                 }
                 char* filename = NULL;
                 if (token->type == TOKEN_STRING) filename = token->value.string;
-                else ERROR(token, "Expected string");
+                else throw(token, "Expected string");
                 queue_t* included = try(jitc_include(context, token, filename, macros));
                 while (queue_size(included) > 1) list_add_ptr(out_stream.tokens, queue_pop_ptr(included));
                 // skip over EOF token
@@ -387,7 +392,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* token_queue, map_t* m
                 token_stream_t expr = {list};
                 while ((token = advance(&stream, &curr_line))) list_add_ptr(expr.tokens, token);
                 int64_t value = 0;
-                try(compute_expression(context, macros, &expr, &value, 0));
+                try(compute_expression(context, macros, &expr, &value, 1));
                 cond_t* cond = malloc(sizeof(cond_t));
                 cond->start = token;
                 cond->state = do_things ? value != 0 ? Cond_Expanding : Cond_WillExpand : Cond_Expanded;
@@ -395,26 +400,26 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* token_queue, map_t* m
                 stack_push_ptr(cond_stack, move(cond));
             }
             else if (is_identifier(token, "elif")) {
-                if (stack_size(cond_stack) == 0) ERROR(token, "else without if");
+                if (stack_size(cond_stack) == 0) throw(token, "else without if");
                 smartptr(list_t) list = list_new();
                 token_stream_t expr = {list};
                 while ((token = advance(&stream, &curr_line))) list_add_ptr(expr.tokens, token);
                 int64_t value;
-                try(compute_expression(context, macros, &expr, &value, 0));
+                try(compute_expression(context, macros, &expr, &value, 1));
                 cond_t* cond = stack_peek_ptr(cond_stack);
-                if (cond->has_else) ERROR(token, "Duplicate else");
+                if (cond->has_else) throw(token, "Duplicate else");
                 cond->start = token;
                 cond->state = cond->state != Cond_Expanded ? value != 0 ? Cond_Expanding : Cond_WillExpand : Cond_Expanded;
             }
             else if (is_identifier(token, "else")) {
-                if (stack_size(cond_stack) == 0) ERROR(token, "else without if");
+                if (stack_size(cond_stack) == 0) throw(token, "else without if");
                 cond_t* cond = stack_peek_ptr(cond_stack);
-                if (cond->has_else) ERROR(token, "Duplicate else");
+                if (cond->has_else) throw(token, "Duplicate else");
                 cond->has_else = true;
                 cond->state = cond->state != Cond_Expanded ? Cond_Expanding : Cond_Expanded;
             }
             else if (is_identifier(token, "endif")) {
-                if (stack_size(cond_stack) == 0) ERROR(token, "endif without if");
+                if (stack_size(cond_stack) == 0) throw(token, "endif without if");
                 free(stack_pop_ptr(cond_stack));
             }
             else if ((is_identifier(token, "ifdef") || is_identifier(token, "ifndef"))) {
@@ -428,16 +433,16 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* token_queue, map_t* m
                 stack_push_ptr(cond_stack, move(cond));
             }
             else if ((is_identifier(token, "elifdef")) || (is_identifier(token, "elifndef"))) {
-                if (stack_size(cond_stack) == 0) ERROR(token, "else without if");
+                if (stack_size(cond_stack) == 0) throw(token, "else without if");
                 bool negative = is_identifier(token, "ifndef");
                 token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_IDENTIFIER, "Expected identifier");
                 bool pass = !!map_find_ptr(macros, token->value.string) ^ negative;
                 cond_t* cond = stack_peek_ptr(cond_stack);
-                if (cond->has_else) ERROR(token, "Duplicate else");
+                if (cond->has_else) throw(token, "Duplicate else");
                 cond->start = token;
                 cond->state = cond->state != Cond_Expanded ? pass ? Cond_Expanding : Cond_WillExpand : Cond_Expanded;
             }
-            else ERROR(token, "Invalid preprocessor directive");
+            else throw(token, "Invalid preprocessor directive");
             while (advance(&stream, &curr_line));
         }
         else if (do_things) {
@@ -447,7 +452,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* token_queue, map_t* m
         }
         else curr_line = token->row;
     }
-    if (stack_size(cond_stack) > 0) ERROR(((cond_t*)stack_peek_ptr(cond_stack))->start, "Unterminated condition");
+    if (stack_size(cond_stack) > 0) throw(((cond_t*)stack_peek_ptr(cond_stack))->start, "Unterminated condition");
     queue_t* queue = queue_new();
     for (size_t i = 0; i < list_size(result); i++) {
         jitc_token_t* token = list_get_ptr(result, i);

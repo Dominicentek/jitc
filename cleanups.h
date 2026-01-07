@@ -11,10 +11,25 @@
     _tmp; \
 })
 
+//#define TRACE_ERRORS(str) fprintf(stderr, str " at %s:%d\n", __FILE__, __LINE__)
+
+#ifndef TRACE_ERRORS
+#define TRACE_ERRORS(str)
+#endif
+
 #define try(x) ({ \
     typeof(x) _tmp = (x); \
-    if (!_tmp) return 0; \
+    if (!_tmp) { \
+        TRACE_ERRORS("try(): caught error"); \
+        return 0; \
+    } \
     _tmp; \
+})
+
+#define throw(...) ({ \
+    TRACE_ERRORS("throw(): thrown error"); \
+    throw_impl(__VA_ARGS__); \
+    return 0; \
 })
 
 #define replace(x) *({ \
