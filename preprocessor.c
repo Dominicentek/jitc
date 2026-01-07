@@ -36,6 +36,8 @@ static jitc_token_t* number_token(uint64_t value) {
     jitc_token_t* token = calloc(sizeof(jitc_token_t), 1);
     token->type = TOKEN_INTEGER;
     token->value.integer = value;
+    token->flags.int_flags.type_kind = Type_Int32;
+    token->flags.int_flags.is_unsigned = false;
     return token;
 }
 
@@ -142,7 +144,12 @@ static bool is_identifier(jitc_token_t* token, const char* id) {
 
 static void run_macro(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* macros);
 
+static size_t get_operand(map_t* macros, token_stream_t* stream) {
+
+}
+
 static jitc_token_t* compute_expression(map_t* macros, token_stream_t* stream) {
+    list_t* expr = list_new();
     // todo
     return NULL;
 }
@@ -180,24 +187,19 @@ static void process_identifier(jitc_context_t* context, token_stream_t* dest, to
         case MacroType_FILE:
             list_add_ptr(dest->tokens, string_token(token->filename ?: "<memory>"));
             break;
-        case MacroType_DATE:
-            list_add_ptr(dest->tokens, string_token(token->filename));
-            break; {
+        case MacroType_DATE: {
             struct tm* t = localtime((time_t[]){time(NULL)});
             char formatted[256];
-            sprintf(formatted, "%s %d%s, %d", (const char*[]){
+            sprintf(formatted, "%s %2d %d", (const char*[]){
                 "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-            }[t->tm_mon], t->tm_mday, (const char*[]){
-                "th", "st", "nd", "rd", "th",
-                "th", "th", "th", "th", "th",
-            }[t->tm_mday - 1], t->tm_year + 1900);
+            }[t->tm_mon], t->tm_mday, t->tm_year + 1900);
             list_add_ptr(dest->tokens, string_token(jitc_append_string(context, formatted)));
         } break;
         case MacroType_TIME: {
             struct tm* t = localtime((time_t[]){time(NULL)});
             char formatted[256];
-            sprintf(formatted, "%d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
+            sprintf(formatted, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
             list_add_ptr(dest->tokens, string_token(jitc_append_string(context, formatted)));
         } break;
         case MacroType_DEFINE: {

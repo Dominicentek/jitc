@@ -18,7 +18,7 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - Struct parameters/returns and varargs in function prolog and epilog
 - Switch statements
 - Initializers
-- Compound expressions
+- Compound literals
 - Preprocessor
 - Windows support (x64 ABI)
 
