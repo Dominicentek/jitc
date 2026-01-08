@@ -116,6 +116,7 @@ typedef enum: uint8_t {
     Binary_LogicAnd,
     Binary_LogicOr,
     Binary_Assignment,
+    Binary_AssignConst,
     Binary_AssignPtrAddition,
     Binary_AssignPtrSubtraction,
     Binary_AssignPtrDiff,
@@ -197,7 +198,6 @@ typedef struct {
     jitc_type_t* type;
     jitc_decltype_t decltype;
     jitc_preserve_t preserve_policy;
-    bool defined;
     union {
         void* ptr;
         uint64_t enum_value;
@@ -436,7 +436,6 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, jitc_preserve_t preserve_policy, uint64_t value);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name);
-bool jitc_set_defined(jitc_context_t* context, const char* name);
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
@@ -462,7 +461,6 @@ jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int 
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
 void* jitc_compile_func(jitc_context_t* context, jitc_ast_t* ast, int* size);
 void jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
-void jitc_merge_contexts(jitc_context_t* to, jitc_context_t* from, jitc_ast_t* ast);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
 void jitc_delete_memchunks(jitc_context_t* context);

@@ -107,6 +107,7 @@ bool jitc_peek_type(jitc_context_t* context, queue_t* tokens) {
         case TOKEN_double:
         case TOKEN_void:
         case TOKEN_long:
+        case TOKEN_bool:
         case TOKEN_volatile:
         case TOKEN_register:
         case TOKEN_restrict:
@@ -787,10 +788,10 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->exprtype = jitc_typecache_primitive(context, Type_Int8); \
                 node->exprtype = jitc_typecache_unsigned(context, node->exprtype); \
             } break
-            #define ASSIGNMENT(check, errmsg) \
+            #define ASSIGNMENT(allow_const, check, errmsg) \
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, &node->exprtype)); \
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, NULL)); \
-                if (node->exprtype->is_const) throw(node->token, "Assigning to const"); \
+                if (node->exprtype->is_const && !allow_const) throw(node->token, "Assigning to const"); \
                 if (!is_lvalue(node->binary.left)) throw(node->token, "Assigning to an rvalue"); \
                 if (is_decayed_pointer(node->unary.inner->exprtype)) throw(node->token, "Assigning to an object"); \
                 if (!(check)) throw(node->token, errmsg); \
@@ -827,17 +828,18 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Binary_NotEquals: COMPARE(!=);
             case Binary_LogicAnd: LOGIC(&&, false);
             case Binary_LogicOr: LOGIC(||, true);
-            case Binary_Assignment: ASSIGNMENT(true, "");
+            case Binary_AssignConst: ASSIGNMENT(true, true, "");
+            case Binary_Assignment: ASSIGNMENT(false, true, "");
             case Binary_AssignAddition:
-            case Binary_AssignSubtraction: ASSIGNMENT(is_number(node->exprtype) || node->exprtype->kind == Type_Pointer, "Arithmetic on a non-scalar type");
+            case Binary_AssignSubtraction: ASSIGNMENT(false, is_number(node->exprtype) || node->exprtype->kind == Type_Pointer, "Arithmetic on a non-scalar type");
             case Binary_AssignMultiplication:
-            case Binary_AssignDivision: ASSIGNMENT(is_number(node->exprtype), "Arithmetic on a non-numeric type");
+            case Binary_AssignDivision: ASSIGNMENT(false, is_number(node->exprtype), "Arithmetic on a non-numeric type");
             case Binary_AssignModulo:
             case Binary_AssignBitshiftLeft:
             case Binary_AssignBitshiftRight:
             case Binary_AssignAnd:
             case Binary_AssignOr:
-            case Binary_AssignXor: ASSIGNMENT(is_integer(node->exprtype), "Bitwise operation on a non-integer type");
+            case Binary_AssignXor: ASSIGNMENT(false, is_integer(node->exprtype), "Bitwise operation on a non-integer type");
             case Binary_Comma:
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL));
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, &node->exprtype));
@@ -1276,7 +1278,6 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
             if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
                 if (decltype == Decltype_Extern) throw(token, "Cannot attach code to an extern function");
                 if (type->kind != Type_Function) throw(token, "Cannot attach code to a non-function");
-                if (!jitc_set_defined(context, type->name)) throw(token, "Symbol already defined");
                 if (list_size(context->scopes) > 1) throw(token, "Function definition illegal here");
                 smartptr(jitc_ast_t) func = mknode(AST_Function, token);
                 smartptr(jitc_ast_t) body = mknode(AST_List, token);
@@ -1299,13 +1300,14 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 if (decltype == Decltype_Extern) throw(token, "Cannot assign to an extern variable");
                 if (type->kind == Type_Function) throw(token, "Assigning to a function");
                 if (!type->name) throw(token, "Assigning to unnamed declaration");
-                if (!jitc_set_defined(context, type->name)) throw(token, "Symbol already defined");
                 smartptr(jitc_ast_t) assign = mknode(AST_Binary, token);
                 smartptr(jitc_ast_t) variable = mknode(AST_Variable, token);
                 variable->variable.name = type->name;
-                assign->binary.operation = Binary_Assignment;
+                assign->binary.operation = Binary_AssignConst;
                 assign->binary.right = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
                 assign->binary.left = move(variable);
+                if (list_size(context->scopes) == 1 && !is_constant(assign->binary.right))
+                    throw(token, "Assigning a non-literal to a global variable");
                 list_add_ptr(list->list.inner, try(jitc_process_ast(context, move(assign), NULL)));
             }
             if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;

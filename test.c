@@ -5,7 +5,7 @@
 #include <setjmp.h>
 #include <signal.h>
 
-const char* skipped_tests[256] = {
+/*const char* skipped_tests[256] = {
     [10] = "goto not supported",
     [45] = "some weird pointer shit",
     [47] = "initializers not implemented yet",
@@ -120,5 +120,15 @@ int main(int argc, char** argv) {
         }
         jitc_destroy_context(context);
     }
+    return 0;
+}*/
+
+int main() {
+    jitc_context_t* context = jitc_create_context();
+    jitc_parse(context, "preserve int main() { return 1; }", NULL);
+    int(*main_func)() = jitc_get(context, "main");
+    printf("returned %d\n", main_func());
+    jitc_parse(context, "int main() { return 2; }", NULL);
+    printf("returned %d\n", main_func());
     return 0;
 }

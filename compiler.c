@@ -219,7 +219,8 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
                     }
                 }
                 switch (ast->binary.operation) {
-                    case Binary_Assignment: {
+                    case Binary_Assignment:
+                    case Binary_AssignConst: {
                         if (ast->binary.left->exprtype->kind == Type_Struct || ast->binary.left->exprtype->kind == Type_Union) {
                             jitc_type_t* type = ast->binary.left->exprtype;
                             jitc_asm_copy(writer, type->size, type->alignment);
@@ -371,8 +372,8 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
         case AST_Declaration: {
             if (!ast->decl.type->name) break;
             jitc_variable_t* var = jitc_get_or_static(context, ast->decl.type->name);
-            if (var->decltype == Decltype_Static || var->decltype == Decltype_None)
-                var->ptr = calloc(var->type->size, 1);
+            if ((var->decltype == Decltype_Static || var->decltype == Decltype_None) && var->type->kind != Type_Function)
+                var->ptr = var->ptr ?: calloc(var->type->size, 1);
             ast->decl.variable = var;
         } break;
         case AST_Binary: {
@@ -380,10 +381,13 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             memcpy(var->ptr, &ast->binary.right->integer.value, ast->exprtype->size);
         } break;
         case AST_Function: {
+            jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
+            jitc_variable_t* var = map_as_ptr(global_scope->variables);
+            if (var->func && var->preserve_policy == Preserve_Always) break;
+
             smartptr(map_t) variable_map = map_new(compare_int64);
             bytewriter_t* writer = bytewriter_new();
             bool is_return = false;
-            jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
             for (size_t i = 0; i < map_size(global_scope->variables); i++) {
                 map_index(global_scope->variables, i);
                 const char* name = map_get_ptr_key(global_scope->variables, i);
@@ -397,29 +401,37 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             }
             jitc_asm_func(writer, ast->func.variable, get_stack_size(variable_map, ast->func.body, ast->func.variable));
             map_find_ptr(global_scope->variables, (void*)ast->func.variable->name);
-            jitc_variable_t* var = map_as_ptr(global_scope->variables);
             for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
                 jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
                 if (assemble(writer, node, variable_map, 0)) jitc_asm_pop(writer);
                 is_return = node->node_type == AST_Return;
             }
             if (!is_return) {
-                jitc_asm_pushi(writer, 0, Type_Int32, false);
-                jitc_asm_ret(writer);
+                jitc_type_t* ret = ast->func.variable->func.ret;
+                if (ret->kind != Type_Void) {
+                    jitc_asm_pushi(writer, 0, ret->kind, ret->is_unsigned);
+                    jitc_asm_ret(writer);
+                }
             }
             jitc_asm_func_end(writer);
-            autofree jitc_func_trampoline_t* func = malloc(sizeof(jitc_func_trampoline_t));
-            func->size = bytewriter_size(writer);
+            size_t size = bytewriter_size(writer);
             autofree void* data = bytewriter_delete(writer);
-            func->addr = make_executable(context, data, func->size);
-            func->mov_rax[0] = 0x48; func->mov_rax[1] = 0xB8;
-            func->jmp_rax[0] = 0xFF; func->jmp_rax[1] = 0xE0;
-            jitc_get_or_static(context, ast->func.variable->name)->func = make_executable(context, func, sizeof(jitc_func_trampoline_t));
+            void* func_ptr = make_executable(context, data, size);
+            if (var->func) {
+                chunk_modify(context, var->func->addr);
+                var->func->size = size;
+                var->func->addr = func_ptr;
+                chunk_commit(context, var->func->addr);
+            }
+            else {
+                autofree jitc_func_trampoline_t* func = malloc(sizeof(jitc_func_trampoline_t));
+                func->size = size;
+                func->addr = func_ptr;
+                func->mov_rax[0] = 0x48; func->mov_rax[1] = 0xB8;
+                func->jmp_rax[0] = 0xFF; func->jmp_rax[1] = 0xE0;
+                var->func = make_executable(context, func, sizeof(jitc_func_trampoline_t));
+            }
         } break;
         default: break;
     }
-}
-
-void jitc_merge_contexts(jitc_context_t* to, jitc_context_t* from, jitc_ast_t* ast) {
-    // todo
 }

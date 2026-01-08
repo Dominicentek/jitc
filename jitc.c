@@ -288,21 +288,23 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     if (!type->name) return true;
     jitc_variable_t* prev = jitc_get_variable(context, type->name);
     if (prev) {
-        if (list_size(context->scopes) == 1 && prev->decltype == decltype && prev->type == type) return true;
-        if (decltype == Decltype_Extern && prev->decltype != Decltype_Typedef) return true;
-        if (decltype == Decltype_None && prev->decltype == Decltype_Extern) {
+        if (list_size(context->scopes) > 1) return false;
+        bool policy_ifconst = preserve_policy == Preserve_IfConst && prev->preserve_policy == Preserve_IfConst;
+        if (preserve_policy == Preserve_IfConst) preserve_policy = prev->preserve_policy;
+        if (preserve_policy == Preserve_IfConst) {
+            if (type->kind == Type_Array || type->kind == Type_Function) preserve_policy = Preserve_Never;
+            else preserve_policy = type->is_const ? Preserve_Never : Preserve_Always;
+        }
+        if (!jitc_typecmp(context, prev->type, type)) preserve_policy = Preserve_Never; // todo: add compatible merges
+        if (prev->decltype != decltype) preserve_policy = Preserve_Never;
+        if (preserve_policy == Preserve_Never) {
+            if (prev->decltype != Decltype_EnumItem && prev->type->kind != Type_Function) free(prev->ptr);
+            prev->type = type;
             prev->decltype = decltype;
-            return true;
+            if (prev->type->kind != Type_Function) prev->enum_value = value;
         }
-        if (type->kind == Type_Function && prev->type == type) return true;
-        if (preserve_policy == prev->preserve_policy
-            || preserve_policy == Preserve_IfConst
-            || prev->preserve_policy == Preserve_IfConst
-        ) {
-            prev->preserve_policy = preserve_policy;
-            return true;
-        }
-        return false;
+        prev->preserve_policy = policy_ifconst ? Preserve_IfConst : preserve_policy;
+        return true;
     }
     jitc_scope_t* scope = NULL;
     if (decltype == Decltype_Static) scope = list_get_ptr(context->scopes, 0);
@@ -312,7 +314,7 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     var->type = type;
     var->decltype = decltype;
     var->enum_value = value;
-    var->defined = false;
+    var->preserve_policy = preserve_policy;
     map_get_ptr(scope->variables, (void*)type->name);
     map_store_ptr(scope->variables, move(var));
     return true;
@@ -329,15 +331,6 @@ bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const 
     map_get_ptr(map, (void*)name);
     map_store_ptr(map, type);
     return true;
-}
-
-bool jitc_set_defined(jitc_context_t* context, const char* name) {
-    if (!name) return true;
-    jitc_variable_t* variable = jitc_get_variable(context, name);
-    if (!variable) return false;
-    bool defined = variable->defined;
-    variable->defined = true;
-    return !defined;
 }
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
@@ -586,16 +579,6 @@ bool jitc_parse(jitc_context_t* context, const char* code, const char* filename)
 bool jitc_parse_file(jitc_context_t* context, const char* filename) {
     autofree char* code = try(read_whole_file(context, filename));
     return try(jitc_parse(context, code, filename));
-}
-
-bool jitc_reload_file(jitc_context_t* context, const char* filename) {
-    autofree char* code = try(read_whole_file(context, filename));
-    smartptr(jitc_context_t) new_context = jitc_create_context();
-    smartptr(queue_t) tokens = try(jitc_lex(context, code, filename));
-    tokens = try(jitc_preprocess(context, move(tokens), NULL));
-    smartptr(jitc_ast_t) ast = try(jitc_parse_ast(context, tokens));
-    jitc_merge_contexts(context, new_context, ast);
-    return true;
 }
 
 void* jitc_get(jitc_context_t* context, const char* name) {

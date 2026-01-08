@@ -194,12 +194,15 @@ Evaluates the expression `expr`. Same semantics as with the `#if` directive.
 
 jitc provides a way to modify functions or change the values of variables at runtime.
 
+This is done by deviating from the C standard and allowing users to redefine symbols
+or define them as a completely different symbol altogether. Redefining a symbol triggers a "reload".
+
 In order to control the reloading process, you can use `preserve` and `hotswap` keywords.
 
 Variables marked as `preserve` have their values preserved across reloads,
 and variables marked as `hotswap` have their values set to a new value the new script specifies.
 
-If preservation policy is unspecified, immutables have their policy set to `hotswap` by default
+If preservation policy is unspecified, immutables, functions and arrays have their policy set to `hotswap` by default
 and mutables have their policy set to `preserve` by default.
 
 If the policy changes across reload, the old policy is discarded and the new one is used.
@@ -253,8 +256,6 @@ If `file` is `NULL`, it's a linker error, otherwise it's a file IO error.
   - `filename`: Can be `NULL`, specifies the filename for the lexer
 - `bool jitc_parse_file(jitc_context* context, const char* file)`
   - Reads a file from the filesystem and parses its contents, returns `false` on error
-- `bool jitc_reload_file(jitc_context_t* context, const char* file)`
-  - Reads a file from the filesystem and hotswaps all symbols defined in it , returns `false` on error
 - `void* jitc_get(jitc_context* context, const char* name)`
   - Returns a symbol from the context, `NULL` on error
   - If the pointer is not to a function, it's only valid until the next reload.
