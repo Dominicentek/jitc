@@ -683,6 +683,8 @@ static void arithcomplex(bytewriter_t* writer, mnemonic_t mnemonic, reg_t outreg
 static void increment(bytewriter_t* writer, int32_t step, bool flip) {
     stack_item_t op1 = pop(writer);
     stack_item_t* res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
+    stack_item_t* orig_res = res;
+    if (op1.type == StackItem_lvalue_abs && flip) res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
     uint64_t data = 0;
     if (op1.kind == Type_Float32) data = *(uint32_t*)&(float){abs(step)};
     else if (op1.kind == Type_Float64) data = *(uint64_t*)&(double){abs(step)};
@@ -691,6 +693,10 @@ static void increment(bytewriter_t* writer, int32_t step, bool flip) {
     if (step > 0) emit(writer, add, 2, op(&op1), imm(data, op1.kind, op1.is_unsigned));
     if (step < 0) emit(writer, sub, 2, op(&op1), imm(data, op1.kind, op1.is_unsigned));
     if (!flip) emit(writer, mov, 2, op(res), op(&op1));
+    if (op1.type == StackItem_lvalue_abs && flip) {
+        emit(writer, mov, 2, op(orig_res), op(res));
+        pop(writer);
+    }
 }
 
 static void bitshift(bytewriter_t* writer, bool store, bool is_right) {
@@ -758,6 +764,7 @@ static void push_return(bytewriter_t* writer) {
 }
 
 static void pop_return(bytewriter_t* writer) {
+    if (!returns) return;
     while (stack_size(returns) > 0) {
         int* ptr = (int*)(bytewriter_data(writer) + stack_peek_int(returns));
         ptr[-1] = bytewriter_size(writer) - stack_peek_int(returns);

@@ -378,6 +378,10 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
         } break;
         case AST_Binary: {
             jitc_variable_t* var = jitc_get_or_static(context, ast->binary.left->variable.name);
+            if (var->preserve_policy == Preserve_Always) break;
+            if (var->preserve_policy == Preserve_IfConst) {
+                if (var->type->is_const || var->type->kind == Type_Function || var->type->kind == Type_Array) break;
+            }
             memcpy(var->ptr, &ast->binary.right->integer.value, ast->exprtype->size);
         } break;
         case AST_Function: {

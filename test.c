@@ -1,127 +1,30 @@
 #include "jitc.h"
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <setjmp.h>
-#include <signal.h>
+#include <unistd.h>
+#include <sys/inotify.h>
 
-const char* skipped_tests[256] = {
-    [10] = "goto not supported",
-    [45] = "some weird pointer shit",
-    [47] = "initializers not implemented yet",
-    [48] = "initializers not implemented yet",
-    [49] = "initializers not implemented yet",
-    [50] = "initializers not implemented yet",
-    [51] = "switch-case not implemented yet",
-};
+#define ms *1000
+#define SOURCE "file.txt"
 
-typedef struct {
-    uint8_t* curr_ptr;
-    uint8_t* ptr;
-    size_t size;
-} jitc_func_cell_t;
-
-typedef struct __attribute__((packed)) {
-    char mov_rax[2];
-    jitc_func_cell_t* addr;
-    char jmp_rax[2];
-} jitc_func_trampoline_t;
-
-jmp_buf buffer;
-
-bool script_segfault = false;
-
-static void handle_segfault(int signal, siginfo_t* info, void* ptr) {
-    printf("SEGFAULT\n");
-    longjmp(buffer, 0);
-}
-
-static void handle_interrupt(int signal, siginfo_t* info, void* ptr) {
-    printf("INTERRUPTED\n");
-    longjmp(buffer, 0);
-}
-
-static void handle_abort(int signal, siginfo_t* info, void* ptr) {
-    printf("ABORTED\n");
-    longjmp(buffer, 0);
-}
-
-static void handle_fperror(int signal, siginfo_t* info, void* ptr) {
-    printf("FP ERROR\n");
-    longjmp(buffer, 0);
-}
-
-static void handle_signal(int signal, void(*func)(int, siginfo_t*, void*)) {
-    struct sigaction sa = {};
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_NODEFER;
-    sa.sa_sigaction = func;
-    sigaction(signal, &sa, NULL);
-}
-
-int main(int argc, char** argv) {
-    handle_signal(SIGSEGV, handle_segfault);
-    handle_signal(SIGINT, handle_interrupt);
-    handle_signal(SIGABRT, handle_abort);
-    handle_signal(SIGFPE, handle_fperror);
-
-    int tests_to_run[argc - 1];
-    for (int i = 1; i < argc; i++) {
-        tests_to_run[i - 1] = atoi(argv[i]);
+int main() {
+    jitc_context_t* context = jitc_create_context();
+    if (!jitc_parse_file(context, SOURCE)) {
+        jitc_report_error(context, stderr);
+        return 1;
     }
-    for (int i = 1; i <= 220; i++) {
-        if (argc > 1) {
-            bool run_test = false;
-            for (int j = 0; j < argc - 1 && !run_test; j++) {
-                if (tests_to_run[j] == i) run_test = true;
-            }
-            if (!run_test) continue;
-        }
-        char path[256];
-        sprintf(path, "c-testsuite/tests/single-exec/%05d.c", i);
+    void(*func)() = jitc_get(context, "func");
+    int notif = inotify_init1(IN_NONBLOCK);
+    char buf[4096];
+    inotify_add_watch(notif, SOURCE, IN_MODIFY | IN_DONT_FOLLOW);
+    while (true) {
+        usleep(100 ms);
+        func();
 
-        printf("Running test %d ... ", i);
-        fflush(stdout);
-        if (skipped_tests[i]) {
-            printf("SKIPPED (%s)\n", skipped_tests[i]);
-            continue;
-        }
-        jitc_context_t* context = jitc_create_context();
-        jitc_error_t* error = NULL;
-        jitc_create_header(context, "stdio.h", "int printf(const char*, ...);");
-        jitc_create_header(context, "stdlib.h", "void* calloc(unsigned long a, unsigned long b);");
-        int(*main_func)();
-        if (!jitc_parse_file(context, path) || !(main_func = jitc_get(context, "main"))) {
-            printf("FAILED (compile error): ");
-            jitc_report_error(context, stdout);
-            jitc_destroy_context(context);
-            continue;
-        }
-        int retval;
-        bool segfault = false;
-        if (setjmp(buffer)) segfault = true;
-        else {
-            script_segfault = true;
-            retval = main_func();
-            script_segfault = false;
-        }
-        if (!segfault && retval == 0) printf("PASSED\n");
-        else {
-            if (segfault && !script_segfault) {
-                printf("Outside of script\n");
-                continue;
-            }
-            script_segfault = false;
-            if (!segfault) printf("FAILED (returned %d)\n", retval);
-            jitc_func_trampoline_t* func = (void*)main_func;
-            printf("Machine code dump:\n");
-            for (uint32_t i = 0; i < func->addr->size; i++) {
-                if (i != 0 && i % 16 == 0) fprintf(stderr, "\n");
-                fprintf(stderr, "%02x ", func->addr->ptr[i]);
-            }
-            fprintf(stderr, "\n");
-        }
-        jitc_destroy_context(context);
+        int len = read(notif, buf, sizeof(buf));
+        if (len < 1) continue;
+        struct inotify_event* event = (struct inotify_event*)buf;
+        if (!(event->mask & IN_MODIFY)) continue;
+        if (!jitc_parse_file(context, SOURCE)) jitc_report_error(context, stderr);
     }
-    return 0;
 }
+
