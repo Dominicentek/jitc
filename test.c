@@ -5,7 +5,7 @@
 #include <setjmp.h>
 #include <signal.h>
 
-/*const char* skipped_tests[256] = {
+const char* skipped_tests[256] = {
     [10] = "goto not supported",
     [45] = "some weird pointer shit",
     [47] = "initializers not implemented yet",
@@ -16,12 +16,15 @@
 };
 
 typedef struct {
-    struct __attribute__((packed)) {
-        char mov_rax[2];
-        void* addr;
-        char jmp_rax[2];
-    };
-    int size;
+    uint8_t* curr_ptr;
+    uint8_t* ptr;
+    size_t size;
+} jitc_func_cell_t;
+
+typedef struct __attribute__((packed)) {
+    char mov_rax[2];
+    jitc_func_cell_t* addr;
+    char jmp_rax[2];
 } jitc_func_trampoline_t;
 
 jmp_buf buffer;
@@ -110,25 +113,15 @@ int main(int argc, char** argv) {
             }
             script_segfault = false;
             if (!segfault) printf("FAILED (returned %d)\n", retval);
-            jitc_func_trampoline_t* func = (void*)jitc_get(context, "foo");
+            jitc_func_trampoline_t* func = (void*)main_func;
             printf("Machine code dump:\n");
-            for (uint32_t i = 0; i < func->size; i++) {
+            for (uint32_t i = 0; i < func->addr->size; i++) {
                 if (i != 0 && i % 16 == 0) fprintf(stderr, "\n");
-                fprintf(stderr, "%02x ", ((uint8_t*)func->addr)[i]);
+                fprintf(stderr, "%02x ", func->addr->ptr[i]);
             }
             fprintf(stderr, "\n");
         }
         jitc_destroy_context(context);
     }
-    return 0;
-}*/
-
-int main() {
-    jitc_context_t* context = jitc_create_context();
-    jitc_parse(context, "preserve int main() { return 1; }", NULL);
-    int(*main_func)() = jitc_get(context, "main");
-    printf("returned %d\n", main_func());
-    jitc_parse(context, "int main() { return 2; }", NULL);
-    printf("returned %d\n", main_func());
     return 0;
 }

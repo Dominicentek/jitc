@@ -382,7 +382,9 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
         } break;
         case AST_Function: {
             jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
+            map_find_ptr(global_scope->variables, (void*)ast->func.variable->name);
             jitc_variable_t* var = map_as_ptr(global_scope->variables);
+            if (var->decltype == Decltype_Extern || var->decltype == Decltype_Typedef) break;
             if (var->func && var->preserve_policy == Preserve_Always) break;
 
             smartptr(map_t) variable_map = map_new(compare_int64);
@@ -400,7 +402,6 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 map_store_ptr(variable_map, stackvar);
             }
             jitc_asm_func(writer, ast->func.variable, get_stack_size(variable_map, ast->func.body, ast->func.variable));
-            map_find_ptr(global_scope->variables, (void*)ast->func.variable->name);
             for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
                 jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
                 if (assemble(writer, node, variable_map, 0)) jitc_asm_pop(writer);
@@ -418,20 +419,20 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             autofree void* data = bytewriter_delete(writer);
             void* func_ptr = make_executable(context, data, size);
             if (var->func) {
-                chunk_modify(context, var->func->addr);
-                var->func->size = size;
-                var->func->addr = func_ptr;
-                chunk_commit(context, var->func->addr);
+                var->func->addr->ptr = func_ptr;
+                var->func->addr->size = size;
             }
             else {
                 autofree jitc_func_trampoline_t* func = malloc(sizeof(jitc_func_trampoline_t));
-                func->size = size;
-                func->addr = func_ptr;
+                func->addr = malloc(sizeof(jitc_func_cell_t));
+                func->addr->ptr = func_ptr;
+                func->addr->size = size;
                 func->mov_rax[0] = 0x48; func->mov_rax[1] = 0xB8;
-                func->jmp_rax[0] = 0xFF; func->jmp_rax[1] = 0xE0;
+                func->jmp_rax[0] = 0xFF; func->jmp_rax[1] = 0x20;
                 var->func = make_executable(context, func, sizeof(jitc_func_trampoline_t));
             }
         } break;
         default: break;
     }
+    jitc_link(context);
 }

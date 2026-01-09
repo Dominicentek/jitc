@@ -16,6 +16,7 @@ struct jitc_context_t {
     list_t* scopes;
     list_t* memchunks;
     jitc_error_t* error;
+    bool all_linked;
 };
 
 typedef enum: uint8_t {
@@ -186,12 +187,15 @@ struct jitc_type_t {
 };
 
 typedef struct {
-    struct __attribute__((packed)) {
-        char mov_rax[2];
-        void* addr;
-        char jmp_rax[2];
-    };
-    int size;
+    void* curr_ptr;
+    void* ptr;
+    size_t size;
+} jitc_func_cell_t;
+
+typedef struct __attribute__((packed)) {
+    char mov_rax[2];
+    jitc_func_cell_t* addr;
+    char jmp_rax[2];
 } jitc_func_trampoline_t;
 
 typedef struct {
@@ -461,6 +465,7 @@ jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int 
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
 void* jitc_compile_func(jitc_context_t* context, jitc_ast_t* ast, int* size);
 void jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
+void jitc_link(jitc_context_t* context);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
 void jitc_delete_memchunks(jitc_context_t* context);
