@@ -52,6 +52,7 @@ static uint64_t hash_type(jitc_type_t* type) {
     switch (type->kind) {
         case Type_Pointer:
             hash = hash_mix(hash, hash_int(type->ptr.prev));
+            hash = hash_mix(hash, hash_int(type->ptr.arr_size));
         case Type_Enum:
             hash = hash_mix(hash, hash_ptr(type->ptr.base));
             break;
@@ -273,6 +274,7 @@ jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from) {
     type.name = from->name;
     type.ptr.base = from->kind == Type_Array ? from->ptr.base : from;
     type.ptr.prev = from->kind;
+    if (from->kind == Type_Array) type.ptr.arr_size = from->arr.size;
     type.size = type.alignment = 8;
     type.hash = 0;
     return jitc_register_type(context, &type, false);

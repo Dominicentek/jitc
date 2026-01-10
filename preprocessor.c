@@ -56,7 +56,7 @@ static jitc_token_t* copy_token(jitc_token_t* token) {
 }
 
 static macro_t* new_macro(map_t* macros, const char* name, macro_type_t type) {
-    macro_t* macro = malloc(sizeof(macro_t));
+    macro_t* macro = calloc(sizeof(macro_t), 1);
     macro->type = type;
     if (type == MacroType_Ordinary || type == MacroType_OrdinaryFunction)
         macro->tokens = list_new();
@@ -69,7 +69,6 @@ static macro_t* new_macro(map_t* macros, const char* name, macro_type_t type) {
 
 static void predefine(map_t* macros) {
     list_add_ptr(new_macro(macros, "__STDC_HOSTED__", MacroType_Ordinary)->tokens, number_token(1));
-    list_add_ptr(new_macro(macros, "__STDC_NO_ATOMICS__", MacroType_Ordinary)->tokens, number_token(1));
     list_add_ptr(new_macro(macros, "__STDC_NO_ATOMICS__", MacroType_Ordinary)->tokens, number_token(1));
     list_add_ptr(new_macro(macros, "__STDC_NO_COMPLEX__", MacroType_Ordinary)->tokens, number_token(1));
     list_add_ptr(new_macro(macros, "__STDC_NO_THREADS__", MacroType_Ordinary)->tokens, number_token(1));

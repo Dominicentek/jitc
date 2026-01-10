@@ -11,6 +11,7 @@ static void jitc_asm_laddr(bytewriter_t* writer, jitc_variable_t* var, jitc_type
 static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) { printf("lstack\n"); }
 static void jitc_asm_store(bytewriter_t* writer) { printf("store\n"); }
 static void jitc_asm_copy(bytewriter_t* writer, uint64_t size, uint64_t alignment) { printf("copy\n"); }
+static void jitc_asm_init(bytewriter_t* writer, uint64_t size, uint64_t alignment) { printf("init\n"); }
 static void jitc_asm_add(bytewriter_t* writer) { printf("add\n"); }
 static void jitc_asm_sub(bytewriter_t* writer) { printf("sub\n"); }
 static void jitc_asm_mul(bytewriter_t* writer) { printf("mul\n"); }

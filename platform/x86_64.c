@@ -62,6 +62,7 @@ typedef enum: uint8_t {
     sete, setne, setl, setle, setg, setge,
     cbw, cwd, cdq, cqo, opc_push, opc_pop,
     rep_movsb, rep_movsw, rep_movsd, rep_movsq,
+    rep_stosb, rep_stosw, rep_stosd, rep_stosq,
     cvtsi2ss, cvtsi2sd, cvttss2si, cvttsd2si, cvtss2sd, cvtsd2ss
 } mnemonic_t;
 
@@ -239,6 +240,10 @@ static instr_t instructions[] = {
     { rep_movsw, 0xA5, prefix_f3 | force_size },
     { rep_movsd, 0xA5, prefix_f3 },
     { rep_movsq, 0xA5, prefix_f3 | force_rexw },
+    { rep_stosb, 0xAA, prefix_f3 },
+    { rep_stosw, 0xAB, prefix_f3 | force_size },
+    { rep_stosd, 0xAB, prefix_f3 },
+    { rep_stosq, 0xAB, prefix_f3 | force_rexw },
 };
 
 static int opstack_capacity = 0, opstack_size = 0;
@@ -854,6 +859,18 @@ static void jitc_asm_copy(bytewriter_t* writer, uint64_t size, uint64_t alignmen
     stack_item_t src = pop(writer);
     stack_item_t* dst = peek(0);
     copy(writer, op(dst), op(&src), size, alignment);
+}
+
+static void jitc_asm_init(bytewriter_t* writer, uint64_t size, uint64_t alignment) {
+    emit(writer, lea, 2, reg(rdi, Type_Int64, true), op(peek(0)));
+    emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(0, Type_Int32, true));
+    emit(writer, mov, 2, reg(rcx, Type_Int32, true), imm(size / alignment, Type_Int32, true));
+    emit(writer,
+        alignment == 1 ? rep_stosb :
+        alignment == 2 ? rep_stosw :
+        alignment == 4 ? rep_stosd :
+        alignment == 8 ? rep_stosq : 0, 0
+    );
 }
 
 static void jitc_asm_add(bytewriter_t* writer) {

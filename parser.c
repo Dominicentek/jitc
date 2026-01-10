@@ -54,7 +54,7 @@ static jitc_ast_t* mknode(jitc_ast_type_t type, jitc_token_t* token) {
 }
 
 static bool is_integer(jitc_type_t* type) {
-    return type->kind == Type_Int8 || type->kind == Type_Int16 || type->kind == Type_Int32 || type->kind == Type_Int64;
+    return type->kind == Type_Int8 || type->kind == Type_Int16 || type->kind == Type_Int32 || type->kind == Type_Int64 || type->kind == Type_Enum;
 }
 
 static bool is_floating(jitc_type_t* type) {
@@ -193,7 +193,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* tokens, jitc
     while (stack_size(inner) > 0) switch (stack_pop_int(inner)) {
         case DeclID_Array: {
             jitc_token_t* starting_token = stack_pop_ptr(inner);
-            if (!jitc_validate_type(*type, TypePolicy_NoDerived)) throw(starting_token, "Array cannot contain an array or function");
+            if (!jitc_validate_type(*type, TypePolicy_NoFunction)) throw(starting_token, "Array cannot contain a function");
             if (!jitc_validate_type(*type, TypePolicy_NoIncomplete)) throw(starting_token, "Array with incomplete type");
             *type = jitc_typecache_array(context, *type, stack_pop_int(inner));
         } break;
@@ -541,6 +541,10 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             if (!jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset))
                 throw(node->token, "Field '%s' not found", node->walk_struct.field_name);
         } break;
+        case AST_Initializer:
+            node->init.store_to = try(jitc_process_ast(context, node->init.store_to, NULL));
+            node->exprtype = node->init.type;
+            break;
 
         case AST_Unary: switch (node->unary.operation) {
             case Unary_SuffixIncrement:
@@ -645,7 +649,6 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             default: break;
         } break;
         case AST_Binary: switch (node->binary.operation) {
-            case Binary_CompoundExpr: break;
             case Binary_Cast: {
                 jitc_ast_t* left = node->binary.left;
                 jitc_ast_t* right = node->binary.right;
@@ -915,6 +918,84 @@ jitc_ast_t* jitc_flatten_ast(jitc_ast_t* ast, list_t* list) {
     return ast;
 }
 
+jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* tokens, jitc_token_t* token, jitc_type_t* type, size_t* array_size) {
+    smartptr(jitc_ast_t) node = mknode(AST_Initializer, token);
+    node->init.type = type;
+    node->init.items = list_new();
+    node->init.offsets = list_new();
+    size_t curr_item = 0;
+    if (array_size) *array_size = 0;
+    while (true) {
+        if (jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) break;
+        // todo: designators
+        if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
+            if (!type) {
+                jitc_destroy_ast(try(jitc_parse_initializer(context, tokens, token, NULL, NULL)));
+            }
+            else if (is_scalar(type)) {
+                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item == 0 ? type : NULL, NULL));
+                if (curr_item == 0) {
+                    jitc_ast_t* item = list_get_ptr(initializer->init.items, 0);
+                    list_add_ptr(node->init.items, item);
+                    list_add_int(node->init.offsets, 0);
+                    list_remove(initializer->init.items, 0);
+                }
+            }
+            else if (type->kind == Type_Array) {
+                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item < type->arr.size ? type->arr.base : NULL, NULL));
+                if (curr_item < type->arr.size) {
+                    for (size_t i = 0; i < list_size(node->init.items); i++) {
+                        jitc_ast_t* item = list_get_ptr(initializer->init.items, i);
+                        list_add_ptr(node->init.items, item);
+                        list_add_int(node->init.offsets, list_get_int(initializer->init.items, i) + curr_item * type->arr.base->size);
+                    }
+                    list_delete(initializer->init.items);
+                    list_delete(initializer->init.offsets);
+                    free(move(initializer));
+                }
+            }
+            else {
+                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item < type->str.num_fields ? type->str.fields[curr_item] : NULL, NULL));
+                if (curr_item < type->str.num_fields) {
+                    for (size_t i = 0; i < list_size(node->init.items); i++) {
+                        jitc_ast_t* item = list_get_ptr(initializer->init.items, i);
+                        list_add_ptr(node->init.items, item);
+                        list_add_int(node->init.offsets, list_get_int(initializer->init.items, i) + type->str.offsets[curr_item]);
+                    }
+                    list_delete(initializer->init.items);
+                    list_delete(initializer->init.offsets);
+                    free(move(initializer));
+                }
+            }
+        }
+        else {
+            jitc_type_t* base;
+            if (type->kind == Type_Array) base = curr_item < type->arr.size ? type->arr.base : NULL;
+            else if (type->kind == Type_Struct || type->kind == Type_Union) base = curr_item < type->str.num_fields ? type->str.fields[curr_item] : NULL;
+            else base = curr_item == 0 ? type : NULL;
+            size_t offset = base
+                ? type->kind == Type_Struct || type->kind == Type_Union
+                    ? type->str.offsets[curr_item]
+                    : type->kind == Type_Array
+                        ? type->arr.base->size * curr_item
+                        : 0
+                : 0;
+            smartptr(jitc_ast_t) value = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
+            if (base) {
+                value = try(jitc_cast(context, value, base, false, value->token));
+                list_add_ptr(node->init.items, move(value));
+                list_add_int(node->init.offsets, offset);
+            }
+        }
+        curr_item++;
+        if (array_size && *array_size < curr_item) *array_size = curr_item;
+        if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+        if (jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) break;
+        throw(token, "Expected ',' or '}'");
+    }
+    return move(node);
+}
+
 jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* tokens) {
     jitc_token_t* token;
     bool force_parse_parentheses = false;
@@ -997,6 +1078,8 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* toke
         node->integer.is_unsigned = true;
         node->integer.type_kind = Type_Int64;
         node->integer.value = token->type == TOKEN_sizeof ? type->size : type->alignment;
+        if (type->kind == Type_Pointer && type->ptr.prev == Type_Array)
+            node->integer.value = type->ptr.base->size * type->ptr.arr_size;
     }
     else throw(NEXT_TOKEN, "Expected expression");
     while (true) {
@@ -1264,13 +1347,15 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
         jitc_type_t* base_type = try(jitc_parse_base_type(context, tokens, &decltype, list_size(context->scopes) == 1 ? &preserve_policy : NULL));
         while (true) {
             jitc_type_t* type = base_type;
-            smartptr(jitc_ast_t) node = mknode(AST_Declaration, token);
+            jitc_ast_t* decl_node;
+            smartptr(jitc_ast_t) node = decl_node = mknode(AST_Declaration, token);
             if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
             if (type->kind == Type_Function && NEXT_TOKEN->type == TOKEN_SEMICOLON && decltype != Decltype_Typedef) decltype = Decltype_Extern;
             node->decl.type = type;
             node->decl.decltype = decltype;
             if (node->decl.decltype != Decltype_Typedef && type->name && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
                 throw(token, "Declaration of incomplete type");
+            bool incomplete_array = !jitc_validate_type(type, TypePolicy_NoUnkArrSize);
             if (decltype != Decltype_Typedef) list_add_ptr(list->list.inner, move(node));
             if (!jitc_declare_variable(context, type, decltype, preserve_policy, 0)) throw(token, "Symbol '%s' already declared", type->name);
             jitc_variable_t* var = jitc_get_variable(context, type->name);
@@ -1300,16 +1385,36 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 if (decltype == Decltype_Extern) throw(token, "Cannot assign to an extern variable");
                 if (type->kind == Type_Function) throw(token, "Assigning to a function");
                 if (!type->name) throw(token, "Assigning to unnamed declaration");
-                smartptr(jitc_ast_t) assign = mknode(AST_Binary, token);
-                smartptr(jitc_ast_t) variable = mknode(AST_Variable, token);
-                variable->variable.name = type->name;
-                assign->binary.operation = Binary_AssignConst;
-                assign->binary.right = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
-                assign->binary.left = move(variable);
-                if (list_size(context->scopes) == 1 && !is_constant(assign->binary.right))
-                    throw(token, "Assigning a non-literal to a global variable");
-                list_add_ptr(list->list.inner, try(jitc_process_ast(context, move(assign), NULL)));
+                if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
+                    size_t arr_size;
+                    smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, type, &arr_size));
+                    if (incomplete_array) type = jitc_typecache_named(context, jitc_typecache_array(context, type->arr.base, arr_size), type->name);
+                    jitc_ast_t* variable = mknode(AST_Variable, token);
+                    variable->variable.name = type->name;
+                    variable->variable.write_dest = true;
+                    initializer->init.store_to = variable;
+                    initializer->init.type = type;
+                    list_add_ptr(list->list.inner, try(jitc_process_ast(context, move(initializer), NULL)));
+                    if (incomplete_array) {
+                        decl_node->decl.type = type;
+                        if (var) var->type = decl_node->decl.type;
+                    }
+                }
+                else if (incomplete_array) throw(NEXT_TOKEN, "Expected '{'");
+                else {
+                    if (type->kind == Type_Array) throw(token, "Assigning to an array");
+                    smartptr(jitc_ast_t) assign = mknode(AST_Binary, token);
+                    smartptr(jitc_ast_t) variable = mknode(AST_Variable, token);
+                    variable->variable.name = type->name;
+                    assign->binary.operation = Binary_AssignConst;
+                    assign->binary.right = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
+                    assign->binary.left = move(variable);
+                    if (list_size(context->scopes) == 1 && !is_constant(assign->binary.right))
+                        throw(token, "Assigning a non-literal to a global variable");
+                    list_add_ptr(list->list.inner, try(jitc_process_ast(context, move(assign), NULL)));
+                }
             }
+            else if (incomplete_array) throw(NEXT_TOKEN, "Expected '='");
             if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
             if (jitc_token_expect(tokens, TOKEN_SEMICOLON)) break;
             throw(NEXT_TOKEN, "Expected ',' or ';'");

@@ -72,6 +72,7 @@ typedef enum: uint8_t {
     AST_StringLit,
     AST_Variable,
     AST_WalkStruct,
+    AST_Initializer,
 } jitc_ast_type_t;
 
 typedef enum: uint8_t {
@@ -93,7 +94,6 @@ typedef enum: uint8_t {
 
 typedef enum: uint8_t {
     Binary_Cast,
-    Binary_CompoundExpr,
     Binary_FunctionCall,
     Binary_PtrAddition,
     Binary_PtrSubtraction,
@@ -163,6 +163,7 @@ struct jitc_type_t {
     union {
         struct {
             jitc_type_t* base;
+            size_t arr_size;
             jitc_type_kind_t prev;
         } ptr;
         struct {
@@ -266,12 +267,19 @@ struct jitc_ast_t {
         } string;
         struct {
             const char* name;
+            bool write_dest;
         } variable;
         struct {
             jitc_ast_t* struct_ptr;
             const char* field_name;
             size_t offset;
         } walk_struct;
+        struct {
+            jitc_type_t* type;
+            jitc_ast_t* store_to;
+            list_t* offsets;
+            list_t* items;
+        } init;
     };
 };
 

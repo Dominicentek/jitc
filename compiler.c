@@ -186,7 +186,6 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
                 assemble(writer, ast->binary.left, variable_map, 0);
                 jitc_asm_cvt(writer, type(ast->binary.right->type.type));
             }
-            else if (ast->binary.operation == Binary_CompoundExpr) {}
             else if (ast->binary.operation == Binary_FunctionCall) {
                 size_t num_args = list_size(ast->binary.right->list.inner);
                 jitc_type_t* signature = ast->binary.left->exprtype;
@@ -352,16 +351,35 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
         case AST_Variable:
             map_find_ptr(variable_map, (char*)ast->variable.name);
             stackvar_t* var = map_as_ptr(variable_map);
-            if (var->is_global) jitc_asm_laddr(writer, var->var.ptr, type(var->var.type));
-            else jitc_asm_lstack(writer, var->var.offset, type(var->var.type));
-            if (var->var.type->kind == Type_Array || var->var.type->kind == Type_Function)
+            jitc_type_kind_t kind = var->var.type->kind;
+            bool is_unsigned = var->var.type->is_unsigned;
+            if (var->var.type->kind == Type_Array) {
+                kind = var->var.type->arr.base->kind;
+                is_unsigned = var->var.type->arr.base->is_unsigned;
+            }
+            if (var->is_global) jitc_asm_laddr(writer, var->var.ptr, kind, is_unsigned);
+            else jitc_asm_lstack(writer, var->var.offset, kind, is_unsigned);
+            if ((var->var.type->kind == Type_Array || var->var.type->kind == Type_Function) && !ast->variable.write_dest)
                 jitc_asm_addrof(writer);
             return true;
         case AST_WalkStruct:
             assemble(writer, ast->walk_struct.struct_ptr, variable_map, 0);
             jitc_asm_type(writer, type(ast->exprtype));
             jitc_asm_offset(writer, ast->walk_struct.offset);
-            break;
+            return false;
+        case AST_Initializer: {
+            assemble(writer, ast->init.store_to, variable_map, 0);
+            jitc_asm_init(writer, ast->exprtype->size, ast->exprtype->alignment);
+            size_t curr_offset = 0;
+            for (size_t i = 0; i < list_size(ast->init.items); i++) {
+                size_t diff = list_get_int(ast->init.offsets, i) - curr_offset;
+                jitc_asm_offset(writer, diff);
+                assemble(writer, list_get_ptr(ast->init.items, i), variable_map, 0);
+                jitc_asm_store(writer);
+                curr_offset += diff;
+            }
+            jitc_asm_offset(writer, -curr_offset);
+        } return true;
         default: break;
     }
     return false;
