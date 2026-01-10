@@ -918,7 +918,7 @@ jitc_ast_t* jitc_flatten_ast(jitc_ast_t* ast, list_t* list) {
     return ast;
 }
 
-jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* tokens, jitc_token_t* token, jitc_type_t* type, size_t* array_size) {
+jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* tokens, jitc_token_t* token, jitc_type_t* type, size_t* array_size, bool constant_only) {
     smartptr(jitc_ast_t) node = mknode(AST_Initializer, token);
     node->init.type = type;
     node->init.items = list_new();
@@ -930,10 +930,10 @@ jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* tokens, jit
         // todo: designators
         if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
             if (!type) {
-                jitc_destroy_ast(try(jitc_parse_initializer(context, tokens, token, NULL, NULL)));
+                jitc_destroy_ast(try(jitc_parse_initializer(context, tokens, token, NULL, NULL, constant_only)));
             }
             else if (is_scalar(type)) {
-                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item == 0 ? type : NULL, NULL));
+                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item == 0 ? type : NULL, NULL, constant_only));
                 if (curr_item == 0) {
                     jitc_ast_t* item = list_get_ptr(initializer->init.items, 0);
                     list_add_ptr(node->init.items, item);
@@ -942,7 +942,7 @@ jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* tokens, jit
                 }
             }
             else if (type->kind == Type_Array) {
-                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item < type->arr.size ? type->arr.base : NULL, NULL));
+                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item < type->arr.size ? type->arr.base : NULL, NULL, constant_only));
                 if (curr_item < type->arr.size) {
                     for (size_t i = 0; i < list_size(node->init.items); i++) {
                         jitc_ast_t* item = list_get_ptr(initializer->init.items, i);
@@ -955,7 +955,7 @@ jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* tokens, jit
                 }
             }
             else {
-                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item < type->str.num_fields ? type->str.fields[curr_item] : NULL, NULL));
+                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item < type->str.num_fields ? type->str.fields[curr_item] : NULL, NULL, constant_only));
                 if (curr_item < type->str.num_fields) {
                     for (size_t i = 0; i < list_size(node->init.items); i++) {
                         jitc_ast_t* item = list_get_ptr(initializer->init.items, i);
@@ -980,7 +980,9 @@ jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* tokens, jit
                         ? type->arr.base->size * curr_item
                         : 0
                 : 0;
+            token = NEXT_TOKEN;
             smartptr(jitc_ast_t) value = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
+            if (!is_constant(value) && constant_only) throw(token, "Assigning a non-literal to a global variable");
             if (base) {
                 value = try(jitc_cast(context, value, base, false, value->token));
                 list_add_ptr(node->init.items, move(value));
@@ -1387,7 +1389,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_
                 if (!type->name) throw(token, "Assigning to unnamed declaration");
                 if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
                     size_t arr_size;
-                    smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, type, &arr_size));
+                    smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, type, &arr_size, list_size(context->scopes) == 1));
                     if (incomplete_array) type = jitc_typecache_named(context, jitc_typecache_array(context, type->arr.base, arr_size), type->name);
                     jitc_ast_t* variable = mknode(AST_Variable, token);
                     variable->variable.name = type->name;
@@ -1473,6 +1475,9 @@ void jitc_destroy_ast(jitc_ast_t* ast) {
             break;
         case AST_WalkStruct:
             jitc_destroy_ast(ast->walk_struct.struct_ptr);
+            break;
+        case AST_Initializer:
+            jitc_destroy_ast(ast->init.store_to);
             break;
         default: break;
     }

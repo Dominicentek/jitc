@@ -203,6 +203,7 @@ typedef struct {
     jitc_type_t* type;
     jitc_decltype_t decltype;
     jitc_preserve_t preserve_policy;
+    bool initial;
     union {
         void* ptr;
         uint64_t enum_value;

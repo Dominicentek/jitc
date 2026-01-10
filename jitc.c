@@ -317,6 +317,7 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     var->decltype = decltype;
     var->enum_value = value;
     var->preserve_policy = preserve_policy;
+    var->initial = true;
     map_get_ptr(scope->variables, (void*)type->name);
     map_store_ptr(scope->variables, move(var));
     return true;

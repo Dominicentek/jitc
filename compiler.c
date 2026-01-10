@@ -394,13 +394,22 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 var->ptr = var->ptr ?: calloc(var->type->size, 1);
             ast->decl.variable = var;
         } break;
-        case AST_Binary: {
+        case AST_Binary:
+        case AST_Initializer: {
             jitc_variable_t* var = jitc_get_or_static(context, ast->binary.left->variable.name);
-            if (var->preserve_policy == Preserve_Always) break;
-            if (var->preserve_policy == Preserve_IfConst) {
-                if (var->type->is_const || var->type->kind == Type_Function || var->type->kind == Type_Array) break;
+            if (!var->initial) {
+                if (var->preserve_policy == Preserve_Always) break;
+                if (var->preserve_policy == Preserve_IfConst) {
+                    if (var->type->is_const || var->type->kind == Type_Function || var->type->kind == Type_Array) break;
+                }
             }
-            memcpy(var->ptr, &ast->binary.right->integer.value, ast->exprtype->size);
+            var->initial = false;
+            if (ast->node_type == AST_Binary) memcpy(var->ptr, &ast->binary.right->integer.value, ast->exprtype->size);
+            else for (size_t i = 0; i < list_size(ast->init.items); i++) {
+                jitc_ast_t* node = list_get_ptr(ast->init.items, i);
+                void* ptr = (uint8_t*)var->ptr + list_get_int(ast->init.offsets, i);
+                memcpy(ptr, &node->integer.value, node->exprtype->size);
+            }
         } break;
         case AST_Function: {
             jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
