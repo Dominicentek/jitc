@@ -187,13 +187,13 @@ static bool try_parse_flt(string_t* string, double* out, jitc_token_flags_t* fla
     return (!hex && (state == Integer || state == Fraction || state == Exponent)) || (hex && state == Exponent);
 }
 
-static jitc_token_t* mktoken(queue_t* tokens, jitc_token_type_t type, const char* filename, int row, int col) {
-    jitc_token_t* token = malloc(sizeof(jitc_token_t));
+static jitc_token_t* mktoken(queue_t* _tokens, jitc_token_type_t type, const char* filename, int row, int col) {
+    queue(jitc_token_t)* tokens = _tokens;
+    jitc_token_t* token = &queue_push(tokens);
     token->type = type;
     token->filename = (char*)filename;
     token->row = row;
     token->col = col;
-    queue_push_ptr(tokens, token);
     return token;
 }
 
@@ -206,7 +206,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
     int digit = 0;
     int row = 1, col = 0;
     char* file = jitc_append_string(context, filename);
-    queue_t* tokens = queue_new();
+    smartptr(queue(jitc_token_t)) tokens = queue_new(jitc_token_t);
     struct {
         enum State {
             Idle,
@@ -241,8 +241,9 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             } word_state;
         };
     } state;
+    smartptr(string_t) _buffer;
     memset(&state, 0, sizeof(state));
-    state.buffer = str_new();
+    _buffer = state.buffer = str_new();
     while (ptr == 0 || code[ptr - 1]) {
         c = code[no_increment ? ptr - 1 : ptr++];
         if (c == 0) c = '\n'; // basically inserts a new line at the end of files
@@ -267,7 +268,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             else if (is_alphanumeric(c) || (c == '.' && is_numeric(code[ptr]))) state.parse_state = ParsingWord;
             else if (is_symbol      (c)) state.parse_state = ParsingSymbol;
             else if (is_whitespace  (c)) continue;
-            else { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid codepoint: \\x%02x", c)); goto error; }
+            else { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid codepoint: \\x%02x", c)); return NULL; }
             str_clear(state.buffer);
             state.row = row;
             state.col = col;
@@ -278,7 +279,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
         else if (state.parse_state == ParsingStringLiteral || state.parse_state == ParsingCharLiteral) {
             switch (state.string_state.state) {
                 case CharStart:
-                    if (c == '\'') { jitc_error_set(context, jitc_error_syntax(file, row, col, "Empty char literal")); goto error; }
+                    if (c == '\'') { jitc_error_set(context, jitc_error_syntax(file, row, col, "Empty char literal")); return NULL; }
                     state.string_state.state = None;
                 case None:
                     if (c == '\\') state.string_state.state = Backslash;
@@ -294,7 +295,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                         token->flags.int_flags.is_unsigned = false;
                         data += decode_utf8(str_data(state.buffer), (int*)&token->value.integer);
                         memset((char*)&token->value.integer + 1, (token->value.integer & (1 << 7)) ? 0xFF : 0x00, 7);
-                        if (*data != 0) { jitc_error_set(context, jitc_error_syntax(file, row, col, "Multiple characters in char literal")); goto error; }
+                        if (*data != 0) { jitc_error_set(context, jitc_error_syntax(file, row, col, "Multiple characters in char literal")); return NULL; }
                         state.parse_state = Idle;
                     }
                     else str_append(state.buffer, (char[]){ c, 0 });
@@ -319,7 +320,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                         case 'U':       state.string_state.state = Hex8;  break;
                         case '0'...'7': state.string_state.state = Octal; no_increment = true; break;
                         case '\n': c = '\n'; break;
-                        default: { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid escape code")); goto error; }
+                        default: { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid escape code")); return NULL; }
                     }
                     if (state.string_state.state == Backslash) {
                         str_append(state.buffer, (char[]){ c, 0 });
@@ -333,7 +334,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 if ((state.string_state.state == Octal ? get_octal : get_hexadecimal)(c, &digit))
                     state.string_state.value = state.string_state.value * (state.string_state.state == Octal ? 8 : 16) + digit;
                 else if (state.string_state.state == Octal) state.string_state.num_digits = 2;
-                else { jitc_error_set(context, jitc_error_syntax(file, row, col, "Not a valid digit")); goto error; }
+                else { jitc_error_set(context, jitc_error_syntax(file, row, col, "Not a valid digit")); return NULL; }
                 state.string_state.num_digits++;
                 if (state.string_state.num_digits == (
                     state.string_state.state == Octal ? 3 :
@@ -371,7 +372,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 else {
                     char last = str_data(state.buffer)[str_length(state.buffer) - 1];
                     if (is_numeric(str_data(state.buffer)[0]) || str_data(state.buffer)[0] == '.')
-                        { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid number")); goto error; }
+                        { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid number")); return NULL; }
                     if (last == '+' || last == '-') str_data(state.buffer)[str_length(state.buffer) - 1] = 0;
                     else last = 0;
                     token->type = TOKEN_IDENTIFIER;
@@ -451,25 +452,16 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 }
                 continue;
             }
-            if (exact_match == -1) { jitc_error_set(context, jitc_error_syntax(filename, row, col - str_length(state.buffer), "Invalid token")); goto error; };
+            if (exact_match == -1) { jitc_error_set(context, jitc_error_syntax(filename, row, col - str_length(state.buffer), "Invalid token")); return NULL; };
         }
     }
     mktoken(tokens, TOKEN_END_OF_FILE, file, state.row, state.col);
-    goto exit;
-    error:
-    while (queue_size(tokens) > 0) {
-        free(queue_pop_ptr(tokens));
-        queue_pop(tokens);
-    }
-    queue_delete(tokens);
-    tokens = NULL;
-    exit:
-    str_delete(state.buffer);
-    return tokens;
+    return move(tokens);
 }
 
-jitc_token_t* jitc_token_expect(queue_t* token_queue, jitc_token_type_t kind) {
-    jitc_token_t* token = queue_peek_ptr(token_queue);
-    if (token->type == kind) return queue_pop_ptr(token_queue);
+jitc_token_t* jitc_token_expect(queue_t* _token_queue, jitc_token_type_t kind) {
+    queue(jitc_token_t)* token_queue = _token_queue;
+    jitc_token_t* token = &queue_peek(token_queue);
+    if (token->type == kind) return &queue_pop(token_queue);
     return NULL;
 }

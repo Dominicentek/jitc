@@ -21,11 +21,12 @@
 
 #define type(x) x->kind, x->is_unsigned
 
-typedef struct {
+typedef struct stackvar_t stackvar_t;
+struct stackvar_t {
     bool is_leaf;
     bool is_global;
     union {
-        list_t* list;
+        list(stackvar_t)* list;
         struct {
             jitc_type_t* type;
             union {
@@ -34,7 +35,7 @@ typedef struct {
             };
         } var;
     };
-} stackvar_t;
+};
 
 static void promote(bytewriter_t* writer, jitc_ast_t* ast) {
     if (ast->exprtype->kind < Type_Int32)
@@ -66,11 +67,12 @@ static size_t get_su_number(jitc_ast_t* ast) {
     return ast->su_number;
 }
 
-static void append_to_size_tree(list_t* list, jitc_ast_t* node) {
+static void append_to_size_tree(list_t* _list, jitc_ast_t* node) {
+    list(stackvar_t)* list = _list;
     if (!node) return;
     switch (node->node_type) {
         case AST_Declaration: {
-            stackvar_t* size = malloc(sizeof(stackvar_t));
+            stackvar_t* size = &list_add(list);
             size->is_leaf = true;
             size->is_global = false;
             size->var.type = node->decl.type;
@@ -78,50 +80,47 @@ static void append_to_size_tree(list_t* list, jitc_ast_t* node) {
                 size->is_global = true;
                 size->var.ptr = node->decl.variable;
             }
-            list_add_ptr(list, size);
         } break;
         case AST_List:
             for (size_t i = 0; i < list_size(node->list.inner); i++) {
-                append_to_size_tree(list, list_get_ptr(node->list.inner, i));
+                append_to_size_tree(list, list_get(node->list.inner, i));
             }
             break;
         case AST_Scope: {
-            stackvar_t* size = malloc(sizeof(stackvar_t));
+            stackvar_t* size = &list_add(list);
             size->is_leaf = false;
             size->is_global = false;
-            size->list = list_new();
+            size->list = list_new(stackvar_t);
             for (size_t i = 0; i < list_size(node->list.inner); i++) {
-                append_to_size_tree(size->list, list_get_ptr(node->list.inner, i));
+                append_to_size_tree(size->list, list_get(node->list.inner, i));
             }
-            list_add_ptr(list, size);
         } break;
         case AST_Ternary: {
-            stackvar_t* size = malloc(sizeof(stackvar_t));
+            stackvar_t* size = &list_add(list);
             size->is_leaf = false;
             size->is_global = false;
-            size->list = list_new();
+            size->list = list_new(stackvar_t);
             append_to_size_tree(size->list, node->ternary.when);
             append_to_size_tree(size->list, node->ternary.then);
             append_to_size_tree(size->list, node->ternary.otherwise);
-            list_add_ptr(list, size);
         } break;
         case AST_Loop: {
-            stackvar_t* size = malloc(sizeof(stackvar_t));
+            stackvar_t* size = &list_add(list);
             size->is_leaf = false;
             size->is_global = false;
-            size->list = list_new();
+            size->list = list_new(stackvar_t);
             append_to_size_tree(size->list, node->loop.cond);
             append_to_size_tree(size->list, node->loop.body);
-            list_add_ptr(list, size);
         } break;
         default: break;
     }
 }
 
-static size_t process_size_tree(map_t* variable_map, stackvar_t* tree, size_t parent_size) {
+static size_t process_size_tree(map_t* _variable_map, stackvar_t* tree, size_t parent_size) {
+    map(char*, stackvar_t)* variable_map = _variable_map;
     size_t size = parent_size;
     for (size_t i = 0; i < list_size(tree->list); i++) {
-        stackvar_t* node = list_get_ptr(tree->list, i);
+        stackvar_t* node = &list_get(tree->list, i);
         if (!node->is_leaf) continue;
         if (!node->var.type->name) continue;
         if (size % node->var.type->alignment != 0) size += node->var.type->alignment - size % node->var.type->alignment;
@@ -129,41 +128,38 @@ static size_t process_size_tree(map_t* variable_map, stackvar_t* tree, size_t pa
             node->var.offset = size + node->var.type->size;
             size += node->var.type->size;
         }
-        map_get_ptr(variable_map, (char*)node->var.type->name);
-        map_store_ptr(variable_map, node);
+        map_add(variable_map) = (char*)node->var.type->name;
+        map_commit(variable_map);
+        map_get_value(variable_map) = *node;
     }
     size_t max_size = size;
     for (size_t i = 0; i < list_size(tree->list); i++) {
-        stackvar_t* node = list_get_ptr(tree->list, i);
-        if (node->is_leaf) {
-            if (!node->var.type->name) free(node);
-            continue;
-        }
+        stackvar_t* node = &list_get(tree->list, i);
+        if (node->is_leaf) continue;
         size_t node_size = process_size_tree(variable_map, node, size);
         if (max_size < node_size) max_size = node_size;
     }
     list_delete(tree->list);
-    free(tree);
     return max_size;
 }
 
 static size_t get_stack_size(map_t* variable_map, jitc_ast_t* ast, jitc_type_t* type) {
     stackvar_t* size = malloc(sizeof(stackvar_t));
     size->is_leaf = false;
-    size->list = list_new();
+    size->list = list_new(stackvar_t);
     for (size_t i = 0; i < type->func.num_params; i++) {
         if (!type->func.params[i]->name) continue;
-        stackvar_t* param = malloc(sizeof(stackvar_t));
+        stackvar_t* param = &list_add(size->list);
         param->is_leaf = true;
         param->is_global = false;
         param->var.type = type->func.params[i];
-        list_add_ptr(size->list, param);
     }
     append_to_size_tree(size->list, ast);
     return process_size_tree(variable_map, size, 0);
 }
 
-static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map, jitc_binary_op_t parent_op) {
+static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map, jitc_binary_op_t parent_op) {
+    map(char*, stackvar_t)* variable_map = _variable_map;
     if (!ast) return false;
     size_t step = 1;
     switch (ast->node_type) {
@@ -192,7 +188,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
                 jitc_type_t* args[num_args];
                 if (signature->kind == Type_Pointer) signature = signature->ptr.base;
                 for (size_t i = num_args - 1; i < num_args; i--) {
-                    jitc_ast_t* arg = list_get_ptr(ast->binary.right->list.inner, i);
+                    jitc_ast_t* arg = list_get(ast->binary.right->list.inner, i);
                     args[i] = arg->exprtype;
                     assemble(writer, arg, variable_map, 0);
                 }
@@ -316,7 +312,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
         case AST_Scope:
         case AST_List:
             for (size_t i = 0; i < list_size(ast->list.inner); i++) {
-                if (assemble(writer, list_get_ptr(ast->list.inner, i), variable_map, 0)) jitc_asm_pop(writer);
+                if (assemble(writer, list_get(ast->list.inner, i), variable_map, 0)) jitc_asm_pop(writer);
             }
             return false;
         case AST_Loop:
@@ -349,8 +345,8 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
             else jitc_asm_pushd(writer, ast->floating.value);
             return true;
         case AST_Variable:
-            map_find_ptr(variable_map, (char*)ast->variable.name);
-            stackvar_t* var = map_as_ptr(variable_map);
+            map_find(variable_map, &ast->variable.name);
+            stackvar_t* var = &map_get_value(variable_map);
             jitc_type_kind_t kind = var->var.type->kind;
             bool is_unsigned = var->var.type->is_unsigned;
             if (var->var.type->kind == Type_Array) {
@@ -372,9 +368,9 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* variable_map,
             jitc_asm_init(writer, ast->exprtype->size, ast->exprtype->alignment);
             size_t curr_offset = 0;
             for (size_t i = 0; i < list_size(ast->init.items); i++) {
-                size_t diff = list_get_int(ast->init.offsets, i) - curr_offset;
+                size_t diff = list_get(ast->init.offsets, i) - curr_offset;
                 jitc_asm_offset(writer, diff);
-                assemble(writer, list_get_ptr(ast->init.items, i), variable_map, 0);
+                assemble(writer, list_get(ast->init.items, i), variable_map, 0);
                 jitc_asm_store(writer);
                 curr_offset += diff;
             }
@@ -406,35 +402,35 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             var->initial = false;
             if (ast->node_type == AST_Binary) memcpy(var->ptr, &ast->binary.right->integer.value, ast->exprtype->size);
             else for (size_t i = 0; i < list_size(ast->init.items); i++) {
-                jitc_ast_t* node = list_get_ptr(ast->init.items, i);
-                void* ptr = (uint8_t*)var->ptr + list_get_int(ast->init.offsets, i);
+                jitc_ast_t* node = list_get(ast->init.items, i);
+                void* ptr = (uint8_t*)var->ptr + list_get(ast->init.offsets, i);
                 memcpy(ptr, &node->integer.value, node->exprtype->size);
             }
         } break;
         case AST_Function: {
-            jitc_scope_t* global_scope = list_get_ptr(context->scopes, 0);
-            map_find_ptr(global_scope->variables, (void*)ast->func.variable->name);
-            jitc_variable_t* var = map_as_ptr(global_scope->variables);
+            jitc_scope_t* global_scope = &list_get(context->scopes, 0);
+            map_find(global_scope->variables, &ast->func.variable->name);
+            jitc_variable_t* var = &map_get_value(global_scope->variables);
             if (var->decltype == Decltype_Extern || var->decltype == Decltype_Typedef) break;
             if (var->func && var->preserve_policy == Preserve_Always) break;
 
-            smartptr(map_t) variable_map = map_new(compare_int64);
+            smartptr(map(char*, stackvar_t)) variable_map = map_new(compare_string, char*, stackvar_t);
             bytewriter_t* writer = bytewriter_new();
             bool is_return = false;
             for (size_t i = 0; i < map_size(global_scope->variables); i++) {
                 map_index(global_scope->variables, i);
-                const char* name = map_get_ptr_key(global_scope->variables, i);
-                jitc_variable_t* var = map_as_ptr(global_scope->variables);
-                stackvar_t* stackvar = malloc(sizeof(stackvar_t));
+                const char* name = map_get_key(global_scope->variables);
+                jitc_variable_t* var = &map_get_value(global_scope->variables);
+                map_add(variable_map) = (char*)name;
+                map_commit(variable_map);
+                stackvar_t* stackvar = &map_get_value(variable_map);
                 stackvar->is_global = stackvar->is_leaf = true;
                 stackvar->var.type = var->type;
                 stackvar->var.ptr = var;
-                map_get_ptr(variable_map, (char*)name);
-                map_store_ptr(variable_map, stackvar);
             }
             jitc_asm_func(writer, ast->func.variable, get_stack_size(variable_map, ast->func.body, ast->func.variable));
             for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
-                jitc_ast_t* node = list_get_ptr(ast->func.body->list.inner, i);
+                jitc_ast_t* node = list_get(ast->func.body->list.inner, i);
                 if (assemble(writer, node, variable_map, 0)) jitc_asm_pop(writer);
                 is_return = node->node_type == AST_Return;
             }

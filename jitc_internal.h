@@ -7,18 +7,6 @@
 
 typedef struct jitc_token_t jitc_token_t;
 
-typedef void*(*job_func_t)(void* ctx);
-
-struct jitc_context_t {
-    set_t* strings;
-    map_t* typecache;
-    map_t* headers;
-    list_t* scopes;
-    list_t* memchunks;
-    jitc_error_t* error;
-    bool all_linked;
-};
-
 typedef enum: uint8_t {
     Decltype_None,
     Decltype_Static,
@@ -145,13 +133,6 @@ typedef enum {
     TypePolicy_NoIncomplete = TypePolicy_NoVoid | TypePolicy_NoUnkArrSize | TypePolicy_NoUndefTags,
 } jitc_type_policy_t;
 
-typedef struct {
-    map_t* variables;
-    map_t* structs;
-    map_t* unions;
-    map_t* enums;
-} jitc_scope_t;
-
 typedef struct jitc_type_t jitc_type_t;
 struct jitc_type_t {
     jitc_type_kind_t kind;
@@ -233,7 +214,7 @@ struct jitc_ast_t {
             jitc_ast_t* otherwise;
         } ternary;
         struct {
-            list_t* inner;
+            list(jitc_ast_t*)* inner;
         } list;
         struct {
             jitc_type_t* type;
@@ -278,10 +259,33 @@ struct jitc_ast_t {
         struct {
             jitc_type_t* type;
             jitc_ast_t* store_to;
-            list_t* offsets;
-            list_t* items;
+            list(size_t)* offsets;
+            list(jitc_ast_t*)* items;
         } init;
     };
+};
+
+typedef struct {
+    void* ptr;
+    size_t capacity;
+    size_t avail;
+} jitc_memchunk_t;
+
+typedef struct {
+    map(char*, jitc_variable_t)* variables;
+    map(char*, jitc_type_t*)* structs;
+    map(char*, jitc_type_t*)* unions;
+    map(char*, jitc_type_t*)* enums;
+} jitc_scope_t;
+
+struct jitc_context_t {
+    set(char*)* strings;
+    map(uint64_t, jitc_type_t*)* typecache;
+    map(char*, char*)* headers;
+    list(jitc_scope_t)* scopes;
+    list(jitc_memchunk_t)* memchunks;
+    jitc_error_t* error;
+    bool all_linked;
 };
 
 #define PROCESS_TOKENS(type) TOKENS(type##_KEYWORD, type##_SYMBOL, type##_SPECIAL)

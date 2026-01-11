@@ -21,7 +21,7 @@
     typeof(x) _tmp = (x); \
     if (!_tmp) { \
         TRACE_ERRORS("try(): caught error"); \
-        return 0; \
+    return 0; \
     } \
     _tmp; \
 })
@@ -52,5 +52,11 @@ void __cleanup_bytewriter_t(void* writer);
 
 void __cleanup_jitc_ast_t(void* type);
 void __cleanup_jitc_context_t(void* context);
+
+#define __cleanup_list(...) __cleanup_list_t
+#define __cleanup_map(...) __cleanup_map_t
+#define __cleanup_set(...) __cleanup_set_t
+#define __cleanup_stack(...) __cleanup_stack_t
+#define __cleanup_queue(...) __cleanup_queue_t
 
 #endif

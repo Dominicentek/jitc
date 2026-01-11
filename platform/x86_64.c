@@ -246,8 +246,7 @@ static instr_t instructions[] = {
     { rep_stosq, 0xAB, prefix_f3 | force_rexw },
 };
 
-static int opstack_capacity = 0, opstack_size = 0;
-static stack_item_t* opstack = NULL;
+static stack(stack_item_t)* opstack = NULL;
 
 static int opstack_int_index = 0, opstack_float_index = 0;
 static size_t stack_bytes = 0;
@@ -267,12 +266,8 @@ static void stack_free(bytewriter_t* writer, size_t size);
 
 static stack_item_t* push(bytewriter_t* writer, stack_item_type_t type, jitc_type_kind_t kind, bool is_unsigned) {
     if (kind == Type_Void) return NULL;
-    if (opstack_capacity == opstack_size) {
-        if (opstack_capacity == 0) opstack_capacity = 4;
-        else opstack_capacity *= 2;
-        opstack = realloc(opstack, opstack_capacity * sizeof(stack_item_t));
-    }
-    stack_item_t* item = &opstack[opstack_size++];
+    if (!opstack) opstack = stack_new(stack_item_t);
+    stack_item_t* item = &stack_push(opstack);
     correct_kind(&kind, &is_unsigned);
     item->type = type;
     item->kind = kind;
@@ -307,18 +302,18 @@ static stack_item_t* pushf(bytewriter_t* writer, stack_item_type_t type, jitc_ty
 }
 
 static stack_item_t* peek(int offset) {
-    return &opstack[opstack_size - 1 - offset];
+    __stack_t* stack = (void*)opstack;
+    return (void*)&stack->list[(stack->length - 1 - offset) * stack->item_size];
 }
 
 static stack_item_t pop(bytewriter_t* writer) {
-    stack_item_t* item = peek(0);
+    stack_item_t* item = &stack_pop(opstack);
     if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
         if (item->type == StackItem_rvalue && isflt(item->kind)) opstack_float_index--;
         else opstack_int_index--;
         if (!(item->value & (1L << 63))) stack_free(writer, 8);
         if (item->extra_storage != 0) stack_free(writer, item->extra_storage);
     }
-    opstack_size--;
 #ifdef DEBUG
     printf("POP  %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[item->type], opstack_size, opstack_int_index, opstack_float_index);
 #endif
@@ -732,83 +727,81 @@ static void compare_against(bytewriter_t* writer, mnemonic_t mnemonic, operand_t
     emit(writer, mnemonic, 1, res);
 }
 
-static stack_t* shortcircuits;
+static stack(stack(size_t)*)* shortcircuits;
 
 static void push_shortcircuit(bytewriter_t* writer) {
-    if (!shortcircuits) shortcircuits = stack_new();
-    stack_push_ptr(shortcircuits, stack_new());
+    if (!shortcircuits) shortcircuits = stack_new(stack(size_t)*);
+    stack_push(shortcircuits) = stack_new(size_t);
 }
 
 static void push_shortcircuit_jump(bytewriter_t* writer) {
-    stack_push_int(stack_peek_ptr(shortcircuits), bytewriter_size(writer));
+    stack_push(stack_peek(shortcircuits)) = bytewriter_size(writer);
 }
 
 static void pop_shortcircuit(bytewriter_t* writer) {
-    stack_t* stack = stack_pop_ptr(shortcircuits);
+    stack(size_t)* stack = (void*)stack_pop(shortcircuits);
     while (stack_size(stack) > 0) {
-        int* ptr = (int*)(bytewriter_data(writer) + stack_peek_int(stack));
-        ptr[-1] = bytewriter_size(writer) - stack_peek_int(stack);
+        int* ptr = (int*)(bytewriter_data(writer) + stack_peek(stack));
+        ptr[-1] = bytewriter_size(writer) - stack_peek(stack);
         stack_pop(stack);
     }
     stack_delete(stack);
 }
 
-static stack_t* returns;
-static stack_t* branches;
-
 typedef struct {
     size_t branch_start;
     size_t curr_jump;
-    stack_t* end_stack;
+    stack(size_t)* end_stack;
     bool is_loop;
 } branch_t;
 
+static stack(size_t)* returns;
+static stack(branch_t)* branches;
+
 static void push_return(bytewriter_t* writer) {
-    if (!returns) returns = stack_new();
-    stack_push_int(returns, bytewriter_size(writer));
+    if (!returns) returns = stack_new(size_t);
+    stack_push(returns) = bytewriter_size(writer);
 }
 
 static void pop_return(bytewriter_t* writer) {
     if (!returns) return;
     while (stack_size(returns) > 0) {
-        int* ptr = (int*)(bytewriter_data(writer) + stack_peek_int(returns));
-        ptr[-1] = bytewriter_size(writer) - stack_peek_int(returns);
+        int* ptr = (int*)(bytewriter_data(writer) + stack_peek(returns));
+        ptr[-1] = bytewriter_size(writer) - stack_peek(returns);
         stack_pop(returns);
     }
 }
 
 static void push_branch(bytewriter_t* writer, bool loop) {
-    if (!branches) branches = stack_new();
-    branch_t* branch = malloc(sizeof(branch_t));
-    branch->end_stack = stack_new();
+    if (!branches) branches = stack_new(branch_t);
+    branch_t* branch = &stack_push(branches);
+    branch->end_stack = stack_new(size_t);
     branch->is_loop = loop;
     if (loop) branch->branch_start = bytewriter_size(writer);
-    else branch->branch_start = stack_size(branches) == 0 ? 0 : ((branch_t*)stack_peek_ptr(branches))->branch_start;
-    stack_push_ptr(branches, branch);
+    else branch->branch_start = stack_size(branches) == 0 ? 0 : stack_peek(branches).branch_start;
 }
 
 static void pop_branch(bytewriter_t* writer) {
-    branch_t* branch = stack_pop_ptr(branches);
-    branch_t* parent = stack_peek_ptr(branches);
+    branch_t* branch = &stack_pop(branches);
+    branch_t* parent = &stack_peek(branches);
     while (stack_size(branch->end_stack) > 0) {
         if (!branch->is_loop) {
-            stack_push_int(parent->end_stack, stack_pop_int(branch->end_stack));
+            stack_push(parent->end_stack) = stack_pop(branch->end_stack);
             continue;
         }
-        int* ptr = (int*)(bytewriter_data(writer) + stack_peek_int(branch->end_stack));
-        ptr[-1] = bytewriter_size(writer) - stack_peek_int(branch->end_stack);
+        int* ptr = (int*)(bytewriter_data(writer) + stack_peek(branch->end_stack));
+        ptr[-1] = bytewriter_size(writer) - stack_peek(branch->end_stack);
         stack_pop(branch->end_stack);
     }
     stack_delete(branch->end_stack);
-    free(branch);
 }
 
 static void set_jump(bytewriter_t* writer) {
-    ((branch_t*)stack_peek_ptr(branches))->curr_jump = bytewriter_size(writer);
+    stack_peek(branches).curr_jump = bytewriter_size(writer);
 }
 
 static void write_jump(bytewriter_t* writer) {
-    size_t offset = ((branch_t*)stack_peek_ptr(branches))->curr_jump;
+    size_t offset = stack_peek(branches).curr_jump;
     int* ptr = (int*)(bytewriter_data(writer) + offset);
     ptr[-1] = bytewriter_size(writer) - offset;
 }
@@ -1193,13 +1186,13 @@ static void jitc_asm_end(bytewriter_t* writer) {
 }
 
 static void jitc_asm_goto_start(bytewriter_t* writer) {
-    branch_t* branch = stack_peek_ptr(branches);
+    branch_t* branch = &stack_peek(branches);
     emit(writer, jmp, 1, imm(0, Type_Int32, false));
     ((int32_t*)(bytewriter_data(writer) + bytewriter_size(writer)))[-1] = branch->branch_start - bytewriter_size(writer);
 }
 
 static void jitc_asm_goto_end(bytewriter_t* writer) {
     emit(writer, jmp, 1, imm(0, Type_Int32, false));
-    branch_t* branch = stack_peek_ptr(branches);
-    stack_push_int(branch->end_stack, bytewriter_size(writer));
+    branch_t* branch = &stack_peek(branches);
+    stack_push(branch->end_stack) = bytewriter_size(writer);
 }

@@ -17,21 +17,19 @@ typedef struct {
     jitc_type_t* type;
 } abi_arg_t;
 
-typedef union {
-    struct {
-        jitc_type_kind_t kind;
-        uint16_t size, offset;
-    };
-    uint64_t packed;
+typedef struct {
+    jitc_type_kind_t kind;
+    uint16_t size, offset;
 } abi_primitive_t;
 
-static void append_primitives(list_t* list, jitc_type_t* type, size_t offset) {
+static void append_primitives(list_t* _list, jitc_type_t* type, size_t offset) {
+    list(abi_primitive_t)* list = _list;
     if (type->kind == Type_Struct || type->kind == Type_Union) for (size_t i = 0; i < type->str.num_fields; i++) {
         append_primitives(list, type->str.fields[i], offset + type->str.offsets[i]);
     }
-    else list_add_int(list, (abi_primitive_t){
+    else list_add(list) = (abi_primitive_t){
         .kind = type->kind, .size = type->size, .offset = offset
-    }.packed);
+    };
 }
 
 static abi_arg_t classify(jitc_type_t* type, int* int_params, int* float_params, int* stack_params) {
@@ -49,11 +47,11 @@ static abi_arg_t classify(jitc_type_t* type, int* int_params, int* float_params,
         .type = type,
         .is_128bit = type->size > 8
     };
-    smartptr(list_t) primitives = list_new();
+    smartptr(list(abi_primitive_t)) primitives = list_new(abi_primitive_t);
     append_primitives(primitives, type, 0);
     for (size_t i = 0; i < list_size(primitives); i++) {
-        abi_primitive_t primitive = (abi_primitive_t){ .packed = list_get_int(primitives, i) };
-        if (!isflt(primitive.kind)) *(primitive.offset >= 8 ? &arg.class_upper : &arg.class) = ABIClass_INTEGER; 
+        abi_primitive_t* primitive = &list_get(primitives, i);
+        if (!isflt(primitive->kind)) *(primitive->offset >= 8 ? &arg.class_upper : &arg.class) = ABIClass_INTEGER; 
     }
     int* counter = arg.class == ABIClass_FLOATING ? float_params : int_params;
     if (*counter >= (arg.class == ABIClass_FLOATING ? 8 : 6)) {

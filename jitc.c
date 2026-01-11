@@ -83,11 +83,12 @@ static uint64_t hash_type(jitc_type_t* type) {
 
 static jitc_type_t* jitc_register_type(jitc_context_t* context, jitc_type_t* type, bool free_extras) {
     uint64_t hash = hash_type(type);
-    jitc_type_t** t = map_get_int(context->typecache, hash);
-    if (!*t) {
+    if (!map_find(context->typecache, &hash)) {
         jitc_type_t* copy = malloc(sizeof(jitc_type_t));
         memcpy(copy, type, sizeof(jitc_type_t));
-        *t = copy;
+        map_add(context->typecache) = hash;
+        map_commit(context->typecache);
+        map_get_value(context->typecache) = copy;
     }
     else if (free_extras) {
         if (type->kind == Type_Struct || type->kind == Type_Union) {
@@ -96,7 +97,7 @@ static jitc_type_t* jitc_register_type(jitc_context_t* context, jitc_type_t* typ
         }
         if (type->kind == Type_Function) free(type->func.params);
     }
-    return *t;
+    return map_get_value(context->typecache);
 }
 
 static jitc_type_t jitc_copy_type(jitc_type_t* type) {
@@ -172,29 +173,31 @@ jitc_type_t* jitc_typecache_array(jitc_context_t* context, jitc_type_t* base, si
     return jitc_register_type(context, &arr, false);
 }
 
-jitc_type_t* jitc_typecache_function(jitc_context_t* context, jitc_type_t* ret, list_t* params) {
+jitc_type_t* jitc_typecache_function(jitc_context_t* context, jitc_type_t* ret, list_t* _params) {
+    list(jitc_type_t*)* params = _params;
     jitc_type_t func = {};
     func.kind = Type_Function;
     func.func.num_params = list_size(params);
     func.func.params = malloc(sizeof(jitc_type_t*) * list_size(params));
     func.func.ret = ret;
     func.size = func.alignment = 8;
-    for (size_t i = 0; i < list_size(params); i++) func.func.params[i] = list_get_ptr(params, i);
+    for (size_t i = 0; i < list_size(params); i++) func.func.params[i] = list_get(params, i);
     return jitc_register_type(context, &func, true);
 }
 
-jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields, jitc_token_t* source) {
+jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* _fields, jitc_token_t* source) {
+    list(jitc_type_t*)* fields = _fields;
     jitc_type_t str = {};
     str.kind = Type_Struct;
     str.str.num_fields = list_size(fields);
     str.str.fields = malloc(sizeof(jitc_type_t*) * list_size(fields));
     str.str.offsets = malloc(sizeof(size_t) * list_size(fields));
     str.str.source_token = source;
-    for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get_ptr(fields, i);
+    for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get(fields, i);
     size_t max_alignment = 1;
     size_t ptr = 0;
     for (int i = 0; i < list_size(fields); i++) {
-        jitc_type_t* field = list_get_ptr(fields, i);
+        jitc_type_t* field = list_get(fields, i);
         if (ptr % field->alignment != 0) ptr += field->alignment - ptr % field->alignment;
         if (max_alignment < field->alignment) max_alignment = field->alignment;
         str.str.offsets[i] = ptr;
@@ -207,18 +210,19 @@ jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields, jitc
     return jitc_register_type(context, &str, true);
 }
 
-jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* fields, jitc_token_t* source) {
+jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* _fields, jitc_token_t* source) {
+    list(jitc_type_t*)* fields = _fields;
     jitc_type_t str = {};
     str.kind = Type_Union;
     str.str.num_fields = list_size(fields);
     str.str.fields = malloc(sizeof(jitc_type_t*) * list_size(fields));
     str.str.offsets = malloc(sizeof(size_t) * list_size(fields));
     str.str.source_token = source;
-    for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get_ptr(fields, i);
+    for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get(fields, i);
     size_t max_alignment = 1;
     size_t max_size = 0;
     for (int i = 0; i < list_size(fields); i++) {
-        jitc_type_t* field = list_get_ptr(fields, i);
+        jitc_type_t* field = list_get(fields, i);
         if (max_alignment < field->alignment) max_alignment = field->alignment;
         if (max_size < field->size) max_size = field->size;
         str.str.offsets[i] = 0;
@@ -309,30 +313,31 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
         return true;
     }
     jitc_scope_t* scope = NULL;
-    if (decltype == Decltype_Static) scope = list_get_ptr(context->scopes, 0);
-    else scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
-    bool global = scope == list_get_ptr(context->scopes, 0);
-    autofree jitc_variable_t* var = malloc(sizeof(jitc_variable_t));
+    if (decltype == Decltype_Static) scope = &list_get(context->scopes, 0);
+    else scope = &list_get(context->scopes, list_size(context->scopes) - 1);
+    bool global = scope == &list_get(context->scopes, 0);
+    map_add(scope->variables) = (char*)type->name;
+    map_commit(scope->variables);
+    jitc_variable_t* var = &map_get_value(scope->variables);
     var->type = type;
     var->decltype = decltype;
     var->enum_value = value;
     var->preserve_policy = preserve_policy;
     var->initial = true;
-    map_get_ptr(scope->variables, (void*)type->name);
-    map_store_ptr(scope->variables, move(var));
     return true;
 }
 
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name) {
-    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
-    map_t* map = NULL;
-    if (type->kind == Type_Struct) map = scope->structs;
-    if (type->kind == Type_Union) map = scope->unions;
-    if (type->kind == Type_Enum) map = scope->enums;
+    jitc_scope_t* scope = &list_get(context->scopes, list_size(context->scopes) - 1);
+    map(char*, jitc_type_t*)* map = NULL;
+    if (type->kind == Type_Struct) map = (void*)scope->structs;
+    if (type->kind == Type_Union) map = (void*)scope->unions;
+    if (type->kind == Type_Enum) map = (void*)scope->enums;
     if (!map) return false;
-    if (map_find_ptr(map, (void*)name)) return false;
-    map_get_ptr(map, (void*)name);
-    map_store_ptr(map, type);
+    if (map_find(map, &name)) return false;
+    map_add(map) = (char*)name;
+    map_commit(map);
+    map_get_value(map) = type;
     return true;
 }
 
@@ -341,9 +346,9 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
     bool outside_of_function = false;
     for (size_t i = list_size(context->scopes) - 1; i < list_size(context->scopes) /* rely on underflow */; i--) {
         if (i != 0 && outside_of_function) continue;
-        jitc_scope_t* scope = list_get_ptr(context->scopes, i);
-        if (!map_find_ptr(scope->variables, (void*)name)) continue;
-        return map_as_ptr(scope->variables);
+        jitc_scope_t* scope = &list_get(context->scopes, i);
+        if (!map_find(scope->variables, &name)) continue;
+        return &map_get_value(scope->variables);
     }
     return NULL;
 }
@@ -351,42 +356,36 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name) {
     if (!name) return NULL;
     for (size_t i = list_size(context->scopes) - 1; i < list_size(context->scopes) /* rely on underflow */; i--) {
-        jitc_scope_t* scope = list_get_ptr(context->scopes, i);
-        map_t* map = NULL;
-        if (kind == Type_StructRef || kind == Type_Struct) map = scope->structs;
-        if (kind == Type_UnionRef || kind == Type_Union) map = scope->unions;
-        if (kind == Type_EnumRef || kind == Type_Enum) map = scope->enums;
+        jitc_scope_t* scope = &list_get(context->scopes, i);
+        map(char*, jitc_type_t*)* map = NULL;
+        if (kind == Type_StructRef || kind == Type_Struct) map = (void*)scope->structs;
+        if (kind == Type_UnionRef || kind == Type_Union) map = (void*)scope->unions;
+        if (kind == Type_EnumRef || kind == Type_Enum) map = (void*)scope->enums;
         if (!map) return NULL;
-        if (!map_find_ptr(map, (void*)name)) continue;
-        return map_as_ptr(map);
+        if (!map_find(map, &name)) continue;
+        return map_get_value(map);
     }
     return NULL;
 }
 
 void jitc_push_scope(jitc_context_t* context) {
-    jitc_scope_t* scope = malloc(sizeof(jitc_scope_t));
-    scope->variables = map_new(compare_string);
-    scope->structs = map_new(compare_string);
-    scope->unions = map_new(compare_string);
-    scope->enums = map_new(compare_string);
-    list_add_ptr(context->scopes, scope);
+    jitc_scope_t* scope = &list_add(context->scopes);
+    scope->variables = map_new(compare_string, char*, jitc_variable_t);
+    scope->structs = map_new(compare_string, char*, jitc_type_t*);
+    scope->unions = map_new(compare_string, char*, jitc_type_t*);
+    scope->enums = map_new(compare_string, char*, jitc_type_t*);
 }
 
 static void jitc_destroy_scope(jitc_scope_t* scope) {
-    for (size_t i = 0; i < map_size(scope->variables); i++) {
-        map_index(scope->variables, i);
-        free(map_as_ptr(scope->variables));
-    }
     map_delete(scope->variables);
     map_delete(scope->structs);
     map_delete(scope->unions);
     map_delete(scope->enums);
-    free(scope);
 }
 
 bool jitc_pop_scope(jitc_context_t* context) {
     if (list_size(context->scopes) <= 1) return false;
-    jitc_scope_t* scope = list_get_ptr(context->scopes, list_size(context->scopes) - 1);
+    jitc_scope_t* scope = &list_get(context->scopes, list_size(context->scopes) - 1);
     list_remove(context->scopes, list_size(context->scopes) - 1);
     jitc_destroy_scope(scope);
     return true;
@@ -447,29 +446,30 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
 
 char* jitc_append_string(jitc_context_t* context, const char* str) {
     if (!str) return NULL;
-    char** ptr = (char**)set_find_ptr(context->strings, (char*)str);
+    char** ptr = set_find(context->strings, &str);
     if (ptr) return *ptr;
     char* string = strdup(str);
-    set_add_ptr(context->strings, string);
+    set_add(context->strings) = string;
+    set_commit(context->strings);
     return string;
 }
 
 jitc_context_t* jitc_create_context() {
     jitc_context_t* context = malloc(sizeof(jitc_context_t));
-    context->strings = set_new(compare_string);
-    context->typecache = map_new(compare_int64);
-    context->headers = map_new(compare_string);
-    context->scopes = list_new();
-    context->memchunks = list_new();
+    context->strings = set_new(compare_string, char*);
+    context->typecache = map_new(compare_int64, char*, jitc_type_t);
+    context->headers = map_new(compare_string, char*, char*);
+    context->scopes = list_new(jitc_scope_t);
+    context->memchunks = list_new(jitc_memchunk_t);
     context->error = NULL;
     jitc_push_scope(context);
     return context;
 }
 
 static jitc_variable_t* jitc_get_symbol(jitc_context_t* context, const char* name, bool normal_only) {
-    jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
-    if (!map_find_ptr(scope->variables, (char*)name)) return NULL;
-    jitc_variable_t* var = map_as_ptr(scope->variables);
+    jitc_scope_t* scope = &list_get(context->scopes, 0);
+    if (!map_find(scope->variables, &name)) return NULL;
+    jitc_variable_t* var = &map_get_value(scope->variables);
     if (var->decltype == Decltype_Typedef) return NULL;
     if (var->decltype == Decltype_Extern && normal_only) return NULL;
     if (var->decltype == Decltype_Static && normal_only) return NULL;
@@ -484,10 +484,10 @@ static void jitc_link_error_stub() {
 
 void jitc_link(jitc_context_t* context) {
     context->all_linked = true;
-    jitc_scope_t* scope = list_get_ptr(context->scopes, 0);
+    jitc_scope_t* scope = &list_get(context->scopes, 0);
     for (size_t i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
-        jitc_variable_t* var = map_as_ptr(scope->variables);
+        jitc_variable_t* var = &map_get_value(scope->variables);
         if (var->decltype == Decltype_EnumItem || var->decltype == Decltype_Typedef || var->ptr) continue;
         if (var->decltype != Decltype_Extern) {
             context->all_linked = false;
@@ -502,7 +502,7 @@ void jitc_link(jitc_context_t* context) {
     }
     for (size_t i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
-        jitc_variable_t* var = map_as_ptr(scope->variables);
+        jitc_variable_t* var = &map_get_value(scope->variables);
         if (var->decltype == Decltype_EnumItem || var->decltype == Decltype_Typedef || var->decltype == Decltype_Extern) continue;
         if (var->type->kind != Type_Function || !var->func) continue;
         var->func->addr->curr_ptr = context->all_linked ? var->func->addr->ptr : (void*)jitc_link_error_stub;
@@ -535,9 +535,10 @@ bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_ty
     return false;
 }
 
-bool jitc_struct_field_exists_list(list_t* list, const char* name) {
+bool jitc_struct_field_exists_list(list_t* _list, const char* name) {
+    list(jitc_type_t*)* list = _list;
     for (size_t i = 0; i < list_size(list); i++) {
-        jitc_type_t* field = list_get_ptr(list, i);
+        jitc_type_t* field = list_get(list, i);
         if (!field->name) {
             if (field->kind == Type_Struct || field->kind == Type_Union)
                 if (jitc_walk_struct(field, name, NULL, NULL)) return true;
@@ -565,29 +566,30 @@ static char* read_whole_file(jitc_context_t* context, const char* filename) {
 }
 
 queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* filename, map_t* macros) {
-    smartptr(queue_t) tokens = NULL;
-    if (!map_find_ptr(context->headers, (char*)filename)) {
+    smartptr(queue(jitc_token_t)) tokens = NULL;
+    if (!map_find(context->headers, &filename)) {
         autofree char* content = try(read_whole_file(context, filename));
         tokens = try(jitc_lex(context, content, filename));
     }
-    else tokens = try(jitc_lex(context, map_as_ptr(context->headers), filename));
+    else tokens = try(jitc_lex(context, map_get_value(context->headers), filename));
     tokens = try(jitc_preprocess(context, move(tokens), macros));
     return move(tokens);
 }
 
 void jitc_create_header(jitc_context_t* context, const char* name, const char* content) {
-    map_get_ptr(context->headers, (char*)name);
-    map_store_ptr(context->headers, jitc_append_string(context, content));
+    map_add(context->headers) = (char*)name;
+    map_commit(context->headers);
+    map_get_value(context->headers) = jitc_append_string(context, content);
 }
 
 bool jitc_parse(jitc_context_t* context, const char* code, const char* filename) {
-    smartptr(queue_t) tokens = try(jitc_lex(context, code, filename));
+    smartptr(queue(jitc_token_t)) tokens = try(jitc_lex(context, code, filename));
     tokens = try(jitc_preprocess(context, move(tokens), NULL));
     smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens);
     while (jitc_pop_scope(context));
     if (!ast) return false;
     for (size_t i = 0; i < list_size(ast->list.inner); i++) {
-        jitc_compile(context, list_get_ptr(ast->list.inner, i));
+        jitc_compile(context, list_get(ast->list.inner, i));
     }
     jitc_link(context);
     return true;
@@ -607,12 +609,12 @@ void* jitc_get(jitc_context_t* context, const char* name) {
 
 void jitc_destroy_context(jitc_context_t* context) {
     for (size_t i = 0; i < set_size(context->strings); i++) {
-        free(set_get_ptr(context->strings, i));
+        free(set_get(context->strings, i));
     }
     set_delete(context->strings);
     for (size_t i = 0; i < map_size(context->typecache); i++) {
         map_index(context->typecache, i);
-        jitc_type_t* type = map_as_ptr(context->typecache);
+        jitc_type_t* type = map_get_value(context->typecache);
         if (type->kind == Type_Function) free(type->func.params);
         if (type->kind == Type_Struct || type->kind == Type_Union) {
             free(type->str.fields);
@@ -621,8 +623,10 @@ void jitc_destroy_context(jitc_context_t* context) {
         free(type);
     }
     map_delete(context->typecache);
+    map_delete(context->headers);
+    jitc_delete_memchunks(context);
     while (list_size(context->scopes) > 1) jitc_pop_scope(context);
-    jitc_destroy_scope(list_get_ptr(context->scopes, 0));
+    jitc_destroy_scope(&list_get(context->scopes, 0));
     list_delete(context->scopes);
     free(context);
 }
