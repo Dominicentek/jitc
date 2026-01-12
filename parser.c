@@ -3,6 +3,7 @@
 #include "jitc_internal.h"
 #include "cleanups.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -933,83 +934,159 @@ jitc_ast_t* jitc_flatten_ast(jitc_ast_t* ast, list_t* _list) {
     return ast;
 }
 
+typedef struct {
+    jitc_type_t* type;
+    int base_index;
+    int end_index;
+} init_frame_t;
+
+typedef struct {
+    jitc_type_t* type;
+    jitc_type_t* aggregate;
+    int offset;
+} init_element_t;
+
+static init_element_t* jitc_init_append(list_t* _elements, jitc_type_t* type, int base_offset) {
+    list(init_element_t)* elements = _elements;
+    init_element_t* element = NULL;
+    if ((type->kind == Type_Struct || type->kind == Type_Union) && type->str.num_fields != 0) for (int i = 0; i < type->str.num_fields; i++) {
+        init_element_t* inner = jitc_init_append(elements, type->str.fields[i], base_offset + type->str.offsets[i]);
+        if (i == 0) element = inner;
+    }
+    else if ((type->kind == Type_Array) && type->arr.size != 0) for (int i = 0; i < (type->arr.size == -1 ? 1 : type->arr.size); i++) {
+        init_element_t* inner = jitc_init_append(elements, type->arr.base, base_offset + i * type->arr.base->size);
+        if (i == 0) element = inner;
+    }
+    else {
+        element = &list_add(elements);
+        element->type = type;
+        element->offset = base_offset;
+    }
+    element->aggregate = type;
+    return element;
+}
+
+static int jitc_init_num_elements(jitc_type_t* type) {
+    int total = 0;
+    if (type->kind == Type_Struct || type->kind == Type_Union) for (int i = 0; i < type->str.num_fields; i++)
+        total += jitc_init_num_elements(type->str.fields[i]);
+    else if (type->kind == Type_Array) total = jitc_init_num_elements(type->arr.base) * type->arr.size;
+    else total = 1;
+    return total;
+}
+
+static int jitc_init_designate_array(jitc_type_t* type, int index) {
+    if (index == 0) return 0;
+    return jitc_init_num_elements(type->arr.base) * index;
+}
+
+static int jitc_init_designate_struct(jitc_type_t* type, const char* name) {
+    int offset = 0;
+    for (int i = 0; i < type->str.num_fields; i++) {
+        jitc_type_t* field = type->str.fields[i];
+        if ((field->kind == Type_Struct || field->kind == Type_Union) && !field->name) {
+            int off = jitc_init_designate_struct(field, name);
+            if (off >= 0) return offset + off;
+            offset += ~off;
+            continue;
+        }
+        if (field->name && strcmp(field->name, name) == 0) return offset;
+        offset += jitc_init_num_elements(field);
+    }
+    return ~offset;
+}
+
 jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* _tokens, jitc_token_t* token, jitc_type_t* type, size_t* array_size, bool constant_only) {
     queue(jitc_token_t)* tokens = _tokens;
+    smartptr(stack(init_frame_t)) frames = stack_new(init_frame_t);
+    smartptr(list(init_element_t)) elements = list_new(init_element_t);
+    if (type) jitc_init_append(elements, type, 0);
+    init_frame_t* frame = &stack_push(frames);
+    frame->type = type;
+    frame->base_index = 0;
+    frame->end_index = list_size(elements);
+    int cursor = 0;
+
     smartptr(jitc_ast_t) node = mknode(AST_Initializer, token);
     node->init.type = type;
     node->init.items = list_new(jitc_ast_t*);
     node->init.offsets = list_new(size_t);
     size_t curr_item = 0;
     if (array_size) *array_size = 0;
-    while (true) {
-        if (jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) break;
-        // todo: designators
-        if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
-            if (!type) {
-                jitc_destroy_ast(try(jitc_parse_initializer(context, tokens, token, NULL, NULL, constant_only)));
-            }
-            else if (is_scalar(type)) {
-                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item == 0 ? type : NULL, NULL, constant_only));
-                if (curr_item == 0) {
-                    jitc_ast_t* item = list_get(initializer->init.items, 0);
-                    list_add(node->init.items) = item;
-                    list_add(node->init.offsets) = 0;
-                    list_remove(initializer->init.items, 0);
-                }
-            }
-            else if (type->kind == Type_Array) {
-                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item < type->arr.size ? type->arr.base : NULL, NULL, constant_only));
-                if (curr_item < type->arr.size) {
-                    for (size_t i = 0; i < list_size(node->init.items); i++) {
-                        jitc_ast_t* item = list_get(initializer->init.items, i);
-                        list_add(node->init.items) = item;
-                        list_add(node->init.offsets) = list_get(initializer->init.offsets, i) + curr_item * type->arr.base->size;
-                    }
-                    list_delete(initializer->init.items);
-                    list_delete(initializer->init.offsets);
-                    free(move(initializer));
-                }
+
+    while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
+        bool has_designator = false;
+        int designator_offset = 0;
+        jitc_type_t* designator_type = type;
+        while (true) {
+            if (!(token = jitc_token_expect(tokens, TOKEN_DOT)) && !(token = jitc_token_expect(tokens, TOKEN_BRACKET_OPEN))) break;
+            has_designator = true;
+            if (token->type == TOKEN_DOT) {
+                if (designator_type->kind != Type_Struct && designator_type->kind != Type_Union) throw(token, "Initializer is not a struct or union");
+                if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) throw(token, "Expected identifier");
+                int offset = jitc_init_designate_struct(designator_type, token->value.string);
+                if (offset < 0) throw(token, "Cannot find field '%s'", token->value.string);
+                designator_offset += offset;
             }
             else {
-                smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, curr_item < type->str.num_fields ? type->str.fields[curr_item] : NULL, NULL, constant_only));
-                if (curr_item < type->str.num_fields) {
-                    for (size_t i = 0; i < list_size(node->init.items); i++) {
-                        jitc_ast_t* item = list_get(initializer->init.items, i);
-                        list_add(node->init.items) = item;
-                        list_add(node->init.offsets) = list_get(initializer->init.offsets, i) + type->str.offsets[curr_item];
-                    }
-                    list_delete(initializer->init.items);
-                    list_delete(initializer->init.offsets);
-                    free(move(initializer));
+                if (designator_type->kind != Type_Array) throw(token, "Initializer is not an array");
+                smartptr(jitc_ast_t) index = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
+                if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) throw(token, "Expected ']'");
+                if (index->node_type != AST_Integer) throw(index->token, "Expected integer literal");
+                if (!index->integer.is_unsigned && (index->integer.value & (1L << 63))) throw(index->token, "Negative index");
+                if (index->integer.value >= type->arr.size) throw(index->token, "Array designator exceeds array size");
+                designator_offset += jitc_init_designate_array(designator_type, index->integer.value);
+            }
+        }
+        if (has_designator && !jitc_token_expect(tokens, TOKEN_EQUALS)) throw(NEXT_TOKEN, "Expected '='");
+        if (has_designator) curr_item = designator_offset;
+        if (array_size) *array_size = curr_item / list_size(elements) + 1;
+        if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
+            init_element_t* element = curr_item >= list_size(elements)
+                ? type->kind == Type_Array && type->arr.size == -1
+                    ? &list_get(elements, curr_item % list_size(elements))
+                    : NULL
+                : &list_get(elements, curr_item);
+            smartptr(jitc_ast_t) inner = try(jitc_parse_initializer(context, tokens, token, element ? element->aggregate : NULL, NULL, constant_only));
+            if (element) for (size_t i = 0; i < list_size(inner->init.offsets); i++) {
+                list_add(node->init.items) = list_get(inner->init.items, 0);
+                list_add(node->init.offsets) = list_get(inner->init.offsets, i) + element->offset;
+                list_remove(inner->init.items, 0);
+            }
+            curr_item += element ? jitc_init_num_elements(element->aggregate) : 0;
+        }
+        else {
+            init_element_t* element = curr_item >= list_size(elements)
+                ? type->kind == Type_Array && type->arr.size == -1
+                    ? &list_get(elements, curr_item % list_size(elements))
+                    : NULL
+                : &list_get(elements, curr_item);
+            smartptr(jitc_ast_t) expr = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
+            if (element) {
+                if (element->type->kind == Type_Array || element->type->kind == Type_Struct || element->type->kind == Type_Union)
+                    throw(expr->token, "Aggregate type with 0 elements must have an explicit initializer");
+                bool is_aggregate = false;
+                if (!(expr = jitc_cast(context, expr, element->type, false, expr->token))) {
+                    jitc_error_set(context, NULL);
+                    expr = try(jitc_cast(context, expr, element->aggregate, false, expr->token));
+                    is_aggregate = true;
+                }
+                list_add(node->init.items) = move(expr);
+                list_add(node->init.offsets) = element->offset + curr_item / list_size(elements) * (type->kind == Type_Array ? type->arr.base->size : 0);
+                if (is_aggregate) curr_item += jitc_init_num_elements(element->aggregate);
+                else {
+                    int offset = element->offset;
+                    do curr_item++;
+                    while (
+                        list_get(elements, curr_item % list_size(elements)).offset == offset &&
+                        curr_item % list_size(elements) != 0
+                    );
                 }
             }
         }
-        else {
-            jitc_type_t* base;
-            if (type->kind == Type_Array) base = curr_item < type->arr.size ? type->arr.base : NULL;
-            else if (type->kind == Type_Struct || type->kind == Type_Union) base = curr_item < type->str.num_fields ? type->str.fields[curr_item] : NULL;
-            else base = curr_item == 0 ? type : NULL;
-            size_t offset = base
-                ? type->kind == Type_Struct || type->kind == Type_Union
-                    ? type->str.offsets[curr_item]
-                    : type->kind == Type_Array
-                        ? type->arr.base->size * curr_item
-                        : 0
-                : 0;
-            token = NEXT_TOKEN;
-            smartptr(jitc_ast_t) value = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
-            if (!is_constant(value) && constant_only) throw(token, "Assigning a non-literal to a global variable");
-            if (base) {
-                value = try(jitc_cast(context, value, base, false, value->token));
-                list_add(node->init.items) = move(value);
-                list_add(node->init.offsets) = offset;
-            }
-        }
-        curr_item++;
-        if (array_size && *array_size < curr_item) *array_size = curr_item;
         if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
         if (jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) break;
-        throw(token, "Expected ',' or '}'");
+        throw(NEXT_TOKEN, "Expected ',' or '}'");
     }
     return move(node);
 }

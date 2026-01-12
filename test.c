@@ -8,10 +8,6 @@
 const char* skipped_tests[256] = {
     [10] = "goto not supported",
     [45] = "some weird pointer shit",
-    [47] = "initializers not implemented yet",
-    [48] = "initializers not implemented yet",
-    [49] = "initializers not implemented yet",
-    [50] = "initializers not implemented yet",
     [51] = "switch-case not implemented yet",
     [105] = "illegal instruction fsr?"
 };
