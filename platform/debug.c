@@ -60,6 +60,8 @@ static void jitc_asm_else(bytewriter_t* writer) { printf("else\n"); }
 static void jitc_asm_end(bytewriter_t* writer) { printf("end\n"); }
 static void jitc_asm_goto_start(bytewriter_t* writer) { printf("goto_start\n"); }
 static void jitc_asm_goto_end(bytewriter_t* writer) { printf("goto_end\n"); }
+static void jitc_asm_label(bytewriter_t* writer, const char* label) { printf("label\n"); }
+static void jitc_asm_goto(bytewriter_t* writer, const char* label) { printf("goto\n"); }
 static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_type_t** arg_types, size_t num_args) { printf("call\n"); }
 static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t stack_size) { printf("func\n"); }
 static void jitc_asm_ret(bytewriter_t* writer) { printf("ret\n"); }

@@ -376,6 +376,12 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
             }
             jitc_asm_offset(writer, -curr_offset);
         } return true;
+        case AST_Goto: {
+            jitc_asm_goto(writer, ast->label.name);
+        } return false;
+        case AST_Label: {
+            jitc_asm_label(writer, ast->label.name);
+        } return false;
         default: break;
     }
     return false;

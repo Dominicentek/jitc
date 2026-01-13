@@ -394,6 +394,13 @@ void* __queue_pop(queue_t* _queue) {
     return ptr;
 }
 
+void* __queue_rollback(queue_t* _queue) {
+    __queue_t* queue = _queue;
+    if (queue->length == 0) return NULL;
+    queue->length++;
+    return &queue->list[--queue->tail * queue->item_size];
+}
+
 void queue_delete(queue_t* _queue) {
     __queue_t* queue = _queue;
     free(queue->list);

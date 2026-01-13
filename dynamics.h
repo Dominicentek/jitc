@@ -135,6 +135,7 @@ size_t queue_size(queue_t* queue);
 void* __queue_push(queue_t* queue);
 void* __queue_peek(queue_t* queue);
 void* __queue_pop(queue_t* queue);
+void* __queue_rollback(queue_t* queue);
 void queue_delete(queue_t* queue);
 
 #define queue(T) __DEFINE(queue, __PARAM(T, _q))
@@ -142,5 +143,6 @@ void queue_delete(queue_t* queue);
 #define queue_push(queue) __RETURNS(queue, _q, __queue_push)
 #define queue_peek(queue) __RETURNS(queue, _q, __queue_peek)
 #define queue_pop(queue) __RETURNS(queue, _q, __queue_pop)
+#define queue_rollback(queue) __RETURNS(queue, _q, __queue_rollback)
 
 #endif

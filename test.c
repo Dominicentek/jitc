@@ -6,7 +6,6 @@
 #include <signal.h>
 
 const char* skipped_tests[256] = {
-    [10] = "goto not supported",
     [45] = "some weird pointer shit",
     [51] = "switch-case not implemented yet",
     [105] = "illegal instruction fsr?"

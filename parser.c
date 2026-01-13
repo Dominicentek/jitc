@@ -934,6 +934,34 @@ jitc_ast_t* jitc_flatten_ast(jitc_ast_t* ast, list_t* _list) {
     return ast;
 }
 
+bool jitc_verify_gotos(jitc_context_t* context, jitc_ast_t* ast) {
+    switch (ast->node_type) {
+        case AST_List:
+        case AST_Scope:
+            for (size_t i = 0; i < list_size(ast->list.inner); i++) {
+                try(jitc_verify_gotos(context, list_get(ast->list.inner, i)));
+            }
+            break;
+        case AST_Loop:
+            if (ast->loop.body) try(jitc_verify_gotos(context, ast->loop.body));
+            break;
+        case AST_Ternary:
+            if (ast->ternary.then) try(jitc_verify_gotos(context, ast->ternary.then));
+            if (ast->ternary.otherwise) try(jitc_verify_gotos(context, ast->ternary.otherwise));
+            break;
+        case AST_Goto: {
+            bool has_label = false;
+            for (size_t i = 0; i < list_size(context->labels) && !has_label; i++) {
+                if (strcmp(list_get(context->labels, i), ast->label.name) == 0) has_label = true;
+            }
+            if (!has_label) throw(ast->token, "Jump to undeclared label '%s'", ast->label.name);
+            return true;
+        } break;
+        default: break;
+    }
+    return true;
+}
+
 typedef struct {
     jitc_type_t* type;
     int base_index;
@@ -1412,6 +1440,24 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
         return mknode(AST_Break, token);
     }
+    if ((token = jitc_token_expect(tokens, TOKEN_goto))) {
+        if (!(allowed & ParseType_Command)) throw(token, "'goto' not allowed here");
+        if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) throw(NEXT_TOKEN, "Expected identifier");
+        smartptr(jitc_ast_t) node = mknode(AST_Goto, token);
+        node->label.name = token->value.string;
+        if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
+        return move(node);
+    }
+    if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
+        if (jitc_token_expect(tokens, TOKEN_COLON)) {
+            if (!(allowed & ParseType_Command)) throw(token, "Label not allowed here");
+            jitc_ast_t* node = mknode(AST_Label, token);
+            node->label.name = token->value.string;
+            list_add(context->labels) = token->value.string;
+            return node;
+        }
+        else queue_rollback(tokens);
+    }
     if ((token = jitc_token_expect(tokens, TOKEN_return))) {
         if (!(allowed & ParseType_Command)) throw(token, "'return' not allowed here");
         smartptr(jitc_ast_t) node = mknode(AST_Return, token);
@@ -1470,11 +1516,13 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 for (size_t i = 0; i < type->func.num_params; i++) {
                     jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
                 }
+                while (list_size(context->labels) > 0) list_remove(context->labels, list_size(context->labels) - 1);
                 while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
                     list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
                 }
                 jitc_pop_scope(context);
                 func->func.body = jitc_flatten_ast(move(body), NULL);
+                try(jitc_verify_gotos(context, func->func.body));
                 list_add(list->list.inner) = move(func);
                 break;
             }

@@ -61,6 +61,8 @@ typedef enum: uint8_t {
     AST_Variable,
     AST_WalkStruct,
     AST_Initializer,
+    AST_Goto,
+    AST_Label,
 } jitc_ast_type_t;
 
 typedef enum: uint8_t {
@@ -249,6 +251,9 @@ struct jitc_ast_t {
         } string;
         struct {
             const char* name;
+        } label;
+        struct {
+            const char* name;
             bool write_dest;
         } variable;
         struct {
@@ -282,6 +287,7 @@ struct jitc_context_t {
     set(char*)* strings;
     map(uint64_t, jitc_type_t*)* typecache;
     map(char*, char*)* headers;
+    list(char*)* labels;
     list(jitc_scope_t)* scopes;
     list(jitc_memchunk_t)* memchunks;
     jitc_error_t* error;

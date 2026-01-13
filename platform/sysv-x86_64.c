@@ -51,7 +51,7 @@ static abi_arg_t classify(jitc_type_t* type, int* int_params, int* float_params,
     append_primitives(primitives, type, 0);
     for (size_t i = 0; i < list_size(primitives); i++) {
         abi_primitive_t* primitive = &list_get(primitives, i);
-        if (!isflt(primitive->kind)) *(primitive->offset >= 8 ? &arg.class_upper : &arg.class) = ABIClass_INTEGER; 
+        if (!isflt(primitive->kind)) *(primitive->offset >= 8 ? &arg.class_upper : &arg.class) = ABIClass_INTEGER;
     }
     int* counter = arg.class == ABIClass_FLOATING ? float_params : int_params;
     if (*counter >= (arg.class == ABIClass_FLOATING ? 8 : 6)) {
@@ -87,7 +87,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     for (size_t i = 0; i < num_args; i++) {
         args[i + 1] = classify(arg_types[i], &int_params, &float_params, &stack_params);
     }
-    
+
     // allocate stack
     int varargs_offset = 0;
     for (size_t i = 0; i < num_args + 1; i++) {
@@ -103,14 +103,14 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     stack_size += stack_params * 8;
     if ((stack_size + stack_bytes) % 16 != 0) stack_size += 16 - ((stack_size + stack_bytes) % 16);
     if (stack_size != 0) stack_sub(writer, stack_size);
-    
+
     // copy shit onto stack
     for (size_t i = 1; i < num_args + 1; i++) {
         if (!args[i].is_big) continue;
         stack_item_t* item = peek(i - 1);
         copy(writer, ptr(rsp, stack_size - args[i].stack_offset - args[i].type->size, Type_Int64, true), op(item), args[i].type->size, args[i].type->alignment);
     }
-    
+
     // copy args
     int num_fixed_args = signature->func.num_params;
     if (has_varargs) num_fixed_args--;
@@ -198,6 +198,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
 static jitc_type_t* func_signature = NULL;
 
 static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t stack_size) {
+    clear_labels();
     func_signature = signature;
     emit(writer, opc_push, 1, reg(rbp, Type_Int64, true));
     emit(writer, mov, 2, reg(rbp, Type_Pointer, true), reg(rsp, Type_Pointer, true));

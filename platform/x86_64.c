@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdarg.h>
 
+#include "../compares.h"
+
 //#define DEBUG
 
 typedef enum: uint8_t {
@@ -1195,4 +1197,54 @@ static void jitc_asm_goto_end(bytewriter_t* writer) {
     emit(writer, jmp, 1, imm(0, Type_Int32, false));
     branch_t* branch = &stack_peek(branches);
     stack_push(branch->end_stack) = bytewriter_size(writer);
+}
+
+typedef struct {
+    stack(size_t)* stack;
+    size_t position;
+} goto_t;
+
+static map(char*, goto_t)* goto_labels;
+
+static void clear_labels() {
+    if (goto_labels) {
+        for (size_t i = 0; i < map_size(goto_labels); i++) {
+            map_index(goto_labels, i);
+            stack_delete(map_get_value(goto_labels).stack);
+        }
+        map_delete(goto_labels);
+    }
+    goto_labels = map_new(compare_string, char*, goto_t);
+}
+
+static void jitc_asm_goto(bytewriter_t* writer, const char* label_name) {
+    emit(writer, jmp, 1, imm(0, Type_Int32, false));
+    map_add(goto_labels) = (char*)label_name;
+    goto_t* label = NULL;
+    if (map_commit(goto_labels)) {
+        goto_t* label = &map_get_value(goto_labels);
+        label->position = -1;
+        label->stack = stack_new(size_t);
+    }
+    if (!label) label = &map_get_value(goto_labels);
+    size_t pos = bytewriter_size(writer);
+    if (label->position == -1) stack_push(label->stack) = pos;
+    else *(int32_t*)(bytewriter_data(writer) + bytewriter_size(writer) - 4) = label->position - pos;
+}
+
+static void jitc_asm_label(bytewriter_t* writer, const char* label_name) {
+    map_add(goto_labels) = (char*)label_name;
+    if (map_commit(goto_labels)) {
+        goto_t* label = &map_get_value(goto_labels);
+        label->position = bytewriter_size(writer);
+        label->stack = stack_new(size_t);
+    }
+    else {
+        goto_t* label = &map_get_value(goto_labels);
+        label->position = bytewriter_size(writer);
+        while (stack_size(label->stack) > 0) {
+            size_t pos = stack_pop(label->stack);
+            *(int32_t*)(bytewriter_data(writer) + pos - 4) = label->position - pos;
+        }
+    }
 }

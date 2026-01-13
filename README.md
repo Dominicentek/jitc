@@ -17,14 +17,12 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 
 - Struct parameters/returns and varargs in function prolog and epilog
 - Switch statements
-- Initializers
 - Compound literals
 - Preprocessor
 - Windows support (x64 ABI)
 
 Calling it done here, the things below are planned but not guaranteed
 
-- Implement `goto`
 - aarch64 support
 - Rewrite IR into SSA
 - Implement custom extensions
@@ -114,7 +112,7 @@ If a feature is not on this list, it's very likely not supported.
   - `static` variables are initialized to 0
 - `sizeof`, `typeof` and `alignof` (`_Alignof` unsupported)
   - Must have parentheses, `sizeof x` is invalid
-- Basic control flow (`if`, `else`, `while`, `do`, `for`, `break`, `continue`, `return`, `switch`, `case`, `default`)
+- Basic control flow (`if`, `else`, `while`, `do`, `for`, `break`, `continue`, `return`, `switch`, `case`, `default`, `goto`)
   - `case` is integer constant only
   - Cases fall through without `break`
   - Function calls must have visible prototypes
@@ -149,7 +147,6 @@ If a feature is not on this list, it's very likely not supported.
 Explicitly unsupported features
 
 - `volatile`, `register`, `restrict`, `inline`, `auto`, `constexpr`, `signed` keywords
-- `goto`
 - VLAs (including `alloca`)
 - Bitfields
 - Variable shadowing

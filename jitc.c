@@ -459,6 +459,7 @@ jitc_context_t* jitc_create_context() {
     context->strings = set_new(compare_string, char*);
     context->typecache = map_new(compare_int64, char*, jitc_type_t);
     context->headers = map_new(compare_string, char*, char*);
+    context->labels = list_new(char*);
     context->scopes = list_new(jitc_scope_t);
     context->memchunks = list_new(jitc_memchunk_t);
     context->error = NULL;
@@ -624,6 +625,7 @@ void jitc_destroy_context(jitc_context_t* context) {
     }
     map_delete(context->typecache);
     map_delete(context->headers);
+    list_delete(context->labels);
     jitc_delete_memchunks(context);
     while (list_size(context->scopes) > 1) jitc_pop_scope(context);
     jitc_destroy_scope(&list_get(context->scopes, 0));
