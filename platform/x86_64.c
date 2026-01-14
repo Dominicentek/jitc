@@ -447,7 +447,7 @@ static bool legalize(legalization_t* legalization, operand_t op, instr_constrain
         else return legalization->cost = 0;
     }
     if (op.type == OpType_reg) {
-        if (isflt(op.kind) && (constraints & C_REG) && !(constraints && C_XMM)) step() = Legal_to_reg;
+        if (isflt(op.kind) && (constraints & C_REG) && !(constraints & C_XMM)) step() = Legal_to_reg;
         else if (!isflt(op.kind) && (constraints & C_XMM) && !(constraints & C_REG)) step() = Legal_to_xmm;
         else if (!(constraints & (isflt(op.kind) ? C_XMM : C_REG))) return legalization->cost = 0;
     }

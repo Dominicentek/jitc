@@ -24,6 +24,7 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 Calling it done here, the things below are planned but not guaranteed
 
 - aarch64 support
+- User friendly segfault reporting and handling
 - Rewrite IR into SSA
 - Implement custom extensions
   - GNU statement expressions

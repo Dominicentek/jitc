@@ -37,6 +37,40 @@ struct stackvar_t {
     };
 };
 
+static void* make_executable(jitc_context_t* context, void* ptr, size_t size) {
+    size_t chunk_size = size;
+    if (chunk_size % 16 != 0) chunk_size += 16 - (chunk_size % 16);
+    for (size_t i = 0; i < list_size(context->memchunks); i++) {
+        jitc_memchunk_t* memchunk = &list_get(context->memchunks, i);
+        if (memchunk->avail >= chunk_size) {
+            protect_rw(memchunk->ptr, memchunk->capacity);
+            void* chunk = (char*)memchunk->ptr + memchunk->capacity - memchunk->avail;
+            memchunk->avail -= chunk_size;
+            memcpy(chunk, ptr, size);
+            protect_rx(memchunk->ptr, memchunk->capacity);
+            return chunk;
+        }
+    }
+    size_t page_size = getpagesize();
+    size_t num_pages = (chunk_size + page_size - 1) / page_size;
+    void* chunk = alloc_page(num_pages * page_size);
+    memcpy(chunk, ptr, size);
+    jitc_memchunk_t* memchunk = &list_add(context->memchunks);
+    memchunk->avail = num_pages * page_size - chunk_size;
+    memchunk->capacity = num_pages * page_size;
+    memchunk->ptr = chunk;
+    protect_rx(chunk, num_pages * page_size);
+    return chunk;
+}
+
+void jitc_delete_memchunks(jitc_context_t* context) {
+    for (size_t i = 0; i < list_size(context->memchunks); i++) {
+        jitc_memchunk_t* memchunk = &list_get(context->memchunks, i);
+        munmap(memchunk->ptr, memchunk->capacity);
+    }
+    list_delete(context->memchunks);
+}
+
 static void promote(bytewriter_t* writer, jitc_ast_t* ast) {
     if (ast->exprtype->kind < Type_Int32)
         jitc_asm_cvt(writer, Type_Int32, ast->exprtype->is_unsigned);

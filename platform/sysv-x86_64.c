@@ -200,12 +200,20 @@ static jitc_type_t* func_signature = NULL;
 static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t stack_size) {
     clear_labels();
     func_signature = signature;
+    emit(writer, opc_push, 1, reg(rbx, Type_Int64, true));
+    emit(writer, opc_push, 1, reg(r12, Type_Int64, true));
+    emit(writer, opc_push, 1, reg(r13, Type_Int64, true));
+    emit(writer, opc_push, 1, reg(r14, Type_Int64, true));
+    emit(writer, opc_push, 1, reg(r15, Type_Int64, true));
+    for (int i = 8; i <= 15; i++) emit(writer, opc_push, 1, reg(i, Type_Float64, true));
     emit(writer, opc_push, 1, reg(rbp, Type_Int64, true));
     emit(writer, mov, 2, reg(rbp, Type_Pointer, true), reg(rsp, Type_Pointer, true));
+    stack_size += 8;
     if (stack_size % 16 != 0) stack_size += 16 - (stack_size % 16);
+    stack_size -= 8;
     if (stack_size != 0) emit(writer, sub, 2, reg(rsp, Type_Pointer, true), imm(stack_size, Type_Int32, true));
 
-    int int_params = 0, float_params = 0, stack_params = 2, offset = 0;
+    int int_params = 0, float_params = 0, stack_params = 7, offset = 0;
     for (size_t i = 0; i < signature->func.num_params; i++) {
         jitc_type_t* param = signature->func.params[i];
         if (offset % param->alignment != 0) offset += param->alignment - (offset % param->alignment);
@@ -246,5 +254,10 @@ static void jitc_asm_ret(bytewriter_t* writer) {
 static void jitc_asm_func_end(bytewriter_t* writer) {
     pop_return(writer);
     emit(writer, leave, 0);
+    emit(writer, opc_pop, 1, reg(r15, Type_Int64, true));
+    emit(writer, opc_pop, 1, reg(r14, Type_Int64, true));
+    emit(writer, opc_pop, 1, reg(r13, Type_Int64, true));
+    emit(writer, opc_pop, 1, reg(r12, Type_Int64, true));
+    emit(writer, opc_pop, 1, reg(rbx, Type_Int64, true));
     emit(writer, ret, 0);
 }
