@@ -10,16 +10,10 @@
 
 typedef enum {
     MacroType_Ordinary,
-    MacroType_OrdinaryFunction,
     MacroType_LINE,
     MacroType_FILE,
     MacroType_DATE,
     MacroType_TIME,
-    MacroType_DEFINE,
-    MacroType_UNDEF,
-    MacroType_RECURSE,
-    MacroType_IF,
-    MacroType_EVAL,
 } macro_type_t;
 
 typedef struct {
@@ -51,10 +45,8 @@ static macro_t* new_macro(map_t* _macros, const char* name, macro_type_t type) {
     map_commit(macros);
     macro_t* macro = &map_get_value(macros);
     macro->type = type;
-    if (type == MacroType_Ordinary || type == MacroType_OrdinaryFunction)
+    if (type == MacroType_Ordinary)
         macro->tokens = list_new(jitc_token_t);
-    if (type == MacroType_OrdinaryFunction)
-        macro->args = list_new(char*);
     return macro;
 }
 
@@ -87,11 +79,6 @@ static void predefine(map_t* macros) {
     new_macro(macros, "__FILE__", MacroType_FILE);
     new_macro(macros, "__DATE__", MacroType_DATE);
     new_macro(macros, "__TIME__", MacroType_TIME);
-    new_macro(macros, "__DEFINE__", MacroType_DEFINE);
-    new_macro(macros, "__UNDEF__", MacroType_UNDEF);
-    new_macro(macros, "__RECURSE__", MacroType_RECURSE);
-    new_macro(macros, "__IF__", MacroType_IF);
-    new_macro(macros, "__EVAL__", MacroType_EVAL);
 }
 
 static jitc_token_t* advance(token_stream_t* tokens, int* curr_line) {
@@ -133,7 +120,6 @@ static bool is_identifier(jitc_token_t* token, const char* id) {
     this; \
 })
 
-static void run_macro(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* macros);
 static bool compute_expression(jitc_context_t* context, map_t* macros, token_stream_t* stream, int64_t* left, int min_prec);
 
 static bool get_operand(jitc_context_t* context, map_t* macros, token_stream_t* stream, int64_t* value) {
@@ -248,8 +234,7 @@ static bool compute_expression(jitc_context_t* context, map_t* macros, token_str
     return true;
 }
 
-static void expand(jitc_context_t* context, jitc_token_t* base, map_t* macros, token_stream_t* dest, token_stream_t* tokens, map_t* args, list_t* varargs, set_t* used_macros, int recurse_uses) {
-    // todo: expand and rescan
+static void expand(jitc_token_t* base, token_stream_t* dest, token_stream_t* tokens) {
     while (tokens->ptr < list_size(tokens->tokens)) {
         jitc_token_t token = list_get(tokens->tokens, tokens->ptr++);
         token.row = base->row;
@@ -258,26 +243,18 @@ static void expand(jitc_context_t* context, jitc_token_t* base, map_t* macros, t
     }
 }
 
-static void process_identifier(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* _macros, set_t* _used_macros, int recurse_uses) {
-    set(char*)* used_macros = _used_macros;
+static void process_identifier(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* _macros) {
     map(char*, macro_t)* macros = _macros;
-    if (!used_macros) used_macros = set_new(compare_string, char*);
     jitc_token_t* token = &list_get(tokens->tokens, tokens->ptr - 1);
-    if (set_find(used_macros, &token->value.string) || !map_find(macros, &token->value.string)) {
+    if (!map_find(macros, &token->value.string)) {
         list_add(dest->tokens) = *token;
         return;
     }
     macro_t* macro = &map_get_value(macros);
     switch (macro->type) {
         case MacroType_Ordinary:
-            set_add(used_macros) = token->value.string;
-            set_commit(used_macros);
-            expand(context, token, macros, dest, &(token_stream_t){(void*)macro->tokens}, NULL, NULL, used_macros, recurse_uses);
-            set_remove(used_macros, set_indexof(used_macros, &token->value.string));
+            expand(token, dest, &(token_stream_t){(void*)macro->tokens});
             break;
-        case MacroType_OrdinaryFunction: {
-            // todo
-        } break;
         case MacroType_LINE:
             list_add(dest->tokens) = number_token(token->row);
             break;
@@ -299,26 +276,7 @@ static void process_identifier(jitc_context_t* context, token_stream_t* dest, to
             sprintf(formatted, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
             list_add(dest->tokens) = string_token(jitc_append_string(context, formatted));
         } break;
-        case MacroType_DEFINE: {
-            // todo
-        } break;
-        case MacroType_UNDEF: {
-            // todo
-        } break;
-        case MacroType_RECURSE: {
-            // todo
-        } break;
-        case MacroType_IF: {
-            // todo
-        } break;
-        case MacroType_EVAL: {
-            // todo
-        } break;
     }
-}
-
-static void run_macro(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* macros) {
-    process_identifier(context, dest, tokens, macros, NULL, 0);
 }
 
 queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* _macros) {
@@ -363,7 +321,6 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                 map_remove(macros);
             }
             else if (is_identifier(token, "include") || is_identifier(token, "embed")) {
-                // todo: support <FILENAME>
                 token = expect_and(advance(&stream, &curr_line),
                     this->type == TOKEN_STRING ||
                     this->type == TOKEN_IDENTIFIER,
@@ -372,7 +329,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                 token_stream_t* curr_stream = &stream;
                 if (token->type == TOKEN_IDENTIFIER) {
                     curr_stream = &macro_stream;
-                    run_macro(context, curr_stream, &stream, macros);
+                    process_identifier(context, curr_stream, &stream, macros);
                     token = &list_get(curr_stream->tokens, curr_stream->ptr++);
                 }
                 char* filename = NULL;
@@ -440,7 +397,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
         }
         else if (do_things) {
             curr_line = token->row;
-            if (token->type == TOKEN_IDENTIFIER) run_macro(context, &out_stream, &stream, macros);
+            if (token->type == TOKEN_IDENTIFIER) process_identifier(context, &out_stream, &stream, macros);
             else list_add(out_stream.tokens) = *token;
         }
         else curr_line = token->row;

@@ -252,7 +252,7 @@ jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name)
 
 jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name) {
     jitc_type_t ref = {};
-    ref.kind = Type_EnumRef;
+    ref.kind = Type_UnionRef;
     ref.ref.name = name;
     return jitc_register_type(context, &ref, false);
 }

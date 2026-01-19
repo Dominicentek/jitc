@@ -1497,8 +1497,12 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
             if (type->kind == Type_Function && NEXT_TOKEN->type == TOKEN_SEMICOLON && decltype != Decltype_Typedef) decltype = Decltype_Extern;
             node->decl.type = type;
             node->decl.decltype = decltype;
-            if (node->decl.decltype != Decltype_Typedef && type->name && !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags))
-                throw(token, "Declaration of incomplete type");
+            if (node->decl.decltype != Decltype_Typedef && type->name) {
+                const char* name = type->name;
+                if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) type = jitc_get_tagged_type(context, type->kind, type->ref.name);
+                if (!jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags)) throw(token, "Declaration of incomplete type");
+                node->decl.type = type = jitc_typecache_named(context, type, name);
+            }
             bool incomplete_array = !jitc_validate_type(type, TypePolicy_NoUnkArrSize);
             if (decltype != Decltype_Typedef) list_add(list->list.inner) = move(node);
             if (!jitc_declare_variable(context, type, decltype, preserve_policy, 0)) throw(token, "Symbol '%s' already declared", type->name);

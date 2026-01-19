@@ -205,7 +205,6 @@ static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t s
     emit(writer, opc_push, 1, reg(r13, Type_Int64, true));
     emit(writer, opc_push, 1, reg(r14, Type_Int64, true));
     emit(writer, opc_push, 1, reg(r15, Type_Int64, true));
-    for (int i = 8; i <= 15; i++) emit(writer, opc_push, 1, reg(i, Type_Float64, true));
     emit(writer, opc_push, 1, reg(rbp, Type_Int64, true));
     emit(writer, mov, 2, reg(rbp, Type_Pointer, true), reg(rsp, Type_Pointer, true));
     stack_size += 8;

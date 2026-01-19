@@ -15,7 +15,6 @@ jitc_context_t* jitc_create_context();
 void jitc_create_header(jitc_context_t* context, const char* name, const char* content);
 bool jitc_parse(jitc_context_t* context, const char* code, const char* filename);
 bool jitc_parse_file(jitc_context_t* context, const char* filename);
-bool jitc_reload_file(jitc_context_t* context, const char* filename);
 void* jitc_get(jitc_context_t* context, const char* name);
 void jitc_destroy_context(jitc_context_t* context);
 

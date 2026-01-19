@@ -31,11 +31,11 @@ Calling it done here, the things below are planned but not guaranteed
   - GNU ternary syntax (`x ?: y`)
   - switch expressions
   - Zig's `defer` or GNU `__attribute__((cleanup))`, either one of the two (or both)
+  - Vectors, matrices, quaternions (also support swizzles)
+  - Runtime type reflection
   - C++ lambdas (and closures)
   - C++ templates (won't blow up to the complexity of C++)
-  - C++ operator overloading (also won't blow up to C++'s complexity, likely only arithmetic/bitwise/deref operators)
   - Methods in structs (implicit `this` pointer)
-  - Ability to make a struct truthy via a specific method (via overloading `!`? or disallow overloading of `!` and imply it instead via the truthy method)
   
 Note to self: When implementing extension features, still make programs as explicit as possible (minimal implicit behavior *cough cough C++ cough*)
 
@@ -120,10 +120,12 @@ If a feature is not on this list, it's very likely not supported.
     - Fixed argument count must match
     - Empty parameter list is the same as `void`
 - Preprocessor directives
-  - `#define`, `#undef`, `#include`, `#embed`, `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#elifdef`, `#elifndef`, `#error`
+  - `#define`, `#undef`, `#include`, `#embed`, `#if`, `#elif`, `#else`, `#endif`, `#ifdef`, `#ifndef`, `#elifdef`, `#elifndef`
     - `defined` operator is supported, but `__has_include` is not
     - `embed` has no parameters
-  - `#error`, `#warning`, `#pragma` and `#line` not supported
+    - Function-like macros aren't supported
+    - Macros don't recurse, they expand only once
+    - `include` and `embed` don't support `<FILENAME>`
   - `__STDC_HOSTED__` - `1`
   - `__STDC_NO_ATOMICS__`
   - `__STDC_NO_COMPLEX__`
@@ -140,10 +142,6 @@ If a feature is not on this list, it's very likely not supported.
   - `__FILE__` - Current file (string literal)
   - `__DATE__` - Compilation date
   - `__TIME__` - Compilation time
-  - `__VA_ARGS__` - Set of varargs
-  - `__VA_OPT__` - Expands to parameter if there are any varargs
-  - `__DEFINE__`, `__UNDEF__`, `__RECURSE__`, `__IF__`, `__EVAL__` - Check [preprocessor extensions](#preprocessor-extensions)
-  - Includes and defines pasted during lexing as a series of tokens
 
 Explicitly unsupported features
 
@@ -152,41 +150,13 @@ Explicitly unsupported features
 - Bitfields
 - Variable shadowing
 - Wide strings/characters
-- `#warning`, `#pragma` and `#line`
+- Huge part of the preprocessor (see Preprocessor directives in feature list)
 - Attributes
   - Both GNU `__attribute__` and C23 `[[attribute]]`
 - All underscore-prefixed keywords
   - `_Alignas`, `_Alignof` (supported via `alignof`), `_Atomic`, `_Bool` (supported via `bool`), `_Complex`, `_DecimalX`, `_Generic`, `_Imaginary`, `_Noreturn`, `_Static_assert`, `_Thread_local`
 - `asm` and `fortran`
 - K&R-style function definitions and syntax
-
-## Preprocessor Extensions
-
-jitc's preprocessor aims to be a turing complete extension of the C preprocessor. It achieves this by adding some special macros.
-
-### `__DEFINE__(name, ...)`
-
-Expands to nothing.
-
-Defines a new macro `name` that expands to `__VA_ARGS__`.
-
-### `__UNDEF__(macro)`
-
-Expands to nothing.
-
-Undefines a macro.
-
-### `__RECURSE__(...)`
-
-Forces an expansion of `__VA_ARGS__` bypassing the recursion check. Has a hard limit of 1024 expansions per run.
-
-### `__IF__(cond, ...)`
-
-Expands to `__VA_ARGS__` if `cond` doesn't evaluate to `0` and isn't empty. `cond` has the semantics as with the `#if` directive.
-
-### `__EVAL__(expr)`
-
-Evaluates the expression `expr`. Same semantics as with the `#if` directive.
 
 ## Hotswapping
 
