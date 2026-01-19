@@ -358,6 +358,7 @@ struct jitc_context_t {
     SYMBOL("{", BRACE_OPEN) \
     SYMBOL("}", BRACE_CLOSE) \
     SYMBOL("->", ARROW) \
+    SYMBOL("=>", EQUALS_ARROW) \
     SYMBOL(",", COMMA) \
     SYMBOL(":", COLON) \
     SYMBOL(";", SEMICOLON) \

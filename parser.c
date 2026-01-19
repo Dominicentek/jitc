@@ -552,7 +552,17 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 if (!resolved) throw(node->token, "Cannot access an incomplete struct");
                 type = node->walk_struct.struct_ptr->exprtype = resolved;
             }
-            if (!is_struct(type)) throw(node->token, "Not a struct type");
+            if (!is_struct(type)) {
+                while (is_pointer(type)) {
+                    jitc_ast_t* deref = mknode(AST_Unary, node->token);
+                    deref->unary.operation = Unary_Dereference;
+                    deref->unary.inner = node->walk_struct.struct_ptr;
+                    node->walk_struct.struct_ptr = deref;
+                    type = type->ptr.base;
+                }
+                if (!is_struct(type)) throw(node->token, "Not a struct or pointer type");
+                node = try(jitc_process_ast(context, node, NULL));
+            }
             if (!jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset))
                 throw(node->token, "Field '%s' not found", node->walk_struct.field_name);
         } break;
@@ -813,7 +823,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 if (!is_lvalue(node->binary.left)) throw(node->token, "Assigning to an rvalue"); \
                 if (is_decayed_pointer(node->unary.inner->exprtype)) throw(node->token, "Assigning to an object"); \
                 if (!(check)) throw(node->token, errmsg); \
-                if (is_pointer(node->binary.left->exprtype) && node->binary.operation != Binary_Assignment) { \
+                if (is_pointer(node->binary.left->exprtype) && node->binary.operation != Binary_Assignment && node->binary.operation != Binary_AssignConst) { \
                     if (is_pointer(node->binary.right->exprtype) && node->binary.operation == Binary_AssignSubtraction) { \
                         if (node->binary.left->exprtype->ptr.base->size != node->binary.right->exprtype->ptr.base->size) \
                             throw(node->token, "Pointed-to objects have different sizes"); \
@@ -1482,6 +1492,10 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
         jitc_pop_scope(context);
         return jitc_flatten_ast(move(node), NULL);
     }
+    if ((token = jitc_token_expect(tokens, TOKEN_EQUALS_ARROW))) {
+        if (!(allowed & ParseType_Command)) throw(token, "Code block not allowed here");
+        return try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
+    }
     if (jitc_peek_type(context, tokens)) {
         if (!(allowed & ParseType_Declaration)) throw(NEXT_TOKEN, "Declaration not allowed here");
         token = NEXT_TOKEN;
@@ -1508,7 +1522,11 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
             if (!jitc_declare_variable(context, type, decltype, preserve_policy, 0)) throw(token, "Symbol '%s' already declared", type->name);
             jitc_variable_t* var = jitc_get_variable(context, type->name);
 
-            if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
+            if (
+                (token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) ||
+                (token = jitc_token_expect(tokens, TOKEN_EQUALS_ARROW)) ||
+                (token = jitc_token_expect(tokens, TOKEN_ARROW))
+            ) {
                 if (decltype == Decltype_Extern) throw(token, "Cannot attach code to an extern function");
                 if (type->kind != Type_Function) throw(token, "Cannot attach code to a non-function");
                 if (list_size(context->scopes) > 1) throw(token, "Function definition illegal here");
@@ -1516,13 +1534,28 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 smartptr(jitc_ast_t) body = mknode(AST_List, token);
                 func->func.variable = type;
                 jitc_push_scope(context);
-                jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
-                for (size_t i = 0; i < type->func.num_params; i++) {
-                    jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
+                if (token->type == TOKEN_ARROW) {
+                    if (type->func.ret->kind == Type_Void) list_add(body->list.inner) = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
+                    else {
+                        smartptr(jitc_ast_t) ret = mknode(AST_Return, token);
+                        ret->ret.expr = try(jitc_cast(context,
+                            try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL)),
+                            type, false, token
+                        ));
+                        list_add(body->list.inner) = move(ret);
+                    }
+                    if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
                 }
-                while (list_size(context->labels) > 0) list_remove(context->labels, list_size(context->labels) - 1);
-                while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
-                    list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
+                else {
+                    jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
+                    for (size_t i = 0; i < type->func.num_params; i++) {
+                        jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
+                    }
+                    while (list_size(context->labels) > 0) list_remove(context->labels, list_size(context->labels) - 1);
+                    if (token->type == TOKEN_EQUALS_ARROW) list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
+                    else while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
+                        list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
+                    }
                 }
                 jitc_pop_scope(context);
                 func->func.body = jitc_flatten_ast(move(body), NULL);
