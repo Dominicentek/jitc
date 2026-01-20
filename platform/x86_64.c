@@ -1068,11 +1068,16 @@ static void jitc_asm_sc_end(bytewriter_t* writer) {
 }
 
 static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) {
-    stack_item_t item = pop(writer);
-    operand_t op1 = op(&item);
-    operand_t res = op(push(writer, StackItem_rvalue, kind, is_unsigned));
+    operand_t op1 = op(peek(0));
+    correct_kind(&kind, &is_unsigned);
     if (op1.kind == Type_Pointer) op1.kind = Type_Int64;
-    if (res.kind == Type_Pointer) res.kind = Type_Int64;
+    if (kind == Type_Pointer) kind = Type_Int64;
+    if (op1.kind == kind) {
+        jitc_asm_rval(writer);
+        return;
+    }
+    pop(writer);
+    operand_t res = op(push(writer, StackItem_rvalue, kind, is_unsigned));
     if (res.kind == Type_Float32) {
         if (op1.kind == Type_Float32) emit(writer, mov, 2, res, op1);
         else if (op1.kind == Type_Float64) emit(writer, cvtsd2ss, 2, res, op1);

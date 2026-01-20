@@ -18,7 +18,6 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - Struct parameters/returns and varargs in function prolog and epilog
 - Switch statements
 - Compound literals
-- Preprocessor
 - Windows support (x64 ABI)
 
 Calling it done here, the things below are planned but not guaranteed
@@ -35,7 +34,6 @@ Calling it done here, the things below are planned but not guaranteed
   - Runtime type reflection
   - C++ lambdas (and closures)
   - C++ templates (won't blow up to the complexity of C++)
-  - Methods in structs (implicit `this` pointer)
   
 Note to self: When implementing extension features, still make programs as explicit as possible (minimal implicit behavior *cough cough C++ cough*)
 

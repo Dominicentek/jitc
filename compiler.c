@@ -229,13 +229,12 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
                 assemble(writer, ast->binary.left, variable_map, 0);
                 jitc_asm_call(writer, signature, args, num_args);
             }
+            else if (ast->binary.operation == Binary_Comma) {
+                assemble(writer, ast->binary.left, variable_map, 0);
+                jitc_asm_pop(writer);
+                assemble(writer, ast->binary.right, variable_map, 0);
+            }
             else {
-                if (ast->binary.operation == Binary_Comma) {
-                    assemble(writer, ast->binary.left, variable_map, 0);
-                    jitc_asm_pop(writer);
-                    assemble(writer, ast->binary.right, variable_map, 0);
-                    break;
-                }
                 if (ast->binary.operation != Binary_LogicAnd && ast->binary.operation != Binary_LogicOr) {
                     if (get_su_number(ast->binary.left) < get_su_number(ast->binary.right)) {
                         assemble(writer, ast->binary.right, variable_map, 0);
