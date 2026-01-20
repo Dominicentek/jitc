@@ -254,6 +254,7 @@ struct jitc_ast_t {
         } label;
         struct {
             const char* name;
+            jitc_ast_t* this_ptr;
             bool write_dest;
         } variable;
         struct {
@@ -458,6 +459,7 @@ jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, co
 jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from);
 bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 
+jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type);
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, jitc_preserve_t preserve_policy, uint64_t value);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name);
 
@@ -465,6 +467,7 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
 jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name);
 
+jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, const char* name);
 bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_type, size_t* offset);
 bool jitc_struct_field_exists_list(list_t* list, const char* name);
 

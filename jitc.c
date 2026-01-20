@@ -290,6 +290,21 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
     return jitc_typecache_named(context, a, NULL) == jitc_typecache_named(context, b, NULL);
 }
 
+jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type) {
+    if (type->kind == Type_Function &&
+        type->func.num_params > 0 &&
+        type->func.params[0]->name &&
+        type->func.params[0]->kind == Type_Pointer &&
+        strcmp(type->func.params[0]->name, "this") == 0
+    ) {
+        uint64_t hash = jitc_typecache_named(context, type->func.params[0]->ptr.base, NULL)->hash;
+        char new_name[2 + 16 + 1 + strlen(type->name) + 1];
+        sprintf(new_name, "__%16lx_%s", hash, type->name);
+        type = jitc_typecache_named(context, type, jitc_append_string(context, new_name));
+    }
+    return type;
+}
+
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, jitc_preserve_t preserve_policy, uint64_t value) {
     if (!type->name) return true;
     jitc_variable_t* prev = jitc_get_variable(context, type->name);
@@ -512,6 +527,15 @@ void jitc_link(jitc_context_t* context) {
 
 jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name) {
     return jitc_get_symbol(context, name, false);
+}
+
+jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, const char* name) {
+    base = jitc_typecache_named(context, base, NULL);
+    jitc_variable_t* var = NULL;
+    char method_name[2 + 16 + 1 + strlen(name) + 1];
+    sprintf(method_name, "__%16lx_%s", base->hash, name);
+    if ((var = jitc_get_or_static(context, method_name))) return var;
+    return NULL;
 }
 
 bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_type, size_t* offset) {

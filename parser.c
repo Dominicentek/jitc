@@ -552,19 +552,20 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 if (!resolved) throw(node->token, "Cannot access an incomplete struct");
                 type = node->walk_struct.struct_ptr->exprtype = resolved;
             }
-            if (!is_struct(type)) {
-                while (is_pointer(type)) {
-                    jitc_ast_t* deref = mknode(AST_Unary, node->token);
-                    deref->unary.operation = Unary_Dereference;
-                    deref->unary.inner = node->walk_struct.struct_ptr;
-                    node->walk_struct.struct_ptr = deref;
-                    type = type->ptr.base;
-                }
-                if (!is_struct(type)) throw(node->token, "Not a struct or pointer type");
-                node = try(jitc_process_ast(context, node, NULL));
+            while (is_pointer(type)) {
+                jitc_ast_t* deref = mknode(AST_Unary, node->token);
+                deref->unary.operation = Unary_Dereference;
+                deref->unary.inner = node->walk_struct.struct_ptr;
+                node->walk_struct.struct_ptr = deref;
+                type = type->ptr.base;
             }
-            if (!jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset))
-                throw(node->token, "Field '%s' not found", node->walk_struct.field_name);
+            if (is_struct(type) && jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset)) break;
+            jitc_variable_t* method = jitc_get_method(context, type, node->walk_struct.field_name);
+            if (!method) throw(node->token, "%s '%s' not found", is_struct(type) ? "Field or method" : "Method", node->walk_struct.field_name);
+            node->node_type = AST_Variable;
+            node->variable.this_ptr = node->walk_struct.struct_ptr;
+            node->variable.name = method->type->name;
+            node->exprtype = jitc_typecache_decay(context, method->type);
         } break;
         case AST_Initializer:
             node->init.store_to = try(jitc_process_ast(context, node->init.store_to, NULL));
@@ -691,6 +692,17 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 bool has_varargs = func->func.num_params != 0 && func->func.params[func->func.num_params - 1]->kind == Type_Varargs;
                 node->exprtype = func->func.ret;
                 if (has_varargs) num_fixed_args--;
+                if (node->binary.left->node_type == AST_Variable && node->binary.left->variable.this_ptr) {
+                    smartptr(list(jitc_ast_t*)) old_list = (void*)list;
+                    smartptr(list(jitc_ast_t*)) new_list = list_new(jitc_ast_t*);
+                    jitc_ast_t* addrof = mknode(AST_Unary, node->token);
+                    addrof->unary.operation = Unary_AddressOf;
+                    addrof->unary.inner = move(node->binary.left->variable.this_ptr);
+                    list_add(new_list) = addrof;
+                    for (size_t i = 0; i < list_size(list); i++) list_add(new_list) = list_get(old_list, i);
+                    list = (void*)move(new_list);
+                    node->binary.right->list.inner = (void*)list;
+                }
                 if (list_size(list) < num_fixed_args || (!has_varargs && list_size(list) != num_fixed_args)) throw(node->token,
                     "Incorrect number of arguments (got %d, %s %d)",
                     list_size(list), has_varargs ? "minimum" : "expected", func->func.num_params
@@ -1509,6 +1521,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
             smartptr(jitc_ast_t) node = decl_node = mknode(AST_Declaration, token);
             if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
             if (type->kind == Type_Function && NEXT_TOKEN->type == TOKEN_SEMICOLON && decltype != Decltype_Typedef) decltype = Decltype_Extern;
+            type = jitc_to_method(context, type);
             node->decl.type = type;
             node->decl.decltype = decltype;
             if (node->decl.decltype != Decltype_Typedef && type->name) {
@@ -1534,6 +1547,10 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 smartptr(jitc_ast_t) body = mknode(AST_List, token);
                 func->func.variable = type;
                 jitc_push_scope(context);
+                jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
+                for (size_t i = 0; i < type->func.num_params; i++) {
+                    jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
+                }
                 if (token->type == TOKEN_ARROW) {
                     if (type->func.ret->kind == Type_Void) list_add(body->list.inner) = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
                     else {
@@ -1547,10 +1564,6 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                     if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
                 }
                 else {
-                    jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
-                    for (size_t i = 0; i < type->func.num_params; i++) {
-                        jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
-                    }
                     while (list_size(context->labels) > 0) list_remove(context->labels, list_size(context->labels) - 1);
                     if (token->type == TOKEN_EQUALS_ARROW) list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
                     else while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
@@ -1666,6 +1679,9 @@ void jitc_destroy_ast(jitc_ast_t* ast) {
             }
             list_delete(ast->init.items);
             list_delete(ast->init.offsets);
+            break;
+        case AST_Variable:
+            jitc_destroy_ast(ast->variable.this_ptr);
             break;
         default: break;
     }
