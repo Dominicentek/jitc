@@ -152,7 +152,10 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
             emit(writer, call, 1, func_op);
         }
     }
-    else if (func.type != StackItem_lvalue_abs) emit(writer, call, 1, op(&func));
+    else if (func.type != StackItem_lvalue_abs) {
+        if (has_varargs) emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
+        emit(writer, call, 1, op(&func));
+    }
     else {
         operand_t func_op = op(&func);
         if (func_op.type == OpType_ptrptr) emit(writer, call, 1, unptr(op(&func)));

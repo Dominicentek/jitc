@@ -353,7 +353,7 @@ static operand_t op(stack_item_t* item) {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
             if (item->value & (1L << 63)) {
                 op.type = OpType_ptr;
-                op.reg = (isflt(item->kind) ? stack_xmms : stack_regs)[item->value & ~(1L << 63)];
+                op.reg = stack_regs[item->value & ~(1L << 63)];
                 op.disp = item->offset;
             }
             else {
@@ -390,9 +390,9 @@ static operand_t unptr(operand_t op1) {
     return op1;
 }
 
-static instr_flags_t get_extra_flags(instr_constraints_t constraints, jitc_type_kind_t type, bool allow_rex_float) {
+static instr_flags_t get_extra_flags(instr_constraints_t constraints, jitc_type_kind_t type) {
     if (type == Type_Int16) return force_size;
-    if (type == Type_Int64 || type == Type_Pointer || (allow_rex_float && type == Type_Float64)) {
+    if (type == Type_Int64 || type == Type_Pointer || type == Type_Float64) {
         if ((constraints & C_S64) && !(constraints & (C__S8 | C_S16 | C_S32))) return 0;
         return force_rexw;
     }
@@ -433,11 +433,11 @@ static void emit_instruction(bytewriter_t* writer, instr_t* instr, reg_t reg1, r
     encode_instruction(writer, instr->opcode, reg1, reg2, mode, instr->modrm_fixed_bits, instr->flags | extra_flags);
 }
 
-static bool legalize(legalization_t* legalization, operand_t op, instr_constraints_t constraints, bool writeback) {
+static bool legalize(legalization_t* legalization, operand_t op, instr_constraints_t constraints, bool last_operand) {
 #define step() legalization->steps[legalization->cost++]
     instr_constraints_t size_mask = (instr_constraints_t[]){ C__S8, C_S16, C_S32, C_S64, C_S32, C_S64, C_S64 }[op.kind];
     if (!(constraints & size_mask)) return legalization->cost = 0;
-    if (op.type == OpType_imm) {
+    if (op.type == OpType_imm && !last_operand) {
         if (constraints & C_IMM) (void)0;
         else if (constraints & C_REG) step() = Legal_imm_reg;
         else if (constraints & C_XMM) {
@@ -447,8 +447,8 @@ static bool legalize(legalization_t* legalization, operand_t op, instr_constrain
         else return legalization->cost = 0;
     }
     if (op.type == OpType_reg) {
-        if (isflt(op.kind) && (constraints & C_REG) && !(constraints & C_XMM)) step() = Legal_to_reg;
-        else if (!isflt(op.kind) && (constraints & C_XMM) && !(constraints & C_REG)) step() = Legal_to_xmm;
+        if (isflt(op.kind) && (constraints & C_REG) && !(constraints & C_XMM) && !last_operand) step() = Legal_to_reg;
+        else if (!isflt(op.kind) && (constraints & C_XMM) && !(constraints & C_REG) && !last_operand) step() = Legal_to_xmm;
         else if (!(constraints & (isflt(op.kind) ? C_XMM : C_REG))) return legalization->cost = 0;
     }
     if (op.type == OpType_ptrptr) step() = Legal_deref_mem;
@@ -459,7 +459,7 @@ static bool legalize(legalization_t* legalization, operand_t op, instr_constrain
         else return legalization->cost = 0;
     }
     step() = Legal_perform;
-    if (writeback && (op.type == OpType_ptr || op.type == OpType_ptrptr) && !(constraints & C_MEM))
+    if (last_operand && (op.type == OpType_ptr || op.type == OpType_ptrptr) && !(constraints & C_MEM))
         step() = Legal_writeback;
     return true;
 #undef step
@@ -473,7 +473,7 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
     bool tmp_used = false;
     for (uint8_t i = 0; i < legalization->cost; i++) switch (legalization->steps[i]) {
         case Legal_imm_reg:
-            encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0xB0 : 0xB8, int_tmp, 0, Mode_Reg, 0, modrm_opc | get_extra_flags(0, ops[curr_op].kind, true));
+            encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0xB0 : 0xB8, int_tmp, 0, Mode_Reg, 0, modrm_opc | get_extra_flags(0, ops[curr_op].kind));
             if (ops[curr_op].kind == Type_Int8) bytewriter_int8(writer, ops[curr_op].value);
             else if (ops[curr_op].kind == Type_Int16) bytewriter_int16(writer, ops[curr_op].value);
             else if (ops[curr_op].kind == Type_Int32) bytewriter_int32(writer, ops[curr_op].value);
@@ -487,13 +487,13 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
             break;
         case Legal_to_reg: {
             jitc_type_kind_t next_kind = ops[curr_op].kind == Type_Float32 ? Type_Int32 : Type_Int64;
-            encode_instruction(writer, 0x7E, int_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | flip_modrm | get_extra_flags(0, next_kind, false));
+            encode_instruction(writer, 0x7E, int_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | flip_modrm | get_extra_flags(0, next_kind));
             ops[curr_op] = reg(int_tmp, next_kind, ops[curr_op].is_unsigned);
             tmp_used = true;
         } break;
         case Legal_to_xmm: {
             jitc_type_kind_t next_kind = ops[curr_op].kind == Type_Int32 ? Type_Float32 : Type_Float64;
-            encode_instruction(writer, 0x6E, flt_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | flip_modrm | get_extra_flags(0, ops[curr_op].kind, true));
+            encode_instruction(writer, 0x6E, flt_tmp, ops[curr_op].reg, Mode_Reg, 0, force_size | has_modrm | twobyte | flip_modrm | get_extra_flags(0, ops[curr_op].kind));
             ops[curr_op] = reg(flt_tmp, next_kind, ops[curr_op].is_unsigned);
         } break;
         case Legal_deref_reg:
@@ -504,9 +504,9 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
             else if (ops[curr_op].disp >= INT8_MIN && ops[curr_op].disp <= INT8_MAX) mode = Mode_Disp8;
             else mode = Mode_Disp32;
             if (legalization->steps[i] == Legal_deref_xmm)
-                encode_instruction(writer, 0x10, flt_tmp, ops[curr_op].reg, mode, 0, (ops[curr_op].kind == Type_Float32 ? prefix_f3 : prefix_f2) | has_modrm | twobyte | flip_modrm | get_extra_flags(0, ops[curr_op].kind, false));
+                encode_instruction(writer, 0x10, flt_tmp, ops[curr_op].reg, mode, 0, (ops[curr_op].kind == Type_Float32 ? prefix_f3 : prefix_f2) | has_modrm | twobyte | flip_modrm | get_extra_flags(0, ops[curr_op].kind));
             else
-                encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0x8A : 0x8B, int_tmp, ops[curr_op].reg, mode, 0, has_modrm | flip_modrm | get_extra_flags(0, ops[curr_op].kind, false));
+                encode_instruction(writer, ops[curr_op].kind == Type_Int8 ? 0x8A : 0x8B, int_tmp, ops[curr_op].reg, mode, 0, has_modrm | flip_modrm | get_extra_flags(0, ops[curr_op].kind));
             if (mode == Mode_Disp8)  bytewriter_int8 (writer, ops[curr_op].disp);
             if (mode == Mode_Disp32) bytewriter_int32(writer, ops[curr_op].disp);
             writeback = ops[curr_op];
@@ -526,7 +526,7 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
                 else if (mem->disp >= INT8_MIN && mem->disp <= INT8_MAX) mode = Mode_Disp8;
                 else mode = Mode_Disp32;
             }
-            emit_instruction(writer, instr, op1->reg, op1 == op2 || op2->type == OpType_imm ? rax : op2->reg, mode, get_extra_flags(instr->constraints[0], op1->kind, false));
+            emit_instruction(writer, instr, op1->reg, op1 == op2 || op2->type == OpType_imm ? rax : op2->reg, mode, get_extra_flags(instr->constraints[0], op1->kind));
             if (mode == Mode_Disp8) bytewriter_int8(writer, op1->disp == 0 ? op2->disp : op1->disp);
             if (mode == Mode_Disp32) bytewriter_int32(writer, op1->disp == 0 ? op2->disp : op1->disp);
             if (op2->type == OpType_imm) {
@@ -547,9 +547,9 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
             else if (writeback.disp >= INT8_MIN && writeback.disp <= INT8_MAX) mode = Mode_Disp8;
             else mode = Mode_Disp32;
             if (isflt(writeback.kind))
-                encode_instruction(writer, 0x7E, writeback.reg, ops[curr_op].reg, mode, 0, force_size | has_modrm | twobyte | get_extra_flags(0, writeback.kind, true));
+                encode_instruction(writer, 0x7E, writeback.reg, ops[curr_op].reg, mode, 0, force_size | has_modrm | twobyte | get_extra_flags(0, writeback.kind));
             else
-                encode_instruction(writer, writeback.kind == Type_Int8 ? 0x88 : 0x89, writeback.reg, ops[curr_op].reg, mode, 0, has_modrm | get_extra_flags(0, writeback.kind, false));
+                encode_instruction(writer, writeback.kind == Type_Int8 ? 0x88 : 0x89, writeback.reg, ops[curr_op].reg, mode, 0, has_modrm | get_extra_flags(0, writeback.kind));
             if (mode == Mode_Disp8) bytewriter_int8(writer, writeback.disp);
             if (mode == Mode_Disp32) bytewriter_int32(writer, writeback.disp);
         } break;
@@ -1068,16 +1068,11 @@ static void jitc_asm_sc_end(bytewriter_t* writer) {
 }
 
 static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) {
-    operand_t op1 = op(peek(0));
-    correct_kind(&kind, &is_unsigned);
-    if (op1.kind == Type_Pointer) op1.kind = Type_Int64;
-    if (kind == Type_Pointer) kind = Type_Int64;
-    if (op1.kind == kind) {
-        jitc_asm_rval(writer);
-        return;
-    }
-    pop(writer);
+    stack_item_t item = pop(writer);
+    operand_t op1 = op(&item);
     operand_t res = op(push(writer, StackItem_rvalue, kind, is_unsigned));
+    if (op1.kind == Type_Pointer) op1.kind = Type_Int64;
+    if (res.kind == Type_Pointer) res.kind = Type_Int64;
     if (res.kind == Type_Float32) {
         if (op1.kind == Type_Float32) emit(writer, mov, 2, res, op1);
         else if (op1.kind == Type_Float64) emit(writer, cvtsd2ss, 2, res, op1);
