@@ -39,6 +39,8 @@ typedef enum: uint8_t {
     Type_EnumRef,
     Type_Void,
     Type_Varargs,
+    Type_Template,
+    Type_Placeholder,
 } jitc_type_kind_t;
 
 typedef enum: uint8_t {
@@ -166,7 +168,17 @@ struct jitc_type_t {
         } str;
         struct {
             const char* name;
+            size_t templ_num_types;
+            jitc_type_t** templ_types;
         } ref;
+        struct {
+            const char* name;
+        } placeholder;
+        struct {
+            jitc_type_t* base;
+            const char** names;
+            size_t num_names;
+        } templ;
     };
 };
 
@@ -452,9 +464,12 @@ jitc_type_t* jitc_typecache_function(jitc_context_t* context, jitc_type_t* retva
 jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* fields, jitc_token_t* source);
 jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* fields, jitc_token_t* source);
 jitc_type_t* jitc_typecache_enum(jitc_context_t* context, jitc_type_t* base);
-jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name);
-jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name);
+jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name, list_t* template_list);
+jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name, list_t* template_list);
 jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name);
+jitc_type_t* jitc_typecache_placeholder(jitc_context_t* context, const char* name);
+jitc_type_t* jitc_typecache_template(jitc_context_t* context, jitc_type_t* base, list_t* names);
+jitc_type_t* jitc_typecache_fill_template(jitc_context_t* context, jitc_type_t* base, map_t* mappings);
 jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name);
 jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from);
 bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
@@ -464,7 +479,8 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name);
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
-jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
+jitc_type_t* jitc_get_tagged_type_notype(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
+jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_t* type);
 jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name);
 
 jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, const char* name);

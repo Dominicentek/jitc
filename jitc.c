@@ -73,12 +73,54 @@ static uint64_t hash_type(jitc_type_t* type) {
             break;
         case Type_StructRef:
         case Type_UnionRef:
+            if (type->ref.templ_types) for (size_t i = 0; i < type->ref.templ_num_types; i++)
+                hash = hash_mix(hash, hash_ptr(type->ref.templ_types[i]));
         case Type_EnumRef:
             hash = hash_mix(hash, hash_str(type->ref.name));
+            break;
+        case Type_Placeholder:
+            hash = hash_mix(hash, hash_str(type->placeholder.name));
+            break;
+        case Type_Template:
+            hash = hash_mix(hash, hash_ptr(type->templ.base));
+            for (size_t i = 0; i < type->templ.num_names; i++)
+                hash = hash_mix(hash, hash_str(type->templ.names[i]));
             break;
         default: break;
     }
     return type->hash = hash;
+}
+
+static void jitc_update_struct(jitc_type_t* type) {
+    if (type->kind == Type_Struct) {
+        size_t max_alignment = 1;
+        size_t ptr = 0;
+        for (int i = 0; i < type->str.num_fields; i++) {
+            jitc_type_t* field = type->str.fields[i];
+            if (ptr % field->alignment != 0) ptr += field->alignment - ptr % field->alignment;
+            if (max_alignment < field->alignment) max_alignment = field->alignment;
+            type->str.offsets[i] = ptr;
+            ptr += field->size;
+        }
+        if (ptr % max_alignment != 0) ptr += max_alignment - ptr % max_alignment;
+        if (ptr == 0) ptr++;
+        type->alignment = max_alignment;
+        type->size = ptr;
+    }
+    if (type->kind == Type_Union) {
+        size_t max_alignment = 1;
+        size_t max_size = 0;
+        for (int i = 0; i < type->str.num_fields; i++) {
+            jitc_type_t* field = type->str.fields[i];
+            if (max_alignment < field->alignment) max_alignment = field->alignment;
+            if (max_size < field->size) max_size = field->size;
+            type->str.offsets[i] = 0;
+        }
+        if (max_size % max_alignment != 0) max_size += max_alignment - max_size % max_alignment;
+        if (max_size == 0) max_size++;
+        type->alignment = max_alignment;
+        type->size = max_size;
+    }
 }
 
 static jitc_type_t* jitc_register_type(jitc_context_t* context, jitc_type_t* type, bool free_extras) {
@@ -96,6 +138,8 @@ static jitc_type_t* jitc_register_type(jitc_context_t* context, jitc_type_t* typ
             free(type->str.offsets);
         }
         if (type->kind == Type_Function) free(type->func.params);
+        if (type->kind == Type_Template) free(type->templ.names);
+        if (type->kind == Type_StructRef || type->kind == Type_UnionRef) free(type->ref.templ_types);
     }
     return map_get_value(context->typecache);
 }
@@ -111,6 +155,14 @@ static jitc_type_t jitc_copy_type(jitc_type_t* type) {
     if (copy.kind == Type_Function) {
         copy.func.params = malloc(sizeof(jitc_type_t*) * copy.func.num_params);
         memcpy(copy.func.params, type->func.params, sizeof(jitc_type_t*) * copy.func.num_params);
+    }
+    if (copy.kind == Type_Template) {
+        copy.templ.names = malloc(sizeof(char*) * copy.templ.num_names);
+        memcpy(copy.templ.names, type->templ.names, sizeof(char*) * copy.func.num_params);
+    }
+    if ((copy.kind == Type_StructRef || copy.kind == Type_UnionRef) && copy.ref.templ_types) {
+        copy.ref.templ_types = malloc(sizeof(jitc_type_t*) * copy.ref.templ_num_types);
+        memcpy(copy.ref.templ_types, type->ref.templ_types, sizeof(char*) * copy.ref.templ_num_types);
     }
     return copy;
 }
@@ -194,19 +246,7 @@ jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* _fields, jit
     str.str.offsets = malloc(sizeof(size_t) * list_size(fields));
     str.str.source_token = source;
     for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get(fields, i);
-    size_t max_alignment = 1;
-    size_t ptr = 0;
-    for (int i = 0; i < list_size(fields); i++) {
-        jitc_type_t* field = list_get(fields, i);
-        if (ptr % field->alignment != 0) ptr += field->alignment - ptr % field->alignment;
-        if (max_alignment < field->alignment) max_alignment = field->alignment;
-        str.str.offsets[i] = ptr;
-        ptr += field->size;
-    }
-    if (ptr % max_alignment != 0) ptr += max_alignment - ptr % max_alignment;
-    if (ptr == 0) ptr++;
-    str.alignment = max_alignment;
-    str.size = ptr;
+    jitc_update_struct(&str);
     return jitc_register_type(context, &str, true);
 }
 
@@ -219,18 +259,7 @@ jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* _fields, jitc
     str.str.offsets = malloc(sizeof(size_t) * list_size(fields));
     str.str.source_token = source;
     for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get(fields, i);
-    size_t max_alignment = 1;
-    size_t max_size = 0;
-    for (int i = 0; i < list_size(fields); i++) {
-        jitc_type_t* field = list_get(fields, i);
-        if (max_alignment < field->alignment) max_alignment = field->alignment;
-        if (max_size < field->size) max_size = field->size;
-        str.str.offsets[i] = 0;
-    }
-    if (max_size % max_alignment != 0) max_size += max_alignment - max_size % max_alignment;
-    if (max_size == 0) max_size++;
-    str.alignment = max_alignment;
-    str.size = max_size;
+    jitc_update_struct(&str);
     return jitc_register_type(context, &str, true);
 }
 
@@ -243,17 +272,29 @@ jitc_type_t* jitc_typecache_enum(jitc_context_t* context, jitc_type_t* base) {
     return jitc_register_type(context, &enm, false);
 }
 
-jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name) {
+jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name, list_t* _template_list) {
+    list(jitc_type_t*)* template_list = _template_list;
     jitc_type_t ref = {};
     ref.kind = Type_StructRef;
     ref.ref.name = name;
+    ref.ref.templ_num_types = template_list ? list_size(template_list) : 0;
+    ref.ref.templ_types = template_list ? malloc(sizeof(jitc_type_t*) * ref.ref.templ_num_types) : NULL;
+    if (template_list) for (int i = 0; i < ref.ref.templ_num_types; i++) {
+        ref.ref.templ_types[i] = list_get(template_list, i);
+    }
     return jitc_register_type(context, &ref, false);
 }
 
-jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name) {
+jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name, list_t* _template_list) {
+    list(jitc_type_t*)* template_list = _template_list;
     jitc_type_t ref = {};
     ref.kind = Type_UnionRef;
     ref.ref.name = name;
+    ref.ref.templ_num_types = template_list ? list_size(template_list) : 0;
+    ref.ref.templ_types = template_list ? malloc(sizeof(jitc_type_t*) * ref.ref.templ_num_types) : NULL;
+    if (template_list) for (int i = 0; i < ref.ref.templ_num_types; i++) {
+        ref.ref.templ_types[i] = list_get(template_list, i);
+    }
     return jitc_register_type(context, &ref, false);
 }
 
@@ -262,6 +303,56 @@ jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name) {
     ref.kind = Type_EnumRef;
     ref.ref.name = name;
     return jitc_register_type(context, &ref, false);
+}
+
+jitc_type_t* jitc_typecache_placeholder(jitc_context_t* context, const char* name) {
+    jitc_type_t placeholder = {};
+    placeholder.kind = Type_Placeholder;
+    placeholder.placeholder.name = name;
+    placeholder.alignment = placeholder.size = 8;
+    return jitc_register_type(context, &placeholder, false);
+}
+
+jitc_type_t* jitc_typecache_template(jitc_context_t* context, jitc_type_t* base, list_t* _names) {
+    list(char*)* names = _names;
+    jitc_type_t templ = {};
+    templ.kind = Type_Template;
+    templ.templ.base = base;
+    templ.templ.num_names = list_size(names);
+    templ.templ.names = malloc(sizeof(char*) * templ.templ.num_names);
+    templ.alignment = base->alignment;
+    templ.size = base->size;
+    for (int i = 0; i < templ.templ.num_names; i++) {
+        templ.templ.names[i] = list_get(names, i);
+    }
+    return jitc_register_type(context, &templ, true);
+}
+
+jitc_type_t* jitc_typecache_fill_template(jitc_context_t* context, jitc_type_t* base, map_t* _mappings) {
+    map(char*, jitc_type_t*)* mappings = _mappings;
+    if (base->kind == Type_Placeholder) {
+        if (!map_find(mappings, &base->placeholder.name)) return base;
+        return map_get_value(mappings);
+    }
+    if (base->kind == Type_Template)
+        return jitc_typecache_fill_template(context, base->templ.base, mappings);
+    jitc_type_t new_type = jitc_copy_type(base);
+    if (new_type.kind == Type_Struct || new_type.kind == Type_Union)
+        for (int i = 0; i < new_type.str.num_fields; i++)
+            new_type.str.fields[i] = jitc_typecache_named(context, jitc_typecache_fill_template(context, new_type.str.fields[i], mappings), new_type.str.fields[i]->name);
+    if ((new_type.kind == Type_StructRef || new_type.kind == Type_UnionRef) && new_type.ref.templ_types)
+        for (int i = 0; i < new_type.ref.templ_num_types; i++)
+            new_type.ref.templ_types[i] = jitc_typecache_fill_template(context, new_type.ref.templ_types[i], mappings);
+    if (new_type.kind == Type_Pointer || new_type.kind == Type_Array || new_type.kind == Type_Enum)
+        new_type.ptr.base = jitc_typecache_fill_template(context, new_type.ptr.base, mappings);
+    if (new_type.kind == Type_Function) {
+        new_type.func.ret = jitc_typecache_fill_template(context, new_type.func.ret, mappings);
+        for (int i = 0; i < new_type.func.num_params; i++)
+            new_type.func.params[i] = jitc_typecache_fill_template(context, new_type.func.params[i], mappings);
+    }
+    new_type.hash = 0;
+    jitc_update_struct(&new_type);
+    return jitc_register_type(context, &new_type, true);
 }
 
 jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name) {
@@ -345,9 +436,11 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name) {
     jitc_scope_t* scope = &list_get(context->scopes, list_size(context->scopes) - 1);
     map(char*, jitc_type_t*)* map = NULL;
-    if (type->kind == Type_Struct) map = (void*)scope->structs;
-    if (type->kind == Type_Union) map = (void*)scope->unions;
-    if (type->kind == Type_Enum) map = (void*)scope->enums;
+    jitc_type_kind_t kind = type->kind;
+    if (kind == Type_Template) kind = type->templ.base->kind;
+    if (kind == Type_Struct) map = (void*)scope->structs;
+    if (kind == Type_Union) map = (void*)scope->unions;
+    if (kind == Type_Enum) map = (void*)scope->enums;
     if (!map) return false;
     if (map_find(map, &name)) return false;
     map_add(map) = (char*)name;
@@ -368,7 +461,7 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
     return NULL;
 }
 
-jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind, const char* name) {
+jitc_type_t* jitc_get_tagged_type_notype(jitc_context_t* context, jitc_type_kind_t kind, const char* name) {
     if (!name) return NULL;
     for (size_t i = list_size(context->scopes) - 1; i < list_size(context->scopes) /* rely on underflow */; i--) {
         jitc_scope_t* scope = &list_get(context->scopes, i);
@@ -381,6 +474,21 @@ jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_kind_t kind
         return map_get_value(map);
     }
     return NULL;
+}
+
+jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_t* type) {
+    if (!type) return NULL;
+    jitc_type_t* tagged = try(jitc_get_tagged_type_notype(context, type->kind, type->ref.name));
+    if (tagged->kind == Type_Template) {
+        smartptr(map(char*, jitc_type_t*)) template_map = map_new(compare_string, char*, jitc_type_t*);
+        for (int i = 0; i < type->ref.templ_num_types; i++) {
+            map_add(template_map) = (char*)tagged->templ.names[i];
+            map_commit(template_map);
+            map_get_value(template_map) = type->ref.templ_types[i];
+        }
+        return jitc_typecache_fill_template(context, tagged, template_map);
+    }
+    return tagged;
 }
 
 void jitc_push_scope(jitc_context_t* context) {

@@ -2,6 +2,7 @@
 #include "jitc.h"
 #include "jitc_internal.h"
 #include "cleanups.h"
+#include "compares.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -299,9 +300,31 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_struct)) || (token = jitc_token_expect(tokens, TOKEN_union))) {
+            smartptr(list(char*)) template_names = NULL;
+            if (jitc_token_expect(tokens, TOKEN_LESS_THAN)) {
+                template_names = list_new(char*);
+                if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) while (true) {
+                    jitc_token_t* template_name = jitc_token_expect(tokens, TOKEN_IDENTIFIER);
+                    if (!template_name) throw(NEXT_TOKEN, "Expected identifier");
+                    for (int i = 0; i < list_size(template_names); i++) {
+                        if (strcmp(list_get(template_names, i), template_name->value.string) == 0)
+                            throw(template_name, "Duplicate template parameter");
+                    }
+                    list_add(template_names) = template_name->value.string;
+                    if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+                    if (jitc_token_expect(tokens, TOKEN_GREATER_THAN)) break;
+                    throw(NEXT_TOKEN, "Expected ',' or '>'");
+                }
+            }
             jitc_token_t* name_token = jitc_token_expect(tokens, TOKEN_IDENTIFIER);
             if (jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) {
                 smartptr(list(jitc_type_t*)) fields = list_new(jitc_type_t*);
+                jitc_push_scope(context);
+                if (template_names) for (int i = 0; i < list_size(template_names); i++) {
+                    jitc_type_t* placeholder = jitc_typecache_placeholder(context, list_get(template_names, i));
+                    placeholder = jitc_typecache_named(context, placeholder, list_get(template_names, i));
+                    jitc_declare_variable(context, placeholder, Decltype_Typedef, 0, 0);
+                }
                 while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
                     while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
                     jitc_type_t* field_type = try(jitc_parse_base_type(context, tokens, NULL, NULL));
@@ -317,14 +340,41 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                         throw(NEXT_TOKEN, "Expected ';' or ','");
                     }
                 }
+                jitc_pop_scope(context);
                 type = (token->type == TOKEN_struct ? jitc_typecache_struct : jitc_typecache_union)(context, fields, token);
+                if (template_names) type = jitc_typecache_template(context, type, template_names);
                 if (name_token) if (!jitc_declare_tagged_type(context, type, name_token->value.string))
                     throw(name_token, "%s '%s' already defined", token->type == TOKEN_struct ? "Struct" : "Union", name_token->value.string);
             }
             else if (!name_token) throw(NEXT_TOKEN, "Expected identifier or '{'");
+            else if (template_names) throw(NEXT_TOKEN, "Expected '{'");
             else {
-                type = jitc_get_tagged_type(context, token->type ? Type_Struct : Type_Union, name_token->value.string);
-                if (!type) type = (token->type == TOKEN_struct ? jitc_typecache_structref : jitc_typecache_unionref)(context, name_token->value.string);
+                type = jitc_get_tagged_type_notype(context, token->type ? Type_Struct : Type_Union, name_token->value.string);
+                smartptr(map(char*, jitc_type_t*)) template_map = NULL;
+                smartptr(list(jitc_type_t*)) template_list = NULL;
+                jitc_token_t* template_start = NULL;
+                if ((template_start = jitc_token_expect(tokens, TOKEN_LESS_THAN))) {
+                    if (type && type->kind != Type_Template) throw(template_start, "Unexpected template parameter list");
+                    template_list = list_new(jitc_type_t*);
+                    if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) while (true) {
+                        list_add(template_list) = try(jitc_parse_type(context, tokens, NULL, NULL));
+                        if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+                        if (jitc_token_expect(tokens, TOKEN_GREATER_THAN)) break;
+                        throw(NEXT_TOKEN, "Expected ',' or '>'");
+                    }
+                    if (type) {
+                        if (list_size(template_list) != type->templ.num_names)
+                            throw(template_start, "Expected %d types in template parameter list, got %d", type->templ.num_names, list_size(template_map));
+                        template_map = map_new(compare_string, char*, jitc_type_t*);
+                        for (int i = 0; i < type->templ.num_names; i++) {
+                            map_add(template_map) = (char*)type->templ.names[i];
+                            map_commit(template_map);
+                            map_get_value(template_map) = list_get(template_list, i);
+                        }
+                        type = jitc_typecache_fill_template(context, type, template_map);
+                    }
+                }
+                if (!type) type = (token->type == TOKEN_struct ? jitc_typecache_structref : jitc_typecache_unionref)(context, name_token->value.string, template_list);
             }
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_enum))) {
@@ -366,7 +416,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
             else {
                 if (force_definition) throw(NEXT_TOKEN, "Expected '{'");
                 if (!name_token) throw(NEXT_TOKEN, "Expected identifier or '{'");
-                type = jitc_get_tagged_type(context, Type_Enum, name_token->value.string);
+                type = jitc_get_tagged_type_notype(context, Type_Enum, name_token->value.string);
                 if (!type) type = jitc_typecache_enumref(context, name_token->value.string);
                 else type = type->ptr.base;
             }
@@ -406,6 +456,20 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
             kind == Type_Int32 || kind == Type_Int64
         )) throw(unsigned_token, "Unsigned non-integer type");
         type = jitc_typecache_primitive(context, kind);
+    }
+    if (type->kind == Type_Template) {
+        if (jitc_token_expect(tokens, TOKEN_LESS_THAN)) {
+            smartptr(map(char*, jitc_type_t*)) template_map = map_new(compare_string, char*, jitc_type_t*);
+            for (int i = 0; i < type->templ.num_names; i++) {
+                if (i != 0 && !jitc_token_expect(tokens, TOKEN_COMMA)) throw(NEXT_TOKEN, "Expected ','");
+                map_add(template_map) = (char*)type->templ.names[i];
+                map_commit(template_map);
+                map_get_value(template_map) = try(jitc_parse_type(context, tokens, NULL, NULL));
+            }
+            if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) throw(NEXT_TOKEN, "Expected '>'");
+            type = jitc_typecache_fill_template(context, type, template_map);
+        }
+        else if (((decltype && *decltype != Decltype_Typedef) || !decltype) && NEXT_TOKEN->type != TOKEN_SEMICOLON) throw(NEXT_TOKEN, "Expected '<'");
     }
     if (is_const) type = jitc_typecache_const(context, type);
     if (is_unsigned) type = jitc_typecache_unsigned(context, type);
@@ -548,7 +612,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             jitc_type_t* type;
             node->walk_struct.struct_ptr = try(jitc_process_ast(context, node->walk_struct.struct_ptr, &type));
             if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) {
-                jitc_type_t* resolved = jitc_get_tagged_type(context, type->kind, type->ref.name);
+                jitc_type_t* resolved = jitc_get_tagged_type(context, type);
                 if (!resolved) throw(node->token, "Cannot access an incomplete struct");
                 type = node->walk_struct.struct_ptr->exprtype = resolved;
             }
@@ -1220,6 +1284,11 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         if (jitc_peek_type(context, tokens)) type = try(jitc_parse_type(context, tokens, NULL, NULL));
         else jitc_destroy_ast(try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, &type)));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
+        if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) {
+            jitc_type_t* resolved = jitc_get_tagged_type(context, type);
+            if (resolved) type = resolved;
+            else throw(token, "Unresolved tagged type");
+        }
         node = mknode(AST_Integer, token);
         node->integer.is_unsigned = true;
         node->integer.type_kind = Type_Int64;
@@ -1526,7 +1595,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
             node->decl.decltype = decltype;
             if (node->decl.decltype != Decltype_Typedef && type->name) {
                 const char* name = type->name;
-                if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) type = jitc_get_tagged_type(context, type->kind, type->ref.name);
+                if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) type = jitc_get_tagged_type(context, type);
                 if (!jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags)) throw(token, "Declaration of incomplete type");
                 node->decl.type = type = jitc_typecache_named(context, type, name);
             }
