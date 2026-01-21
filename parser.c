@@ -340,11 +340,16 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                         throw(NEXT_TOKEN, "Expected ';' or ','");
                     }
                 }
-                jitc_pop_scope(context);
                 type = (token->type == TOKEN_struct ? jitc_typecache_struct : jitc_typecache_union)(context, fields, token);
                 if (template_names) type = jitc_typecache_template(context, type, template_names);
-                if (name_token) if (!jitc_declare_tagged_type(context, type, name_token->value.string))
-                    throw(name_token, "%s '%s' already defined", token->type == TOKEN_struct ? "Struct" : "Union", name_token->value.string);
+                if (name_token) {
+                    const char* name = token->type == TOKEN_struct ? "Struct" : "Union";
+                    if (!jitc_declare_tagged_type(context, type, name_token->value.string))
+                        throw(name_token, "%s '%s' already defined", name, name_token->value.string);
+                    if (!jitc_template_params_check(context, type, name_token->value.string))
+                        throw(name_token, "%s '%s' has a different number of template parameters", name, name_token->value.string);
+                }
+                jitc_pop_scope(context);
             }
             else if (!name_token) throw(NEXT_TOKEN, "Expected identifier or '{'");
             else if (template_names) throw(NEXT_TOKEN, "Expected '{'");
@@ -375,6 +380,8 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                     }
                 }
                 if (!type) type = (token->type == TOKEN_struct ? jitc_typecache_structref : jitc_typecache_unionref)(context, name_token->value.string, template_list);
+                if (!jitc_template_params_check(context, type, name_token->value.string))
+                    throw(name_token, "%s '%s' has a different number of template parameters", token->type == TOKEN_struct ? "Struct" : "Union", name_token->value.string);
             }
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_enum))) {

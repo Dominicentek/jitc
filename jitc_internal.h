@@ -132,9 +132,10 @@ typedef enum {
     TypePolicy_NoFunction = (1 << 2),
     TypePolicy_NoArray = (1 << 3),
     TypePolicy_NoUndefTags = (1 << 4),
+    TypePolicy_NoTemplates = (1 << 5),
 
     TypePolicy_NoDerived = TypePolicy_NoFunction | TypePolicy_NoArray,
-    TypePolicy_NoIncomplete = TypePolicy_NoVoid | TypePolicy_NoUnkArrSize | TypePolicy_NoUndefTags,
+    TypePolicy_NoIncomplete = TypePolicy_NoVoid | TypePolicy_NoUnkArrSize | TypePolicy_NoUndefTags | TypePolicy_NoTemplates,
 } jitc_type_policy_t;
 
 typedef struct jitc_type_t jitc_type_t;
@@ -294,6 +295,8 @@ typedef struct {
     map(char*, jitc_type_t*)* structs;
     map(char*, jitc_type_t*)* unions;
     map(char*, jitc_type_t*)* enums;
+    map(char*, int)* struct_template_params;
+    map(char*, int)* union_template_params;
 } jitc_scope_t;
 
 struct jitc_context_t {
@@ -477,6 +480,7 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type);
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, jitc_preserve_t preserve_policy, uint64_t value);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name);
+bool jitc_template_params_check(jitc_context_t* context, jitc_type_t* type, const char* name);
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_get_tagged_type_notype(jitc_context_t* context, jitc_type_kind_t kind, const char* name);

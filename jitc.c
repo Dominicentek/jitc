@@ -449,6 +449,24 @@ bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const 
     return true;
 }
 
+bool jitc_template_params_check(jitc_context_t* context, jitc_type_t* type, const char* name) {
+    jitc_scope_t* scope = &list_get(context->scopes, list_size(context->scopes) - 1);
+    map(char*, int)* map = NULL;
+    int num_params = -1;
+    if (type->kind == Type_Template) num_params = type->templ.num_names;
+    if (type->kind == Type_StructRef || type->kind == Type_UnionRef) num_params = type->ref.templ_types ? type->ref.templ_num_types : -1;
+    jitc_type_kind_t kind = type->kind;
+    if (kind == Type_Template) kind = type->templ.base->kind;
+    if (kind == Type_Struct || kind == Type_StructRef) map = (void*)scope->struct_template_params;
+    if (kind == Type_Union || kind == Type_UnionRef) map = (void*)scope->union_template_params;
+    if (!map) return false;
+    if (map_find(map, &name)) return map_get_value(map) == num_params;
+    map_add(map) = (char*)name;
+    map_commit(map);
+    map_get_value(map) = num_params;
+    return true;
+}
+
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
     if (!name) return NULL;
     bool outside_of_function = false;
@@ -497,6 +515,8 @@ void jitc_push_scope(jitc_context_t* context) {
     scope->structs = map_new(compare_string, char*, jitc_type_t*);
     scope->unions = map_new(compare_string, char*, jitc_type_t*);
     scope->enums = map_new(compare_string, char*, jitc_type_t*);
+    scope->struct_template_params = map_new(compare_string, char*, int);
+    scope->union_template_params = map_new(compare_string, char*, int);
 }
 
 static void jitc_destroy_scope(jitc_scope_t* scope) {
@@ -504,6 +524,8 @@ static void jitc_destroy_scope(jitc_scope_t* scope) {
     map_delete(scope->structs);
     map_delete(scope->unions);
     map_delete(scope->enums);
+    map_delete(scope->struct_template_params);
+    map_delete(scope->union_template_params);
 }
 
 bool jitc_pop_scope(jitc_context_t* context) {
@@ -562,6 +584,7 @@ bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {
     if ((policy & TypePolicy_NoArray) && type->kind == Type_Array) return false;
     if ((policy & TypePolicy_NoFunction) && type->kind == Type_Function) return false;
     if ((policy & TypePolicy_NoVoid) && type->kind == Type_Void) return false;
+    if ((policy & TypePolicy_NoTemplates) && type->kind == Type_Template) return false;
     if ((policy & TypePolicy_NoUnkArrSize) && (type->kind == Type_Array && type->arr.size == -1)) return false;
     if ((policy & TypePolicy_NoUndefTags) && (type->kind == Type_StructRef || type->kind == Type_UnionRef || type->kind == Type_EnumRef)) return false;
     return true;
