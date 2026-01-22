@@ -142,7 +142,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* _tokens, jit
         jitc_token_t* starting_token;
         union {
             size_t array_size;
-            queue(jitc_token_t*)* tokens;
+            queue(jitc_token_t)* tokens;
         };
     } declstack_t;
 
@@ -241,8 +241,8 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* _tokens, jit
                 *type = jitc_typecache_function(context, *type, list);
             } break;
             case DeclID_InnerDeclaration: {
-                smartptr(queue(jitc_token_t*)) inner_tokens = (void*)item->tokens;
-                if (queue_size(inner_tokens) == 1) throw(queue_pop(inner_tokens), "Unexpected ')'");
+                smartptr(queue(jitc_token_t)) inner_tokens = (void*)item->tokens;
+                if (queue_size(inner_tokens) == 1) throw(&queue_pop(inner_tokens), "Unexpected ')'");
                 if (!jitc_parse_type_declarations(context, inner_tokens, type)) return false;
             } break;
         }
@@ -289,7 +289,10 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
         }
         else if ((token = NEXT_TOKEN)->type == TOKEN_IDENTIFIER) {
             jitc_variable_t* variable = jitc_get_variable(context, token->value.string);
-            if (specs != 0 || !variable || variable->decltype != Decltype_Typedef) break;
+            if (specs != 0 || !variable || variable->decltype != Decltype_Typedef) {
+                if (first_token) break;
+                throw(token, "Undefined type '%s'", token->value.string);
+            }
             type = jitc_typecache_named(context, variable->type, NULL);
             queue_pop(tokens);
         }
@@ -344,12 +347,13 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                 if (template_names) type = jitc_typecache_template(context, type, template_names);
                 if (name_token) {
                     const char* name = token->type == TOKEN_struct ? "Struct" : "Union";
-                    if (!jitc_declare_tagged_type(context, type, name_token->value.string))
-                        throw(name_token, "%s '%s' already defined", name, name_token->value.string);
                     if (!jitc_template_params_check(context, type, name_token->value.string))
                         throw(name_token, "%s '%s' has a different number of template parameters", name, name_token->value.string);
+                    jitc_pop_scope(context);
+                    if (!jitc_declare_tagged_type(context, type, name_token->value.string))
+                        throw(name_token, "%s '%s' already defined", name, name_token->value.string);
                 }
-                jitc_pop_scope(context);
+                else jitc_pop_scope(context);
             }
             else if (!name_token) throw(NEXT_TOKEN, "Expected identifier or '{'");
             else if (template_names) throw(NEXT_TOKEN, "Expected '{'");
@@ -606,14 +610,29 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
         } break;
         case AST_Variable: if (!node->exprtype) {
             jitc_variable_t* variable = jitc_get_variable(context, node->variable.name);
-            if (!variable) throw(node->token, "Undefined variable '%s'", node->variable.name);
             if (variable->decltype == Decltype_EnumItem) {
                 node->node_type = AST_Integer;
                 node->integer.type_kind = variable->type->kind;
                 node->integer.is_unsigned = variable->type->is_unsigned;
                 node->integer.value = variable->enum_value;
+                node->exprtype = variable->type;
             }
-            node->exprtype = jitc_typecache_decay(context, variable->type);
+            else if (node->variable.templ_map) {
+                node->exprtype = jitc_mangle_template(context,
+                    jitc_typecache_fill_template(
+                        context, variable->type, node->variable.templ_map
+                ));
+                node->variable.name = node->exprtype->name;
+                queue_push(context->instantiation_requests) = (jitc_instantiation_request_t){
+                    .tokens = variable->ptr,
+                    .preserve_policy = variable->preserve_policy,
+                    .decltype = variable->decltype,
+                    .target_type = node->exprtype,
+                    .template_map = node->variable.templ_map
+                };
+            }
+            else node->exprtype = variable->type;
+            node->exprtype = jitc_typecache_decay(context, node->exprtype);
         } break;
         case AST_WalkStruct: if (!node->exprtype) {
             jitc_type_t* type;
@@ -1264,8 +1283,23 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         node->string.ptr = token->value.string;
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
+        jitc_variable_t* variable = jitc_get_variable(context, token->value.string);
+        if (!variable) throw(token, "Undefined variable '%s'", token->value.string);
+        smartptr(map(char*, jitc_type_t*)) template_map = NULL;
+        if (variable->type->kind == Type_Template) {
+            template_map = map_new(compare_string, char*, jitc_type_t*);
+            if (!jitc_token_expect(tokens, TOKEN_LESS_THAN)) throw(NEXT_TOKEN, "Expected '<'");
+            for (int i = 0; i < variable->type->templ.num_names; i++) {
+                if (i != 0 && !jitc_token_expect(tokens, TOKEN_COMMA)) throw(NEXT_TOKEN, "Expected ','");
+                map_add(template_map) = (char*)variable->type->templ.names[i];
+                map_commit(template_map);
+                map_get_value(template_map) = try(jitc_parse_type(context, tokens, NULL, NULL));
+            }
+            if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) throw(NEXT_TOKEN, "Expected '>'");
+        }
         node = mknode(AST_Variable, token);
         node->variable.name = token->value.string;
+        node->variable.templ_map = move(template_map);
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_true))) {
         node = mknode(AST_Integer, token);
@@ -1584,31 +1618,65 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
         if (!(allowed & ParseType_Command)) throw(token, "Code block not allowed here");
         return try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
     }
-    if (jitc_peek_type(context, tokens)) {
-        if (!(allowed & ParseType_Declaration)) throw(NEXT_TOKEN, "Declaration not allowed here");
+    if (jitc_peek_type(context, tokens) || (token = jitc_token_expect(tokens, TOKEN_LESS_THAN))) {
+        if (!(allowed & ParseType_Declaration)) throw(token ?: NEXT_TOKEN, "Declaration not allowed here");
+        smartptr(list(char*)) template_list = NULL;
+        if (token) {
+            template_list = list_new(char*);
+            jitc_push_scope(context);
+            if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) while (true) {
+                if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) throw(NEXT_TOKEN, "Expected identifier");
+                list_add(template_list) = token->value.string;
+                jitc_type_t* placeholder = jitc_typecache_placeholder(context, token->value.string);
+                placeholder = jitc_typecache_named(context, placeholder, token->value.string);
+                jitc_declare_variable(context, placeholder, Decltype_Typedef, 0, 0);
+                if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+                if (jitc_token_expect(tokens, TOKEN_GREATER_THAN)) break;
+                throw(NEXT_TOKEN, "Expect ");
+            }
+        }
         token = NEXT_TOKEN;
         smartptr(jitc_ast_t) list = mknode(AST_List, token);
         jitc_decltype_t decltype = Decltype_None;
         jitc_preserve_t preserve_policy = Preserve_IfConst;
         jitc_type_t* base_type = try(jitc_parse_base_type(context, tokens, &decltype, list_size(context->scopes) == 1 ? &preserve_policy : NULL));
+        if (template_list) jitc_pop_scope(context);
         while (true) {
             jitc_type_t* type = base_type;
             jitc_ast_t* decl_node;
-            smartptr(jitc_ast_t) node = decl_node = mknode(AST_Declaration, token);
+            smartptr(jitc_ast_t) node = decl_node = template_list ? NULL : mknode(AST_Declaration, token);
+            if (template_list) for (int i = 0; i < list_size(template_list); i++) {
+                const char* name = list_get(template_list, i);
+                jitc_type_t* placeholder = jitc_typecache_placeholder(context, name);
+                placeholder = jitc_typecache_named(context, placeholder, name);
+                jitc_declare_variable(context, placeholder, Decltype_Typedef, 0, 0);
+            }
             if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
             if (type->kind == Type_Function && NEXT_TOKEN->type == TOKEN_SEMICOLON && decltype != Decltype_Typedef) decltype = Decltype_Extern;
-            type = jitc_to_method(context, type);
-            node->decl.type = type;
-            node->decl.decltype = decltype;
-            if (node->decl.decltype != Decltype_Typedef && type->name) {
+            if (template_list) {
+                jitc_pop_scope(context);
+                if (type->kind != Type_Function) throw(NEXT_TOKEN, "Templated declaration must be a function");
+                if (decltype == Decltype_Typedef) // can theoretically be enabled, but structs are an issue
+                    throw(NEXT_TOKEN, "Templated declaration cannot be typedef");
                 const char* name = type->name;
-                if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) type = jitc_get_tagged_type(context, type);
-                if (!jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags)) throw(token, "Declaration of incomplete type");
-                node->decl.type = type = jitc_typecache_named(context, type, name);
+                type = jitc_typecache_template(context, type, template_list);
+                type = jitc_typecache_named(context, type, name);
             }
+            type = jitc_to_method(context, type);
+            if (node) {
+                node->decl.type = type;
+                node->decl.decltype = decltype;
+                if (node->decl.decltype != Decltype_Typedef && type->name) {
+                    const char* name = type->name;
+                    if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) type = jitc_get_tagged_type(context, type);
+                    if (!type || !jitc_validate_type(type, TypePolicy_NoVoid | TypePolicy_NoUndefTags)) throw(token, "Declaration of incomplete type");
+                    node->decl.type = type = jitc_typecache_named(context, type, name);
+                }
+                if (decltype != Decltype_Typedef) list_add(list->list.inner) = move(node);
+            }
+            if (!jitc_declare_variable(context, type, decltype | (template_list ? Decltype_Template : 0), preserve_policy, 0))
+                throw(token, "Symbol '%s' already declared", type->name);
             bool incomplete_array = !jitc_validate_type(type, TypePolicy_NoUnkArrSize);
-            if (decltype != Decltype_Typedef) list_add(list->list.inner) = move(node);
-            if (!jitc_declare_variable(context, type, decltype, preserve_policy, 0)) throw(token, "Symbol '%s' already declared", type->name);
             jitc_variable_t* var = jitc_get_variable(context, type->name);
 
             if (
@@ -1617,39 +1685,65 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 (token = jitc_token_expect(tokens, TOKEN_ARROW))
             ) {
                 if (decltype == Decltype_Extern) throw(token, "Cannot attach code to an extern function");
-                if (type->kind != Type_Function) throw(token, "Cannot attach code to a non-function");
+                if (type->kind != Type_Function && !(type->kind == Type_Template && type->templ.base->kind == Type_Function))
+                    throw(token, "Cannot attach code to a non-function");
                 if (list_size(context->scopes) > 1) throw(token, "Function definition illegal here");
-                smartptr(jitc_ast_t) func = mknode(AST_Function, token);
-                smartptr(jitc_ast_t) body = mknode(AST_List, token);
-                func->func.variable = type;
-                jitc_push_scope(context);
-                jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
-                for (size_t i = 0; i < type->func.num_params; i++) {
-                    jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
-                }
-                if (token->type == TOKEN_ARROW) {
-                    if (type->func.ret->kind == Type_Void) list_add(body->list.inner) = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
-                    else {
-                        smartptr(jitc_ast_t) ret = mknode(AST_Return, token);
-                        ret->ret.expr = try(jitc_cast(context,
-                            try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL)),
-                            type, false, token
-                        ));
-                        list_add(body->list.inner) = move(ret);
+                if (template_list) {
+                    smartptr(list(jitc_token_t)) template_tokens = list_new(jitc_token_t);
+                    if (token->type == TOKEN_ARROW) {
+                        jitc_token_t return_token = *NEXT_TOKEN;
+                        return_token.type = TOKEN_return;
+                        list_add(template_tokens) = return_token;
                     }
-                    if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
+                    jitc_token_type_t ending = token->type == TOKEN_BRACE_OPEN ? TOKEN_BRACE_CLOSE : TOKEN_SEMICOLON;
+                    int level = 0;
+                    while (true) {
+                        if (NEXT_TOKEN->type == TOKEN_END_OF_FILE) throw(NEXT_TOKEN, "Unexpected EOF");
+                        if (level == 0 && NEXT_TOKEN->type == ending && ending != TOKEN_SEMICOLON) break;
+                        list_add(template_tokens) = queue_peek(tokens);
+                        if (level == 0 && NEXT_TOKEN->type == ending && ending == TOKEN_SEMICOLON) break;
+                        if (NEXT_TOKEN->type == TOKEN_BRACE_OPEN)  level++;
+                        if (NEXT_TOKEN->type == TOKEN_BRACE_CLOSE) level--;
+                        queue_pop(tokens);
+                    }
+                    jitc_token_t eof_token = queue_pop(tokens);
+                    eof_token.type = TOKEN_END_OF_FILE;
+                    list_add(template_tokens) = eof_token;
+                    var->ptr = move(template_tokens);
                 }
                 else {
-                    while (list_size(context->labels) > 0) list_remove(context->labels, list_size(context->labels) - 1);
-                    if (token->type == TOKEN_EQUALS_ARROW) list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
-                    else while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
-                        list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
+                    smartptr(jitc_ast_t) func = mknode(AST_Function, token);
+                    smartptr(jitc_ast_t) body = mknode(AST_List, token);
+                    func->func.variable = type;
+                    jitc_push_scope(context);
+                    jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
+                    for (size_t i = 0; i < type->func.num_params; i++) {
+                        jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
                     }
+                    if (token->type == TOKEN_ARROW) {
+                        if (type->func.ret->kind == Type_Void) list_add(body->list.inner) = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
+                        else {
+                            smartptr(jitc_ast_t) ret = mknode(AST_Return, token);
+                            ret->ret.expr = try(jitc_cast(context,
+                                try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL)),
+                                type->func.ret, false, token
+                            ));
+                            list_add(body->list.inner) = move(ret);
+                        }
+                        if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
+                    }
+                    else {
+                        while (list_size(context->labels) > 0) list_remove(context->labels, list_size(context->labels) - 1);
+                        if (token->type == TOKEN_EQUALS_ARROW) list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
+                        else while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
+                            list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
+                        }
+                    }
+                    jitc_pop_scope(context);
+                    func->func.body = jitc_flatten_ast(move(body), NULL);
+                    try(jitc_verify_gotos(context, func->func.body));
+                    list_add(list->list.inner) = move(func);
                 }
-                jitc_pop_scope(context);
-                func->func.body = jitc_flatten_ast(move(body), NULL);
-                try(jitc_verify_gotos(context, func->func.body));
-                list_add(list->list.inner) = move(func);
                 break;
             }
             else if (type->kind == Type_Function && var) var->decltype = Decltype_Extern;
@@ -1709,6 +1803,43 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* _tokens) {
         while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
         list_add(ast->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Declaration));
     }
+    while (queue_size(context->instantiation_requests) > 0) {
+        jitc_instantiation_request_t* request = &queue_pop(context->instantiation_requests);
+        jitc_type_t* type = request->target_type;
+        map(char*, jitc_type_t*)* template_map = request->template_map;
+        if (jitc_get_or_static(context, type->name)) continue;
+        if (!request->tokens) {
+            jitc_declare_variable(context, type, Decltype_Extern, request->preserve_policy, 0);
+            continue;
+        }
+        list(jitc_token_t)* token_list = request->tokens;
+        smartptr(queue(jitc_token_t)) func_tokens = queue_new(jitc_token_t);
+        smartptr(jitc_ast_t) func = mknode(AST_Function, NEXT_TOKEN);
+        smartptr(jitc_ast_t) body = mknode(AST_List, NEXT_TOKEN);
+        tokens = (void*)func_tokens;
+        for (int i = 0; i < list_size(token_list); i++) queue_push(tokens) = list_get(token_list, i);
+        func->func.variable = type;
+        jitc_push_scope(context);
+        jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
+        for (size_t i = 0; i < type->func.num_params; i++) {
+            jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
+        }
+        for (size_t i = 0; i < map_size(template_map); i++) {
+            map_index(template_map, i);
+            jitc_declare_variable(context, jitc_typecache_named(context,
+                map_get_value(template_map),
+                map_get_key(template_map)
+            ), Decltype_Typedef, 0, 0);
+        }
+        while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
+            while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
+            list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
+        }
+        jitc_pop_scope(context);
+        jitc_declare_variable(context, type, request->decltype & ~Decltype_Template, request->preserve_policy, 0);
+        func->func.body = jitc_flatten_ast(move(body), NULL);
+        list_add(ast->list.inner) = move(func);
+    }
     return jitc_flatten_ast(move(ast), NULL);
 }
 
@@ -1758,6 +1889,7 @@ void jitc_destroy_ast(jitc_ast_t* ast) {
             break;
         case AST_Variable:
             jitc_destroy_ast(ast->variable.this_ptr);
+            if (ast->variable.templ_map) map_delete(ast->variable.templ_map);
             break;
         default: break;
     }

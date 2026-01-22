@@ -65,7 +65,7 @@ typedef enum: uint8_t {
     cbw, cwd, cdq, cqo, opc_push, opc_pop,
     rep_movsb, rep_movsw, rep_movsd, rep_movsq,
     rep_stosb, rep_stosw, rep_stosd, rep_stosq,
-    cvtsi2ss, cvtsi2sd, cvttss2si, cvttsd2si, cvtss2sd, cvtsd2ss
+    cvt
 } mnemonic_t;
 
 typedef enum: uint16_t {
@@ -232,12 +232,12 @@ static instr_t instructions[] = {
     { cwd, 0x99, force_size },
     { cdq, 0x99 },
     { cqo, 0x99, force_rexw },
-    { cvtsi2ss, 0x2A, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_XMM | C_S32, C_REG | C_MEM | C_S32 }},
-    { cvtsi2sd, 0x2A, twobyte | has_modrm | prefix_f2 | force_rexw | flip_modrm, { C_XMM | C_S64, C_REG | C_MEM | C_S64 }},
-    { cvttss2si, 0x2C, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_REG | C_S32, C_XMM | C_MEM | C_S32 }},
-    { cvttsd2si, 0x2C, twobyte | has_modrm | prefix_f2 | force_rexw | flip_modrm, { C_REG | C_S64, C_XMM | C_MEM | C_S64 }},
-    { cvtss2sd, 0x5A, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S32 }},
-    { cvtsd2ss, 0x5A, twobyte | has_modrm | prefix_f2 | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S64 }},
+    { cvt, 0x2A, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_XMM | C_S32, C_REG | C_MEM | C_S32 }},
+    { cvt, 0x2A, twobyte | has_modrm | prefix_f2 | force_rexw | flip_modrm, { C_XMM | C_S64, C_REG | C_MEM | C_S64 }},
+    { cvt, 0x2C, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_REG | C_S32, C_XMM | C_MEM | C_S32 }},
+    { cvt, 0x2C, twobyte | has_modrm | prefix_f2 | force_rexw | flip_modrm, { C_REG | C_S64, C_XMM | C_MEM | C_S64 }},
+    { cvt, 0x5A, twobyte | has_modrm | prefix_f3 | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S32 }},
+    { cvt, 0x5A, twobyte | has_modrm | prefix_f2 | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S64 }},
     { rep_movsb, 0xA4, prefix_f3 },
     { rep_movsw, 0xA5, prefix_f3 | force_size },
     { rep_movsd, 0xA5, prefix_f3 },
@@ -1075,12 +1075,12 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
     if (res.kind == Type_Pointer) res.kind = Type_Int64;
     if (res.kind == Type_Float32) {
         if (op1.kind == Type_Float32) emit(writer, mov, 2, res, op1);
-        else if (op1.kind == Type_Float64) emit(writer, cvtsd2ss, 2, res, op1);
+        else if (op1.kind == Type_Float64) emit(writer, cvt, 2, res, op1);
         else if (op1.kind == Type_Int64 && op1.is_unsigned) {
             operand_t itmp = reg(rax, Type_Int64, true);
             operand_t ftmp = reg(xmm15, Type_Float64, true);
             emit(writer, mov, 2, itmp, op1);
-            emit(writer, cvtsi2ss, 2, res, itmp);
+            emit(writer, cvt, 2, res, itmp);
             emit(writer, sar, 2, itmp, imm(63, Type_Int8, true));
             emit(writer, and, 2, itmp, imm(0x5F800000, Type_Float32, true));
             emit(writer, mov, 2, ftmp, itmp);
@@ -1090,18 +1090,18 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
             operand_t newop = op(push(writer, StackItem_rvalue, Type_Int32, false));
             if (op1.kind < Type_Int32) emit(writer, op1.is_unsigned ? movzx : movsx, 2, newop, op1);
             else emit(writer, mov, 2, newop, op1);
-            emit(writer, cvtsi2ss, 2, res, newop);
+            emit(writer, cvt, 2, res, newop);
             pop(writer);
         }
     }
     else if (res.kind == Type_Float64) {
-        if (op1.kind == Type_Float32) emit(writer, cvtss2sd, 2, res, op1);
+        if (op1.kind == Type_Float32) emit(writer, cvt, 2, res, op1);
         else if (op1.kind == Type_Float64) emit(writer, mov, 2, res, op1);
         else if (op1.kind == Type_Int64 && op1.is_unsigned) {
             operand_t itmp = reg(rax, Type_Int64, true);
             operand_t ftmp = reg(xmm15, Type_Float64, true);
             emit(writer, mov, 2, itmp, op1);
-            emit(writer, cvtsi2sd, 2, res, itmp);
+            emit(writer, cvt, 2, res, itmp);
             emit(writer, sar, 2, itmp, imm(63, Type_Int8, true));
             emit(writer, and, 2, itmp, imm(0x43F0000000000000, Type_Float64, true));
             emit(writer, mov, 2, ftmp, itmp);
@@ -1111,18 +1111,18 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
             operand_t newop = op(push(writer, StackItem_rvalue, Type_Int64, false));
             if (op1.kind < Type_Int64) emit(writer, op1.is_unsigned ? movzx : movsx, 2, newop, op1);
             else emit(writer, mov, 2, newop, op1);
-            emit(writer, cvtsi2sd, 2, res, newop);
+            emit(writer, cvt, 2, res, newop);
             pop(writer);
         }
     }
     else {
         if (op1.kind == Type_Float32) {
-            if (res.kind < Type_Int32) res.kind = Type_Int32;
-            emit(writer, cvttss2si, 2, res, op1);
+            if (res.kind != Type_Int32) res.kind = Type_Int32;
+            emit(writer, cvt, 2, res, op1);
         }
         else if (op1.kind == Type_Float64) {
-            if (res.kind < Type_Int64) res.kind = Type_Int64;
-            emit(writer, cvttsd2si, 2, res, op1);
+            if (res.kind != Type_Int64) res.kind = Type_Int64;
+            emit(writer, cvt, 2, res, op1);
         }
         else {
             if (op1.kind > res.kind) {

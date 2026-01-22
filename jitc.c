@@ -348,7 +348,7 @@ jitc_type_t* jitc_typecache_fill_template(jitc_context_t* context, jitc_type_t* 
     if (new_type.kind == Type_Function) {
         new_type.func.ret = jitc_typecache_fill_template(context, new_type.func.ret, mappings);
         for (int i = 0; i < new_type.func.num_params; i++)
-            new_type.func.params[i] = jitc_typecache_fill_template(context, new_type.func.params[i], mappings);
+            new_type.func.params[i] = jitc_typecache_named(context, jitc_typecache_fill_template(context, new_type.func.params[i], mappings), new_type.func.params[i]->name);
     }
     new_type.hash = 0;
     jitc_update_struct(&new_type);
@@ -608,6 +608,7 @@ jitc_context_t* jitc_create_context() {
     context->labels = list_new(char*);
     context->scopes = list_new(jitc_scope_t);
     context->memchunks = list_new(jitc_memchunk_t);
+    context->instantiation_requests = queue_new(jitc_instantiation_request_t);
     context->error = NULL;
     jitc_push_scope(context);
     return context;
@@ -620,6 +621,7 @@ static jitc_variable_t* jitc_get_symbol(jitc_context_t* context, const char* nam
     if (var->decltype == Decltype_Typedef) return NULL;
     if (var->decltype == Decltype_Extern && normal_only) return NULL;
     if (var->decltype == Decltype_Static && normal_only) return NULL;
+    if (var->decltype & Decltype_Template) return NULL;
     return var;
 }
 
@@ -663,10 +665,16 @@ jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name) {
 jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, const char* name) {
     base = jitc_typecache_named(context, base, NULL);
     jitc_variable_t* var = NULL;
-    char method_name[2 + 16 + 1 + strlen(name) + 1];
-    sprintf(method_name, "__%16lx_%s", base->hash, name);
+    char method_name[4 + 16 + 1 + strlen(name) + 1];
+    sprintf(method_name, "__m_%16lx_%s", base->hash, name);
     if ((var = jitc_get_or_static(context, method_name))) return var;
     return NULL;
+}
+
+jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* base) {
+    char symbol_name[4 + 16 + 1 + strlen(base->name) + 1];
+    sprintf(symbol_name, "__t_%16lx_%s", base->hash, base->name);
+    return jitc_typecache_named(context, base, jitc_append_string(context, symbol_name));
 }
 
 bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_type, size_t* offset) {
@@ -743,6 +751,7 @@ bool jitc_parse(jitc_context_t* context, const char* code, const char* filename)
     tokens = try(jitc_preprocess(context, move(tokens), NULL));
     smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens);
     while (jitc_pop_scope(context));
+    while (queue_size(context->instantiation_requests) > 0) queue_pop(context->instantiation_requests);
     if (!ast) return false;
     for (size_t i = 0; i < list_size(ast->list.inner); i++) {
         jitc_compile(context, list_get(ast->list.inner, i));
@@ -781,6 +790,7 @@ void jitc_destroy_context(jitc_context_t* context) {
     map_delete(context->typecache);
     map_delete(context->headers);
     list_delete(context->labels);
+    queue_delete(context->instantiation_requests);
     jitc_delete_memchunks(context);
     while (list_size(context->scopes) > 1) jitc_pop_scope(context);
     jitc_destroy_scope(&list_get(context->scopes, 0));

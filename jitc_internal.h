@@ -13,6 +13,7 @@ typedef enum: uint8_t {
     Decltype_Extern,
     Decltype_Typedef,
     Decltype_EnumItem,
+    Decltype_Template = (1 << 3)
 } jitc_decltype_t;
 
 typedef enum: uint8_t {
@@ -207,6 +208,14 @@ typedef struct {
     };
 } jitc_variable_t;
 
+typedef struct {
+    jitc_decltype_t decltype;
+    jitc_preserve_t preserve_policy;
+    list_t* tokens;
+    jitc_type_t* target_type;
+    map_t* template_map;
+} jitc_instantiation_request_t;
+
 typedef struct jitc_ast_t jitc_ast_t;
 struct jitc_ast_t {
     jitc_ast_type_t node_type;
@@ -269,6 +278,7 @@ struct jitc_ast_t {
             const char* name;
             jitc_ast_t* this_ptr;
             bool write_dest;
+            map_t* templ_map;
         } variable;
         struct {
             jitc_ast_t* struct_ptr;
@@ -306,6 +316,7 @@ struct jitc_context_t {
     list(char*)* labels;
     list(jitc_scope_t)* scopes;
     list(jitc_memchunk_t)* memchunks;
+    queue(jitc_instantiation_request_t)* instantiation_requests;
     jitc_error_t* error;
     bool all_linked;
 };
@@ -483,6 +494,7 @@ bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const 
 bool jitc_template_params_check(jitc_context_t* context, jitc_type_t* type, const char* name);
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
+jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* type);
 jitc_type_t* jitc_get_tagged_type_notype(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_t* type);
 jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name);

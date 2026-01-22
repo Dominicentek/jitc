@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
             }
             script_segfault = false;
             if (!segfault) printf("FAILED (returned %d)\n", retval);
-            jitc_func_trampoline_t* func = (void*)main_func;
+            jitc_func_trampoline_t* func = (void*)jitc_get(context, "min");
             printf("Machine code dump:\n");
             for (uint32_t i = 0; i < func->addr->size; i++) {
                 if (i != 0 && i % 16 == 0) fprintf(stderr, "\n");
