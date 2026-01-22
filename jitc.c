@@ -382,15 +382,16 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
 }
 
 jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type) {
-    if (type->kind == Type_Function &&
-        type->func.num_params > 0 &&
-        type->func.params[0]->name &&
-        type->func.params[0]->kind == Type_Pointer &&
-        strcmp(type->func.params[0]->name, "this") == 0
+    jitc_type_t* func = type->kind == Type_Template ? type->templ.base : type;
+    if (func->kind == Type_Function &&
+        func->func.num_params > 0 &&
+        func->func.params[0]->name &&
+        func->func.params[0]->kind == Type_Pointer &&
+        strcmp(func->func.params[0]->name, "this") == 0
     ) {
-        uint64_t hash = jitc_typecache_named(context, type->func.params[0]->ptr.base, NULL)->hash;
-        char new_name[2 + 16 + 1 + strlen(type->name) + 1];
-        sprintf(new_name, "__%16lx_%s", hash, type->name);
+        uint64_t hash = jitc_typecache_named(context, func->ptr.base, NULL)->hash;
+        char new_name[2 + 16 + strlen(type->name) + 1];
+        sprintf(new_name, "@m%16lx%s", hash, type->name);
         type = jitc_typecache_named(context, type, jitc_append_string(context, new_name));
     }
     return type;
@@ -662,18 +663,40 @@ jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name) {
     return jitc_get_symbol(context, name, false);
 }
 
-jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, const char* name) {
+jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, const char* name, list_t* _templ_list, map_t** template_map) {
+    list(jitc_type_t*)* templ_list = _templ_list;
     base = jitc_typecache_named(context, base, NULL);
-    jitc_variable_t* var = NULL;
-    char method_name[4 + 16 + 1 + strlen(name) + 1];
-    sprintf(method_name, "__m_%16lx_%s", base->hash, name);
-    if ((var = jitc_get_or_static(context, method_name))) return var;
+    jitc_scope_t* scope = &list_get(context->scopes, 0);
+    for (size_t i = 0; i < map_size(scope->variables); i++) {
+        map_index(scope->variables, i);
+        jitc_variable_t* var = &map_get_value(scope->variables);
+        const char* symbol_name = map_get_key(scope->variables);
+        const char* method_name = symbol_name + 18;
+        if (strncmp(symbol_name, "@m", 2) != 0) continue;
+        if (strcmp(method_name, name) != 0) continue;
+        if ((var->type->kind == Type_Template) != !!templ_list) continue;
+        if (var->type->kind == Type_Template) {
+            if (var->type->templ.num_names != list_size(templ_list)) continue;
+            smartptr(map(char*, jitc_type_t*)) templ_map = map_new(compare_string, char*, jitc_type_t*);
+            for (size_t j = 0; j < list_size(templ_list); j++) {
+                map_add(templ_map) = (char*)var->type->templ.names[j];
+                map_commit(templ_map);
+                map_get_value(templ_map) = list_get(templ_list, j);
+            }
+            jitc_type_t* filled = jitc_typecache_fill_template(context, var->type, templ_map);
+            if (jitc_typecmp(context, filled->func.params[0]->ptr.base, base)) {
+                *template_map = move(templ_map);
+                return var;
+            }
+        }
+        else if (jitc_typecmp(context, var->type->func.params[0]->ptr.base, base)) return var;
+    }
     return NULL;
 }
 
 jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* base) {
-    char symbol_name[4 + 16 + 1 + strlen(base->name) + 1];
-    sprintf(symbol_name, "__t_%16lx_%s", base->hash, base->name);
+    char symbol_name[2 + 16 + strlen(base->name) + 1];
+    sprintf(symbol_name, "@t%16lx%s", base->hash, base->name);
     return jitc_typecache_named(context, base, jitc_append_string(context, symbol_name));
 }
 

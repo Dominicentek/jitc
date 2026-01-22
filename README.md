@@ -19,12 +19,7 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
 - Switch statements
 - Compound literals
 - Windows support (x64 ABI)
-
-Calling it done here, the things below are planned but not guaranteed
-
-- aarch64 support
 - User friendly segfault reporting and handling
-- Rewrite IR into SSA
 - Implement custom extensions
   - GNU statement expressions
   - GNU ternary syntax (`x ?: y`)
@@ -33,7 +28,11 @@ Calling it done here, the things below are planned but not guaranteed
   - Vectors, matrices, quaternions (also support swizzles)
   - Runtime type reflection
   - C++ lambdas (and closures)
-  - C++ templates (won't blow up to the complexity of C++)
+
+Calling it done here, the things below are planned but not guaranteed
+
+- aarch64 support (System V only)
+- Rewrite IR into SSA
   
 Note to self: When implementing extension features, still make programs as explicit as possible (minimal implicit behavior *cough cough C++ cough*)
 

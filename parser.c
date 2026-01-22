@@ -646,16 +646,27 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 jitc_ast_t* deref = mknode(AST_Unary, node->token);
                 deref->unary.operation = Unary_Dereference;
                 deref->unary.inner = node->walk_struct.struct_ptr;
+                deref->exprtype = type = type->ptr.base;
                 node->walk_struct.struct_ptr = deref;
-                type = type->ptr.base;
             }
-            if (is_struct(type) && jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset)) break;
-            jitc_variable_t* method = jitc_get_method(context, type, node->walk_struct.field_name);
-            if (!method) throw(node->token, "%s '%s' not found", is_struct(type) ? "Field or method" : "Method", node->walk_struct.field_name);
+            if (is_struct(type) && jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset)) {
+                if (node->walk_struct.templ_list) throw(node->token, "Template parameter list on a struct field");
+                break;
+            }
+            map_t* template_map;
+            jitc_variable_t* method = jitc_get_method(context, type, node->walk_struct.field_name, node->walk_struct.templ_list, &template_map);
+            if (!method) throw(node->token,
+                node->walk_struct.templ_list ? "No %s matching '%s<%d>' found" : "No %s matching '%s' found",
+                is_struct(type) ? "field or method" : "method",
+                node->walk_struct.field_name,
+                node->walk_struct.templ_list ? list_size(node->walk_struct.templ_list) : 0
+            );
             node->node_type = AST_Variable;
             node->variable.this_ptr = node->walk_struct.struct_ptr;
             node->variable.name = method->type->name;
-            node->exprtype = jitc_typecache_decay(context, method->type);
+            node->variable.templ_map = template_map;
+            node->exprtype = NULL;
+            node = try(jitc_process_ast(context, node, NULL));
         } break;
         case AST_Initializer:
             node->init.store_to = try(jitc_process_ast(context, node->init.store_to, NULL));
@@ -1350,21 +1361,28 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
             op->unary.operation = Unary_SuffixDecrement;
             op->unary.inner = move(node);
         }
-        else if ((token = jitc_token_expect(tokens, TOKEN_DOT))) {
+        else if ((token = jitc_token_expect(tokens, TOKEN_DOT)) || (token = jitc_token_expect(tokens, TOKEN_ARROW))) {
             jitc_token_t* dot = token;
+            smartptr(list(jitc_type_t*)) template_list = NULL;
             if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) throw(NEXT_TOKEN, "Expected identifier");
+            if (jitc_token_expect(tokens, TOKEN_LESS_THAN)) {
+                template_list = list_new(jitc_type_t*);
+                if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) while (true) {
+                    list_add(template_list) = try(jitc_parse_type(context, tokens, NULL, NULL));
+                    if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+                    if (jitc_token_expect(tokens, TOKEN_GREATER_THAN)) break;
+                    throw(NEXT_TOKEN, "Expected ',' or '>'");
+                }
+            }
+            if (dot->type == TOKEN_ARROW) {
+                jitc_ast_t* deref = mknode(AST_Unary, dot);
+                deref->unary.operation = Unary_Dereference;
+                deref->unary.inner = move(node);
+                node = deref;
+            }
             op = mknode(AST_WalkStruct, dot);
             op->walk_struct.struct_ptr = move(node);
-            op->walk_struct.field_name = token->value.string;
-        }
-        else if ((token = jitc_token_expect(tokens, TOKEN_ARROW))) {
-            jitc_token_t* arrow = token;
-            if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) throw(NEXT_TOKEN, "Expected identifier");
-            jitc_ast_t* deref = mknode(AST_Unary, arrow);
-            deref->unary.operation = Unary_Dereference;
-            deref->unary.inner = move(node);
-            op = mknode(AST_WalkStruct, arrow);
-            op->walk_struct.struct_ptr = deref;
+            op->walk_struct.templ_list = move(template_list);
             op->walk_struct.field_name = token->value.string;
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_BRACKET_OPEN))) {
@@ -1541,6 +1559,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
         smartptr(jitc_ast_t) init = NULL;
         smartptr(jitc_ast_t) cond = NULL;
         smartptr(jitc_ast_t) expr = NULL;
+        jitc_push_scope(context);
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) throw(NEXT_TOKEN, "Expected '('");
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON))
             init = try(jitc_parse_statement(context, tokens, ParseType_Expression | ParseType_Declaration));
@@ -1556,6 +1575,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
         loop->loop.body = move(body);
         loop->loop.cond = move(cond);
         list_add(node->list.inner) = move(loop);
+        jitc_pop_scope(context);
         return move(node);
     }
     if (jitc_token_expect(tokens, TOKEN_switch)) {
@@ -1878,6 +1898,7 @@ void jitc_destroy_ast(jitc_ast_t* ast) {
             break;
         case AST_WalkStruct:
             jitc_destroy_ast(ast->walk_struct.struct_ptr);
+            if (ast->walk_struct.templ_list) list_delete(ast->walk_struct.templ_list);
             break;
         case AST_Initializer:
             jitc_destroy_ast(ast->init.store_to);

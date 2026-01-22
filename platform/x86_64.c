@@ -437,7 +437,7 @@ static bool legalize(legalization_t* legalization, operand_t op, instr_constrain
 #define step() legalization->steps[legalization->cost++]
     instr_constraints_t size_mask = (instr_constraints_t[]){ C__S8, C_S16, C_S32, C_S64, C_S32, C_S64, C_S64 }[op.kind];
     if (!(constraints & size_mask)) return legalization->cost = 0;
-    if (op.type == OpType_imm && !last_operand) {
+    if (op.type == OpType_imm) {
         if (constraints & C_IMM) (void)0;
         else if (constraints & C_REG) step() = Legal_imm_reg;
         else if (constraints & C_XMM) {
@@ -926,7 +926,7 @@ static void jitc_asm_smul(bytewriter_t* writer) {
         emit(writer, imul, 2, op(peek(1)), op(peek(0)));
         pop(writer);
     }
-    arithcomplex(writer, imul, rax, true);
+    else arithcomplex(writer, imul, rax, true);
 }
 
 static void jitc_asm_sdiv(bytewriter_t* writer) {
@@ -934,7 +934,7 @@ static void jitc_asm_sdiv(bytewriter_t* writer) {
         emit(writer, idiv, 2, op(peek(1)), op(peek(0)));
         pop(writer);
     }
-    arithcomplex(writer, idiv, rax, true);
+    else arithcomplex(writer, idiv, rax, true);
 }
 
 static void jitc_asm_smod(bytewriter_t* writer) {
@@ -1129,7 +1129,8 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
                 op1.kind = res.kind;
                 emit(writer, mov, 2, res, op1);
             }
-            if (op1.kind < res.kind) emit(writer, op1.is_unsigned ? movzx : movsx, 2, res, op1);
+            else if (op1.kind < res.kind) emit(writer, op1.is_unsigned ? movzx : movsx, 2, res, op1);
+            else emit(writer, mov, 2, res, op1);
         }
     }
 }
