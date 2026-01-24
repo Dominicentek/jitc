@@ -47,6 +47,8 @@ static struct {
     { Type_Float64, Spec_Long1 | Spec_Double },
 };
 
+static jitc_ast_t* root_node = NULL;
+
 static jitc_ast_t* mknode(jitc_ast_type_t type, jitc_token_t* token) {
     jitc_ast_t* ast = calloc(sizeof(jitc_ast_t), 1);
     ast->node_type = type;
@@ -1348,6 +1350,56 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         if (type->kind == Type_Pointer && type->ptr.prev == Type_Array)
             node->integer.value = type->ptr.base->size * type->ptr.arr_size;
     }
+    else if ((token = jitc_token_expect(tokens, TOKEN_lambda))) {
+        jitc_token_t* lambda_token = token;
+        smartptr(list(jitc_type_t*)) params = list_new(jitc_type_t*);
+        jitc_push_function(context);
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) throw(NEXT_TOKEN, "Expected '('");
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) while (true) {
+            token = NEXT_TOKEN;
+            jitc_type_t* param = jitc_typecache_decay(context, try(jitc_parse_type(context, tokens, NULL, NULL)));
+            if (param->kind == Type_Void) {
+                if (param->name) throw(token, "'void' cannot have a name");
+                if (list_size(params) > 0) throw(token, "'void' must be the only parameter");
+                if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
+                break;
+            }
+            if (!jitc_declare_variable(context, param, Decltype_None, 0, 0))
+                throw(token, "Duplicate parameter '%s'", param->name);
+            list_add(params) = param;
+            if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+            if (jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) break;
+            throw(NEXT_TOKEN, "Expected ',' or ')'");
+        }
+        if (!jitc_token_expect(tokens, TOKEN_COLON)) throw(NEXT_TOKEN, "Expected ':'");
+        char lambda_name[2 + 16 + 1];
+        static uint64_t lambda_counter = 0;
+        sprintf(lambda_name, "@l%016lx", lambda_counter++);
+        jitc_type_t* func = try(jitc_parse_type(context, tokens, NULL, NULL));
+        func = jitc_typecache_function(context, func, params);
+        func = jitc_typecache_named(context, func, jitc_append_string(context, lambda_name));
+        jitc_declare_variable(context, jitc_typecache_named(context, func->func.ret, "return"), Decltype_None, 0, 0);
+        smartptr(jitc_ast_t) func_node = mknode(AST_Function, lambda_token);
+        smartptr(jitc_ast_t) func_body = mknode(AST_List, lambda_token);
+        if (jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) {
+            while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
+                list_add(func_body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
+            }
+        }
+        else if (jitc_token_expect(tokens, TOKEN_ARROW)) {
+            smartptr(jitc_ast_t) ret = mknode(AST_Return, lambda_token);
+            ret->ret.expr = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
+            list_add(func_body->list.inner) = move(ret);
+        }
+        else throw(NEXT_TOKEN, "Expected '{' or '->'");
+        jitc_pop_scope(context);
+        jitc_declare_variable(context, func, Decltype_Static, 0, 0);
+        func_node->func.body = move(func_body);
+        func_node->func.variable = func;
+        node = mknode(AST_Variable, lambda_token);
+        node->variable.name = func->name;
+        list_add(root_node->list.inner) = move(func_node);
+    }
     else throw(NEXT_TOKEN, "Expected expression");
     while (true) {
         smartptr(jitc_ast_t) op = NULL;
@@ -1490,13 +1542,6 @@ jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* _tokens, int
     }
     return jitc_process_ast(context, move(left), exprtype);
 }
-
-typedef enum {
-    ParseType_Command     = (1 << 0),
-    ParseType_Declaration = (1 << 1),
-    ParseType_Expression  = (1 << 2),
-    ParseType_Any = ParseType_Command | ParseType_Declaration | ParseType_Expression
-} jitc_parse_type_t;
 
 jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc_parse_type_t allowed) {
     queue(jitc_token_t)* tokens = _tokens;
@@ -1818,7 +1863,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
 
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* _tokens) {
     queue(jitc_token_t)* tokens = _tokens;
-    smartptr(jitc_ast_t) ast = mknode(AST_List, NEXT_TOKEN);
+    smartptr(jitc_ast_t) ast = root_node = mknode(AST_List, NEXT_TOKEN);
     while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
         while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
         list_add(ast->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Declaration));

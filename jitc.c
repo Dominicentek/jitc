@@ -474,6 +474,7 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
     for (size_t i = list_size(context->scopes) - 1; i < list_size(context->scopes) /* rely on underflow */; i--) {
         if (i != 0 && outside_of_function) continue;
         jitc_scope_t* scope = &list_get(context->scopes, i);
+        if (scope->func) outside_of_function = true;
         if (!map_find(scope->variables, &name)) continue;
         return &map_get_value(scope->variables);
     }
@@ -518,6 +519,11 @@ void jitc_push_scope(jitc_context_t* context) {
     scope->enums = map_new(compare_string, char*, jitc_type_t*);
     scope->struct_template_params = map_new(compare_string, char*, int);
     scope->union_template_params = map_new(compare_string, char*, int);
+}
+
+void jitc_push_function(jitc_context_t* context) {
+    jitc_push_scope(context);
+    list_get(context->scopes, list_size(context->scopes) - 1).func = true;
 }
 
 static void jitc_destroy_scope(jitc_scope_t* scope) {

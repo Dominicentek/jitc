@@ -139,6 +139,13 @@ typedef enum {
     TypePolicy_NoIncomplete = TypePolicy_NoVoid | TypePolicy_NoUnkArrSize | TypePolicy_NoUndefTags | TypePolicy_NoTemplates,
 } jitc_type_policy_t;
 
+typedef enum {
+    ParseType_Command     = (1 << 0),
+    ParseType_Declaration = (1 << 1),
+    ParseType_Expression  = (1 << 2),
+    ParseType_Any = ParseType_Command | ParseType_Declaration | ParseType_Expression
+} jitc_parse_type_t;
+
 typedef struct jitc_type_t jitc_type_t;
 struct jitc_type_t {
     jitc_type_kind_t kind;
@@ -308,6 +315,7 @@ typedef struct {
     map(char*, jitc_type_t*)* enums;
     map(char*, int)* struct_template_params;
     map(char*, int)* union_template_params;
+    bool func;
 } jitc_scope_t;
 
 struct jitc_context_t {
@@ -359,6 +367,7 @@ struct jitc_context_t {
     KEYWORD(if) \
     KEYWORD(inline) \
     KEYWORD(int) \
+    KEYWORD(lambda) \
     KEYWORD(long) \
     KEYWORD(nullptr) \
     KEYWORD(offsetof) \
@@ -504,6 +513,7 @@ jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, con
 bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_type, size_t* offset);
 bool jitc_struct_field_exists_list(list_t* list, const char* name);
 
+void jitc_push_function(jitc_context_t* context);
 void jitc_push_scope(jitc_context_t* context);
 bool jitc_pop_scope(jitc_context_t* context);
 
@@ -518,6 +528,7 @@ queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* 
 
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype, jitc_preserve_t* preserve_policy);
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int min_prec, jitc_type_t** exprtype);
+jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* tokens, jitc_parse_type_t allowed);
 jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* token_queue);
 void* jitc_compile_func(jitc_context_t* context, jitc_ast_t* ast, int* size);
 void jitc_compile(jitc_context_t* context, jitc_ast_t* ast);
