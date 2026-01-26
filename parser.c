@@ -1387,9 +1387,15 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
             }
         }
         else if (jitc_token_expect(tokens, TOKEN_ARROW)) {
-            smartptr(jitc_ast_t) ret = mknode(AST_Return, lambda_token);
-            ret->ret.expr = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
-            list_add(func_body->list.inner) = move(ret);
+            if (func->func.ret->kind == Type_Void) list_add(func_body->list.inner) = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
+            else {
+                smartptr(jitc_ast_t) ret = mknode(AST_Return, token);
+                ret->ret.expr = try(jitc_cast(context,
+                    try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL)),
+                    func->func.ret, false, token
+                ));
+                list_add(func_body->list.inner) = move(ret);
+            }
         }
         else throw(NEXT_TOKEN, "Expected '{' or '->'");
         jitc_pop_scope(context);

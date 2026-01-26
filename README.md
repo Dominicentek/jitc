@@ -1,6 +1,6 @@
 # jitc
 
-**This project is NOT usable yet (check TODO)**
+**This project is usable, but incomplete and possibly full of bugs. Use at your own risk.**
 
 An embeddable C-like JIT compiler.
 
@@ -27,12 +27,14 @@ Fill the hole where there's no lightweight, embeddable C JIT compiler that makes
   - Zig's `defer` or GNU `__attribute__((cleanup))`, either one of the two (or both)
   - Vectors, matrices, quaternions (also support swizzles)
   - Runtime type reflection
-  - C++ lambdas (and closures)
+  - Closures
+- Documentation
 
 Calling it done here, the things below are planned but not guaranteed
 
 - aarch64 support (System V only)
 - Rewrite IR into SSA
+- Full implementation of the preprocessor
   
 Note to self: When implementing extension features, still make programs as explicit as possible (minimal implicit behavior *cough cough C++ cough*)
 
