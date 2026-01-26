@@ -253,7 +253,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* _tokens, jit
     return true;
 }
 
-jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jitc_decltype_t* decltype, jitc_preserve_t* preserve_policy) {
+jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jitc_decltype_t* decltype, const char** extern_symbol, jitc_preserve_t* preserve_policy) {
     queue(jitc_token_t)* tokens = _tokens;
     bool is_const = false, is_unsigned = false;
     jitc_specifiers_t specs = 0;
@@ -265,7 +265,15 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
         jitc_decltype_t decl = Decltype_None;
         jitc_preserve_t prsv = Preserve_IfConst;
         jitc_specifiers_t new_specs = 0;
-        if      ((token = jitc_token_expect(tokens, TOKEN_extern)))   decl = Decltype_Extern;
+        if ((token = jitc_token_expect(tokens, TOKEN_extern)))   {
+            decl = Decltype_Extern;
+            if (jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) {
+                jitc_token_t* str_token = jitc_token_expect(tokens, TOKEN_STRING);
+                if (!str_token) throw(NEXT_TOKEN, "Expected string literal");
+                if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
+                if (extern_symbol) *extern_symbol = str_token->value.string;
+            }
+        }
         else if ((token = jitc_token_expect(tokens, TOKEN_static)))   decl = Decltype_Static;
         else if ((token = jitc_token_expect(tokens, TOKEN_typedef)))  decl = Decltype_Typedef;
         else if ((token = jitc_token_expect(tokens, TOKEN_preserve))) prsv = Preserve_Always;
@@ -328,11 +336,11 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                 if (template_names) for (int i = 0; i < list_size(template_names); i++) {
                     jitc_type_t* placeholder = jitc_typecache_placeholder(context, list_get(template_names, i));
                     placeholder = jitc_typecache_named(context, placeholder, list_get(template_names, i));
-                    jitc_declare_variable(context, placeholder, Decltype_Typedef, 0, 0);
+                    jitc_declare_variable(context, placeholder, Decltype_Typedef, NULL, 0, 0);
                 }
                 while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
                     while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
-                    jitc_type_t* field_type = try(jitc_parse_base_type(context, tokens, NULL, NULL));
+                    jitc_type_t* field_type = try(jitc_parse_base_type(context, tokens, NULL, NULL, NULL));
                     while (true) {
                         field_type = jitc_typecache_named(context, field_type, NULL);
                         try(jitc_parse_type_declarations(context, tokens, &field_type));
@@ -398,7 +406,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
             if (jitc_token_expect(tokens, TOKEN_COLON)) {
                 force_definition = true;
                 jitc_token_t* type_token = NEXT_TOKEN;
-                jitc_type_t* type = try(jitc_parse_base_type(context, tokens, NULL, NULL));
+                jitc_type_t* type = try(jitc_parse_base_type(context, tokens, NULL, NULL, NULL));
                 if (!is_integer(type)) throw(type_token, "Enum base type must be an integer");
                 kind = type->kind;
             }
@@ -417,7 +425,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                         value = ast->integer.value;
                     }
                     prev_value = value;
-                    if (!jitc_declare_variable(context, jitc_typecache_named(context, value_type, name), Decltype_EnumItem, Preserve_IfConst, value))
+                    if (!jitc_declare_variable(context, jitc_typecache_named(context, value_type, name), Decltype_EnumItem, NULL, Preserve_IfConst, value))
                         throw(id, "Symbol '%s' already defined", name);
                     if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
                     if (jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) break;
@@ -492,7 +500,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
 
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype, jitc_preserve_t* preserve_policy) {
     jitc_type_t* type = NULL;
-    if (!(type = jitc_parse_base_type(context, tokens, decltype, preserve_policy))) return NULL;
+    if (!(type = jitc_parse_base_type(context, tokens, decltype, NULL, preserve_policy))) return NULL;
     if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
     return type;
 }
@@ -1364,7 +1372,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
                 if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
                 break;
             }
-            if (!jitc_declare_variable(context, param, Decltype_None, 0, 0))
+            if (!jitc_declare_variable(context, param, Decltype_None, NULL, 0, 0))
                 throw(token, "Duplicate parameter '%s'", param->name);
             list_add(params) = param;
             if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
@@ -1378,7 +1386,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         jitc_type_t* func = try(jitc_parse_type(context, tokens, NULL, NULL));
         func = jitc_typecache_function(context, func, params);
         func = jitc_typecache_named(context, func, jitc_append_string(context, lambda_name));
-        jitc_declare_variable(context, jitc_typecache_named(context, func->func.ret, "return"), Decltype_None, 0, 0);
+        jitc_declare_variable(context, jitc_typecache_named(context, func->func.ret, "return"), Decltype_None, NULL, 0, 0);
         smartptr(jitc_ast_t) func_node = mknode(AST_Function, lambda_token);
         smartptr(jitc_ast_t) func_body = mknode(AST_List, lambda_token);
         if (jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) {
@@ -1399,7 +1407,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         }
         else throw(NEXT_TOKEN, "Expected '{' or '->'");
         jitc_pop_scope(context);
-        jitc_declare_variable(context, func, Decltype_Static, 0, 0);
+        jitc_declare_variable(context, func, Decltype_Static, NULL, 0, 0);
         func_node->func.body = move(func_body);
         func_node->func.variable = func;
         node = mknode(AST_Variable, lambda_token);
@@ -1700,7 +1708,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 list_add(template_list) = token->value.string;
                 jitc_type_t* placeholder = jitc_typecache_placeholder(context, token->value.string);
                 placeholder = jitc_typecache_named(context, placeholder, token->value.string);
-                jitc_declare_variable(context, placeholder, Decltype_Typedef, 0, 0);
+                jitc_declare_variable(context, placeholder, Decltype_Typedef, NULL, 0, 0);
                 if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
                 if (jitc_token_expect(tokens, TOKEN_GREATER_THAN)) break;
                 throw(NEXT_TOKEN, "Expect ");
@@ -1708,9 +1716,10 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
         }
         token = NEXT_TOKEN;
         smartptr(jitc_ast_t) list = mknode(AST_List, token);
+        const char* extern_symbol = NULL;
         jitc_decltype_t decltype = Decltype_None;
         jitc_preserve_t preserve_policy = Preserve_IfConst;
-        jitc_type_t* base_type = try(jitc_parse_base_type(context, tokens, &decltype, list_size(context->scopes) == 1 ? &preserve_policy : NULL));
+        jitc_type_t* base_type = try(jitc_parse_base_type(context, tokens, &decltype, &extern_symbol, list_size(context->scopes) == 1 ? &preserve_policy : NULL));
         if (template_list) jitc_pop_scope(context);
         while (true) {
             jitc_type_t* type = base_type;
@@ -1720,9 +1729,9 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 const char* name = list_get(template_list, i);
                 jitc_type_t* placeholder = jitc_typecache_placeholder(context, name);
                 placeholder = jitc_typecache_named(context, placeholder, name);
-                jitc_declare_variable(context, placeholder, Decltype_Typedef, 0, 0);
+                jitc_declare_variable(context, placeholder, Decltype_Typedef, NULL, 0, 0);
             }
-            if (!jitc_parse_type_declarations(context, tokens, &type)) return NULL;
+            try(jitc_parse_type_declarations(context, tokens, &type));
             if (type->kind == Type_Function && NEXT_TOKEN->type == TOKEN_SEMICOLON && decltype != Decltype_Typedef) decltype = Decltype_Extern;
             if (template_list) {
                 jitc_pop_scope(context);
@@ -1745,7 +1754,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 }
                 if (decltype != Decltype_Typedef) list_add(list->list.inner) = move(node);
             }
-            if (!jitc_declare_variable(context, type, decltype | (template_list ? Decltype_Template : 0), preserve_policy, 0))
+            if (!jitc_declare_variable(context, type, decltype | (template_list ? Decltype_Template : 0), extern_symbol, preserve_policy, 0))
                 throw(token, "Symbol '%s' already declared", type->name);
             bool incomplete_array = !jitc_validate_type(type, TypePolicy_NoUnkArrSize);
             jitc_variable_t* var = jitc_get_variable(context, type->name);
@@ -1787,9 +1796,9 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                     smartptr(jitc_ast_t) body = mknode(AST_List, token);
                     func->func.variable = type;
                     jitc_push_scope(context);
-                    jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
+                    jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, NULL, Preserve_IfConst, 0);
                     for (size_t i = 0; i < type->func.num_params; i++) {
-                        jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
+                        jitc_declare_variable(context, type->func.params[i], Decltype_None, NULL, Preserve_IfConst, 0);
                     }
                     if (token->type == TOKEN_ARROW) {
                         if (type->func.ret->kind == Type_Void) list_add(body->list.inner) = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
@@ -1880,7 +1889,7 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* _tokens) {
         map(char*, jitc_type_t*)* template_map = request->template_map;
         if (jitc_get_or_static(context, type->name)) continue;
         if (!request->tokens) {
-            jitc_declare_variable(context, type, Decltype_Extern, request->preserve_policy, 0);
+            jitc_declare_variable(context, type, Decltype_Extern, NULL, request->preserve_policy, 0);
             continue;
         }
         list(jitc_token_t)* token_list = request->tokens;
@@ -1891,23 +1900,23 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* _tokens) {
         for (int i = 0; i < list_size(token_list); i++) queue_push(tokens) = list_get(token_list, i);
         func->func.variable = type;
         jitc_push_scope(context);
-        jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, Preserve_IfConst, 0);
+        jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, NULL, Preserve_IfConst, 0);
         for (size_t i = 0; i < type->func.num_params; i++) {
-            jitc_declare_variable(context, type->func.params[i], Decltype_None, Preserve_IfConst, 0);
+            jitc_declare_variable(context, type->func.params[i], Decltype_None, NULL, Preserve_IfConst, 0);
         }
         for (size_t i = 0; i < map_size(template_map); i++) {
             map_index(template_map, i);
             jitc_declare_variable(context, jitc_typecache_named(context,
                 map_get_value(template_map),
                 map_get_key(template_map)
-            ), Decltype_Typedef, 0, 0);
+            ), Decltype_Typedef, NULL, 0, 0);
         }
         while (!jitc_token_expect(tokens, TOKEN_END_OF_FILE)) {
             while (NEXT_TOKEN->type == TOKEN_SEMICOLON) queue_pop(tokens);
             list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
         }
         jitc_pop_scope(context);
-        jitc_declare_variable(context, type, request->decltype & ~Decltype_Template, request->preserve_policy, 0);
+        jitc_declare_variable(context, type, request->decltype & ~Decltype_Template, NULL, request->preserve_policy, 0);
         func->func.body = jitc_flatten_ast(move(body), NULL);
         list_add(ast->list.inner) = move(func);
     }

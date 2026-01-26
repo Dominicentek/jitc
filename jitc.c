@@ -397,7 +397,7 @@ jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type) {
     return type;
 }
 
-bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, jitc_preserve_t preserve_policy, uint64_t value) {
+bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, const char* extern_symbol, jitc_preserve_t preserve_policy, uint64_t value) {
     if (!type->name) return true;
     jitc_variable_t* prev = jitc_get_variable(context, type->name);
     if (prev) {
@@ -427,6 +427,7 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     map_commit(scope->variables);
     jitc_variable_t* var = &map_get_value(scope->variables);
     var->type = type;
+    var->extern_symbol = extern_symbol;
     var->decltype = decltype;
     var->enum_value = value;
     var->preserve_policy = preserve_policy;
@@ -649,8 +650,9 @@ void jitc_link(jitc_context_t* context) {
             context->all_linked = false;
             continue;
         }
-        jitc_variable_t* symbol = jitc_get_symbol(context, var->type->name, true);
-        var->ptr = symbol ? symbol->ptr : dlsym(RTLD_DEFAULT, var->type->name);
+        const char* symbol_name = var->extern_symbol ?: var->type->name;
+        jitc_variable_t* symbol = jitc_get_symbol(context, symbol_name, true);
+        var->ptr = symbol ? symbol->ptr : dlsym(RTLD_DEFAULT, symbol_name);
         if (!var->ptr) {
             context->all_linked = false;
             continue;

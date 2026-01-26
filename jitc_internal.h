@@ -205,6 +205,7 @@ typedef struct __attribute__((packed)) {
 
 typedef struct {
     jitc_type_t* type;
+    const char* extern_symbol;
     jitc_decltype_t decltype;
     jitc_preserve_t preserve_policy;
     bool initial;
@@ -499,7 +500,7 @@ jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from);
 bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 
 jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type);
-bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, jitc_preserve_t preserve_policy, uint64_t value);
+bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, const char* extern_symbol, jitc_preserve_t preserve_policy, uint64_t value);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name);
 bool jitc_template_params_check(jitc_context_t* context, jitc_type_t* type, const char* name);
 
