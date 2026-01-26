@@ -1,3 +1,4 @@
+#include "cleanups.h"
 #include "dynamics.h"
 #include "jitc_internal.h"
 
@@ -234,8 +235,32 @@ static bool compute_expression(jitc_context_t* context, map_t* macros, token_str
     return true;
 }
 
-static void expand(jitc_token_t* base, token_stream_t* dest, token_stream_t* tokens) {
-    while (tokens->ptr < list_size(tokens->tokens)) {
+static bool process_identifier(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* _macros, set_t* _used_macros, int recurse_limit);
+
+static void expand(jitc_context_t* context, jitc_token_t* base, token_stream_t* dest, token_stream_t* tokens, map_t* macros, set_t* used_macros, int recurse_limit) {
+    smartptr(list(jitc_token_t)) list1 = list_new(jitc_token_t);
+    smartptr(list(jitc_token_t)) list2 = list_new(jitc_token_t);
+    token_stream_t stream1 = {(void*)list1};
+    token_stream_t stream2 = {(void*)list2};
+    bool expanded = false;
+    do {;
+        expanded = false;
+        stream1.ptr = 0;
+        while (list_size(stream1.tokens) > 0) list_remove(stream1.tokens, list_size(stream1.tokens) - 1); // clear 1
+        for (int i = 0; i < list_size(tokens->tokens); i++) list_add(list1) = list_get(tokens->tokens, i); // source -> 1
+        while (list_size(stream2.tokens) > 0) list_remove(stream2.tokens, list_size(stream2.tokens) - 1); // clear 2
+        while (stream1.ptr < list_size(stream1.tokens)) { // process 1 -> 2
+            jitc_token_t* token = &list_get(stream1.tokens, stream1.ptr++);
+            if (token->type == TOKEN_IDENTIFIER) {
+                if (process_identifier(context, &stream2, &stream1, macros, used_macros, recurse_limit))
+                    expanded = true;
+            }
+            else list_add(stream2.tokens) = *token;
+        }
+        tokens = &stream2; // source = 2
+    }
+    while (expanded);
+    while (tokens->ptr < list_size(tokens->tokens)) { // 1 -> dest
         jitc_token_t token = list_get(tokens->tokens, tokens->ptr++);
         token.row = base->row;
         token.col = base->col;
@@ -243,17 +268,21 @@ static void expand(jitc_token_t* base, token_stream_t* dest, token_stream_t* tok
     }
 }
 
-static void process_identifier(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* _macros) {
+static bool process_identifier(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* _macros, set_t* _used_macros, int recurse_limit) {
     map(char*, macro_t)* macros = _macros;
+    set(char*)* used_macros = _used_macros;
     jitc_token_t* token = &list_get(tokens->tokens, tokens->ptr - 1);
-    if (!map_find(macros, &token->value.string)) {
+    if (!map_find(macros, &token->value.string) || set_find(used_macros, &token->value.string)) {
         list_add(dest->tokens) = *token;
-        return;
+        return false;
     }
     macro_t* macro = &map_get_value(macros);
     switch (macro->type) {
         case MacroType_Ordinary:
-            expand(token, dest, &(token_stream_t){(void*)macro->tokens});
+            set_add(used_macros) = token->value.string;
+            set_commit(used_macros);
+            expand(context, token, dest, &(token_stream_t){(void*)macro->tokens}, macros, used_macros, recurse_limit);
+            set_remove(used_macros, set_indexof(used_macros, &token->value.string));
             break;
         case MacroType_LINE:
             list_add(dest->tokens) = number_token(token->row);
@@ -277,6 +306,7 @@ static void process_identifier(jitc_context_t* context, token_stream_t* dest, to
             list_add(dest->tokens) = string_token(jitc_append_string(context, formatted));
         } break;
     }
+    return true;
 }
 
 queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* _macros) {
@@ -329,7 +359,8 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                 token_stream_t* curr_stream = &stream;
                 if (token->type == TOKEN_IDENTIFIER) {
                     curr_stream = &macro_stream;
-                    process_identifier(context, curr_stream, &stream, macros);
+                    smartptr(set(char*)) used_macros = set_new(compare_string, char*);
+                    process_identifier(context, curr_stream, &stream, macros, used_macros, 0);
                     token = &list_get(curr_stream->tokens, curr_stream->ptr++);
                 }
                 char* filename = NULL;
@@ -397,7 +428,8 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
         }
         else if (do_things) {
             curr_line = token->row;
-            if (token->type == TOKEN_IDENTIFIER) process_identifier(context, &out_stream, &stream, macros);
+            smartptr(set(char*)) used_macros = set_new(compare_string, char*);
+            if (token->type == TOKEN_IDENTIFIER) process_identifier(context, &out_stream, &stream, macros, used_macros, 0);
             else list_add(out_stream.tokens) = *token;
         }
         else curr_line = token->row;
