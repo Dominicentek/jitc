@@ -281,13 +281,30 @@ static void expand(jitc_context_t* context, jitc_token_t* base, token_stream_t* 
     token_stream_t stream2 = {(void*)list2};
     bool expanded = false;
     while (tokens->ptr < list_size(tokens->tokens)) {
-        jitc_token_t token = list_get(tokens->tokens, tokens->ptr++);
-        if (token.type == TOKEN_IDENTIFIER && args && map_find(args, &token.value.string)) {
-            list(jitc_token_t)* list = map_get_value(args);
-            for (int i = 0; i < list_size(list); i++)
-                list_add(stream2.tokens) = list_get(list, i);
+        jitc_token_t* token = &list_get(tokens->tokens, tokens->ptr++);
+        bool va_opt = token->type == TOKEN_IDENTIFIER && strcmp(token->value.string, "__VA_OPT__") == 0;
+        bool va_args = token->type == TOKEN_IDENTIFIER && strcmp(token->value.string, "__VA_ARGS__") == 0;
+        if (token->type == TOKEN_IDENTIFIER && args) {
+            if (va_opt && next_token(TOKEN_PARENTHESIS_OPEN)) {
+                int depth = 0;
+                while (tokens->ptr < list_size(tokens->tokens)) {
+                    const char* va_args = "__VA_ARGS__";
+                    if (depth == 0 && next_token(TOKEN_PARENTHESIS_CLOSE)) break;
+                    jitc_token_t* token = &list_get(tokens->tokens, tokens->ptr++);
+                    if (token->type == TOKEN_PARENTHESIS_OPEN) depth++;
+                    if (token->type == TOKEN_PARENTHESIS_CLOSE) depth--;
+                    if (!map_find(args, &va_args) || list_size(map_get_value(args)) == 0) continue;
+                    list_add(stream2.tokens) = *token;
+                }
+            }
+            else if (map_find(args, &token->value.string)) {
+                list(jitc_token_t)* list = map_get_value(args);
+                for (int i = 0; i < list_size(list); i++)
+                    list_add(stream2.tokens) = list_get(list, i);
+            }
+            else if (!va_args && !va_opt) list_add(stream2.tokens) = *token;
         }
-        else list_add(stream2.tokens) = token;
+        else list_add(stream2.tokens) = *token;
     }
     do {
         expanded = false;
