@@ -520,6 +520,7 @@ void jitc_push_scope(jitc_context_t* context) {
     scope->enums = map_new(compare_string, char*, jitc_type_t*);
     scope->struct_template_params = map_new(compare_string, char*, int);
     scope->union_template_params = map_new(compare_string, char*, int);
+    scope->func = false;
 }
 
 void jitc_push_function(jitc_context_t* context) {
