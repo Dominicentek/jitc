@@ -11,6 +11,7 @@
 
 typedef enum {
     MacroType_Ordinary,
+    MacroType_OrdinaryFunction,
     MacroType_LINE,
     MacroType_FILE,
     MacroType_DATE,
@@ -97,6 +98,21 @@ static jitc_token_t* advance(token_stream_t* tokens, int* curr_line) {
     }
 }
 
+static jitc_token_t* lookahead(token_stream_t* tokens, int curr_line) {
+    jitc_token_t* token = &list_get(tokens->tokens, tokens->ptr);
+    if (token->type == TOKEN_END_OF_FILE) return NULL;
+    while (true) {
+        if (token->row != curr_line) return NULL;
+        if (token->type == TOKEN_BACKSLASH) {
+            jitc_token_t* backslash = &list_get(tokens->tokens, tokens->ptr);
+            token = &list_get(tokens->tokens, tokens->ptr + 1);
+            if (token->row == curr_line) return backslash;
+            else curr_line++;
+        }
+        else return &list_get(tokens->tokens, tokens->ptr);
+    }
+}
+
 static bool is_identifier(jitc_token_t* token, const char* id) {
     return
         (token->type == TOKEN_IDENTIFIER && strcmp(token->value.string, id) == 0) ||
@@ -120,6 +136,8 @@ static bool is_identifier(jitc_token_t* token, const char* id) {
     if (!this || !(cond)) throw(token, msg __VA_OPT__(,) __VA_ARGS__); \
     this; \
 })
+
+#define next_token(kind) ((token = &list_get(tokens->tokens, tokens->ptr)) && token->type == (kind) && ++tokens->ptr)
 
 static bool compute_expression(jitc_context_t* context, map_t* macros, token_stream_t* stream, int64_t* left, int min_prec);
 
@@ -237,17 +255,45 @@ static bool compute_expression(jitc_context_t* context, map_t* macros, token_str
 
 static bool process_identifier(jitc_context_t* context, token_stream_t* dest, token_stream_t* tokens, map_t* _macros, set_t* _used_macros, int recurse_limit);
 
-static void expand(jitc_context_t* context, jitc_token_t* base, token_stream_t* dest, token_stream_t* tokens, map_t* macros, set_t* used_macros, int recurse_limit) {
+static list_t* scan_macro_args(token_stream_t* tokens, bool varargs) {
+    list(jitc_token_t)* arg = list_new(jitc_token_t);
+    int depth = 0;
+    while (true) {
+        jitc_token_t* next_token = &list_get(tokens->tokens, tokens->ptr);
+        if (next_token->type == TOKEN_END_OF_FILE) break;
+        if (depth == 0) {
+            if (next_token->type == TOKEN_COMMA && !varargs) break;
+            if (next_token->type == TOKEN_PARENTHESIS_CLOSE) break;
+        }
+        tokens->ptr++;
+        if (next_token->type == TOKEN_PARENTHESIS_OPEN) depth++;
+        if (next_token->type == TOKEN_PARENTHESIS_CLOSE) depth--;
+        list_add(arg) = *next_token;
+    }
+    return arg;
+}
+
+static void expand(jitc_context_t* context, jitc_token_t* base, token_stream_t* dest, token_stream_t* tokens, map_t* _args, map_t* macros, set_t* used_macros, int recurse_limit) {
+    map(char*, list_t*)* args = _args;
     smartptr(list(jitc_token_t)) list1 = list_new(jitc_token_t);
     smartptr(list(jitc_token_t)) list2 = list_new(jitc_token_t);
     token_stream_t stream1 = {(void*)list1};
     token_stream_t stream2 = {(void*)list2};
     bool expanded = false;
-    do {;
+    while (tokens->ptr < list_size(tokens->tokens)) {
+        jitc_token_t token = list_get(tokens->tokens, tokens->ptr++);
+        if (token.type == TOKEN_IDENTIFIER && args && map_find(args, &token.value.string)) {
+            list(jitc_token_t)* list = map_get_value(args);
+            for (int i = 0; i < list_size(list); i++)
+                list_add(stream2.tokens) = list_get(list, i);
+        }
+        else list_add(stream2.tokens) = token;
+    }
+    do {
         expanded = false;
         stream1.ptr = 0;
         while (list_size(stream1.tokens) > 0) list_remove(stream1.tokens, list_size(stream1.tokens) - 1); // clear 1
-        for (int i = 0; i < list_size(tokens->tokens); i++) list_add(list1) = list_get(tokens->tokens, i); // source -> 1
+        for (int i = 0; i < list_size(stream2.tokens); i++) list_add(stream1.tokens) = list_get(stream2.tokens, i); // 2 -> 1
         while (list_size(stream2.tokens) > 0) list_remove(stream2.tokens, list_size(stream2.tokens) - 1); // clear 2
         while (stream1.ptr < list_size(stream1.tokens)) { // process 1 -> 2
             jitc_token_t* token = &list_get(stream1.tokens, stream1.ptr++);
@@ -257,11 +303,10 @@ static void expand(jitc_context_t* context, jitc_token_t* base, token_stream_t* 
             }
             else list_add(stream2.tokens) = *token;
         }
-        tokens = &stream2; // source = 2
     }
     while (expanded);
-    while (tokens->ptr < list_size(tokens->tokens)) { // 1 -> dest
-        jitc_token_t token = list_get(tokens->tokens, tokens->ptr++);
+    while (stream2.ptr < list_size(stream2.tokens)) { // 2 -> dest
+        jitc_token_t token = list_get(stream2.tokens, stream2.ptr++);
         token.row = base->row;
         token.col = base->col;
         list_add(dest->tokens) = token;
@@ -281,9 +326,38 @@ static bool process_identifier(jitc_context_t* context, token_stream_t* dest, to
         case MacroType_Ordinary:
             set_add(used_macros) = token->value.string;
             set_commit(used_macros);
-            expand(context, token, dest, &(token_stream_t){(void*)macro->tokens}, macros, used_macros, recurse_limit);
+            expand(context, token, dest, &(token_stream_t){(void*)macro->tokens}, NULL, macros, used_macros, recurse_limit);
             set_remove(used_macros, set_indexof(used_macros, &token->value.string));
             break;
+        case MacroType_OrdinaryFunction: {
+            jitc_token_t* id = token;
+            set_add(used_macros) = id->value.string;
+            set_commit(used_macros);
+            map(char*, list(jitc_token_t)*)* map = NULL;
+            if (next_token(TOKEN_PARENTHESIS_OPEN)) {
+                map = map_new(compare_string, char*, char*);
+                bool force_add = list_size(macro->tokens) > 0;
+                int index = 0;
+                while (true) {
+                    if (!force_add && next_token(TOKEN_PARENTHESIS_CLOSE)) break;
+                    smartptr(list(jitc_token_t)) arg = scan_macro_args(tokens,
+                        index == list_size(macro->args) - 1 && strcmp(list_get(macro->args, index), "__VA_ARGS__") == 0
+                    );
+                    if (index < list_size(macro->args)) {
+                        map_add(map) = list_get(macro->args, index);
+                        map_commit(map);
+                        map_get_value(map) = (void*)move(arg);
+                        if (strcmp(list_get(macro->args, index), "__VA_ARGS__") != 0) index++;
+                    }
+                    if (next_token(TOKEN_COMMA)) force_add = true;
+                    else if (next_token(TOKEN_PARENTHESIS_CLOSE) || 1) break;
+                }
+            }
+            if (map)
+                expand(context, id, dest, &(token_stream_t){(void*)macro->tokens}, map, macros, used_macros, recurse_limit);
+            else list_add(dest->tokens) = *id;
+            set_remove(used_macros, set_indexof(used_macros, &id->value.string));
+        } break;
         case MacroType_LINE:
             list_add(dest->tokens) = number_token(token->row);
             break;
@@ -343,6 +417,33 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
             if (is_identifier(token, "define")) {
                 token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_IDENTIFIER, "Expected identifier");
                 macro_t* macro = new_macro(macros, token->value.string, MacroType_Ordinary);
+                jitc_token_t* paren = lookahead(&stream, curr_line);
+                if (paren && paren->type == TOKEN_PARENTHESIS_OPEN && paren->row == token->row && paren->col == token->col + strlen(token->value.string)) {
+                    advance(&stream, &curr_line);
+                    smartptr(list(char*)) list = list_new(char*);
+                    macro->type = MacroType_OrdinaryFunction;
+                    if ((token = lookahead(&stream, curr_line)) && token->type != TOKEN_PARENTHESIS_CLOSE) while (true) {
+                        token = expect(advance(&stream, &curr_line), "Unexpected EOL");
+                        const char* name = NULL;
+                        bool vararg = false;
+                        if (token->type == TOKEN_TRIPLE_DOT) {
+                            vararg = true;
+                            name = "__VA_ARGS__";
+                        }
+                        else {
+                            name = token->value.string;
+                            if (strcmp(name, "__VA_ARGS__") == 0) throw(token, "Usage of reserved argument name: __VA_ARGS__");
+                            if (strcmp(name, "__VA_OPT__") == 0) throw(token, "Usage of reserved argument name: __VA_OPT__");
+                        }
+                        list_add(list) = (char*)name;
+                        token = expect(advance(&stream, &curr_line), "Unexpected EOL");
+                        if (token->type == TOKEN_COMMA && !vararg) continue;
+                        if (token->type == TOKEN_PARENTHESIS_CLOSE) break;
+                        throw(token, "Expected %s')'", vararg ? "" : "',' or ");
+                    }
+                    else advance(&stream, &curr_line);
+                    macro->args = (void*)move(list);
+                }
                 while ((token = advance(&stream, &curr_line))) list_add(macro->tokens) = *token;
             }
             else if (is_identifier(token, "undef")) {
