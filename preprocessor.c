@@ -16,6 +16,7 @@ typedef enum {
     MacroType_FILE,
     MacroType_DATE,
     MacroType_TIME,
+    MacroType_ID,
 } macro_type_t;
 
 typedef struct {
@@ -38,6 +39,11 @@ typedef struct {
 
 #define string_token(val) (jitc_token_t){ \
     .type = TOKEN_STRING, \
+    .value.string = val, \
+}
+
+#define identifier_token(val) (jitc_token_t){ \
+    .type = TOKEN_IDENTIFIER, \
     .value.string = val, \
 }
 
@@ -81,6 +87,7 @@ static void predefine(map_t* macros) {
     new_macro(macros, "__FILE__", MacroType_FILE);
     new_macro(macros, "__DATE__", MacroType_DATE);
     new_macro(macros, "__TIME__", MacroType_TIME);
+    new_macro(macros, "__ID__", MacroType_ID);
 }
 
 static jitc_token_t* advance(token_stream_t* tokens, int* curr_line) {
@@ -370,8 +377,14 @@ static bool process_identifier(jitc_context_t* context, token_stream_t* dest, to
                     else if (next_token(TOKEN_PARENTHESIS_CLOSE) || 1) break;
                 }
             }
-            if (map)
+            if (map) {
                 expand(context, id, dest, &(token_stream_t){(void*)macro->tokens}, map, macros, used_macros, recurse_limit);
+                for (size_t i = 0; i < map_size(map); i++) {
+                    map_index(map, i);
+                    list_delete(map_get_value(map));
+                }
+                map_delete(map);
+            }
             else list_add(dest->tokens) = *id;
             set_remove(used_macros, set_indexof(used_macros, &id->value.string));
         } break;
@@ -396,6 +409,24 @@ static bool process_identifier(jitc_context_t* context, token_stream_t* dest, to
             sprintf(formatted, "%02d:%02d:%02d", t->tm_hour, t->tm_min, t->tm_sec);
             list_add(dest->tokens) = string_token(jitc_append_string(context, formatted));
         } break;
+        case MacroType_ID: {
+            smartptr(string_t) new_id = NULL;
+            if (next_token(TOKEN_PARENTHESIS_OPEN)) {
+                new_id = str_new();
+                int depth = 0;
+                while (tokens->ptr < list_size(tokens->tokens)) {
+                    jitc_token_t* next = &list_get(tokens->tokens, tokens->ptr++);
+                    if (depth == 0 && next->type == TOKEN_PARENTHESIS_CLOSE) break;
+                    if (next->type == TOKEN_PARENTHESIS_OPEN) depth++;
+                    if (next->type == TOKEN_PARENTHESIS_CLOSE) depth--;
+                    if (depth != 0) continue;
+                    if (next->type == TOKEN_IDENTIFIER) str_append(new_id, next->value.string);
+                    if (next->type == TOKEN_INTEGER) str_appendf(new_id, "%lu", next->value.integer);
+                }
+                list_add(dest->tokens) = identifier_token(jitc_append_string(context, str_data(new_id)));
+            }
+            else list_add(dest->tokens) = *token;
+        }
     }
     return true;
 }

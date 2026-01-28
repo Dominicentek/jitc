@@ -1,6 +1,8 @@
 #include "dynamics.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #include "compares.h"
 
@@ -41,7 +43,7 @@ void str_clear(string_t* str) {
     str->data[0] = 0;
 }
 
-void str_append(string_t* str, char* other) {
+void str_append(string_t* str, const char* other) {
     int len = strlen(other);
     int prev_cap = str->capacity;
     while (str->length + len + 1 >= str->capacity) str->capacity += 64;
@@ -49,6 +51,17 @@ void str_append(string_t* str, char* other) {
     strcpy(str->data + str->length, other);
     str->length += len;
     str->data[str->length] = 0;
+}
+
+void str_appendf(string_t* str, const char* fmt, ...) {
+    va_list args1, args2;
+    va_start(args1, fmt);
+    va_copy(args2, args1);
+    char data[vsnprintf(NULL, 0, fmt, args1) + 1];
+    vsprintf(data, fmt, args2);
+    va_end(args1);
+    va_end(args2);
+    str_append(str, data);
 }
 
 void str_delete(string_t* str) {
