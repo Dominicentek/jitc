@@ -663,7 +663,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 if (node->walk_struct.templ_list) throw(node->token, "Template parameter list on a struct field");
                 break;
             }
-            map_t* template_map;
+            map_t* template_map = NULL;
             jitc_variable_t* method = jitc_get_method(context, type, node->walk_struct.field_name, node->walk_struct.templ_list, &template_map);
             if (!method) throw(node->token,
                 node->walk_struct.templ_list ? "No %s matching '%s<%d>' found" : "No %s matching '%s' found",
