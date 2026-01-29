@@ -344,7 +344,12 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                     while (true) {
                         field_type = jitc_typecache_named(context, field_type, NULL);
                         try(jitc_parse_type_declarations(context, tokens, &field_type));
-                        if (!jitc_validate_type(field_type, TypePolicy_NoIncomplete)) throw(NEXT_TOKEN, "Field has incomplete type");
+                        if (!jitc_validate_type(field_type, TypePolicy_NoUndefTags)) {
+                            jitc_type_t* resolved = jitc_get_tagged_type(context, field_type);
+                            if (!resolved) throw(NEXT_TOKEN, "Cannot access an incomplete struct");
+                            field_type = resolved;
+                        }
+                        if (!jitc_validate_type(field_type, TypePolicy_NoIncomplete)) throw(NEXT_TOKEN, "Field '%s' has incomplete type", field_type->name);
                         if (field_type->name) if (jitc_struct_field_exists_list(fields, field_type->name))
                             throw(NEXT_TOKEN, "Duplicate field '%s'", field_type->name);
                         list_add(fields) = field_type;

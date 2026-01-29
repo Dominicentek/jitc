@@ -328,7 +328,7 @@ struct jitc_context_t {
     list(jitc_memchunk_t)* memchunks;
     queue(jitc_instantiation_request_t)* instantiation_requests;
     jitc_error_t* error;
-    bool all_linked;
+    const char* unresolved_symbol;
 };
 
 #define PROCESS_TOKENS(type) TOKENS(type##_KEYWORD, type##_SYMBOL, type##_SPECIAL)

@@ -376,11 +376,11 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                     if (last == '+' || last == '-') str_data(state.buffer)[str_length(state.buffer) - 1] = 0;
                     else last = 0;
                     token->type = TOKEN_IDENTIFIER;
-                    for (int i = 0; i < num_token_table_entries; i++) {
+                    /*for (int i = 0; i < num_token_table_entries; i++) {
                         if (!token_table[i]) continue;
                         if (strcmp(token_table[i], str_data(state.buffer)) == 0) token->type = i;
                     }
-                    if (token->type == TOKEN_IDENTIFIER) {
+                    if (token->type == TOKEN_IDENTIFIER) {*/
                         jitc_token_t* curr_token = token;
                         int ptr = 0;
                         char buf[str_length(state.buffer) + 1];
@@ -409,7 +409,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                             curr_token->value.string = jitc_append_string(context, buf);
                             curr_token = NULL;
                         }
-                    }
+                    //}
                     if (last) ptr--;
                 }
                 state.parse_state = Idle;

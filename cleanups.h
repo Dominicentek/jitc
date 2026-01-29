@@ -12,6 +12,7 @@
 })
 
 //#define TRACE_ERRORS(str) fprintf(stderr, str " at %s:%d\n", __FILE__, __LINE__)
+//#define TRACE_ERRORS(str) abort()
 
 #ifndef TRACE_ERRORS
 #define TRACE_ERRORS(str)

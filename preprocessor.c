@@ -333,6 +333,7 @@ static void expand(jitc_context_t* context, jitc_token_t* base, token_stream_t* 
         jitc_token_t token = list_get(stream2.tokens, stream2.ptr++);
         token.row = base->row;
         token.col = base->col;
+        token.filename = base->filename;
         list_add(dest->tokens) = token;
     }
 }
@@ -601,7 +602,14 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
             str_delete(str);
             continue;
         }
-        queue_push(queue) = list_get(result, i);
+        for (int i = 0; i < num_token_table_entries && token->type == TOKEN_IDENTIFIER; i++) {
+            if (!token_table[i]) continue;
+            if (strcmp(token->value.string, token_table[i]) == 0) {
+                token->type = i;
+                break;
+            }
+        }
+        queue_push(queue) = *token;
     }
     return queue;
 }
