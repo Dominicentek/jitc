@@ -557,9 +557,8 @@ jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const ch
 jitc_error_t* jitc_error_parser(jitc_token_t* token, const char* str, ...) {
     jitc_error_t* error = malloc(sizeof(jitc_error_t));
     error->msg = FORMAT(str);
-    error->file = token->filename;
-    error->row = token->row;
-    error->col = token->col;
+    error->num_locations = token->num_locations;
+    memcpy(error->locations, token->locations, sizeof(error->locations));
     return error;
 }
 
@@ -567,10 +566,11 @@ void jitc_report_error(jitc_context_t* context, FILE* file) {
     jitc_error_t* error = move(context->error);
     if (!error) return;
     fprintf(file, "Error: %s ", error->msg);
-    if (error->col == 0 && error->row == 0) {
-        fprintf(file, "(in %s)\n", error->file ?: "linker");
-    }
+    if (error->col == 0 && error->row == 0) fprintf(file, "(in %s)\n", error->file ?: "linker");
     else fprintf(file, "(in %s at %d:%d)\n", error->file ?: "<memory>", error->row, error->col);
+    for (int i = 1; i < error->num_locations; i++) {
+        fprintf(file, "  expanded from %s at %d:%d\n", error->locations[i].filename, error->locations[i].row, error->locations[i].col);
+    }
     jitc_destroy_error(error);
 }
 
@@ -587,6 +587,15 @@ void jitc_destroy_error(jitc_error_t* error) {
 void jitc_error_set(jitc_context_t* context, jitc_error_t* error) {
     jitc_destroy_error(context->error);
     context->error = error;
+}
+
+void jitc_push_location(jitc_token_t* token, const char* filename, int row, int col) {
+    if (token->num_locations == 0) abort();
+    if (token->num_locations == JITC_LOCATION_DEPTH) return;
+    jitc_source_location_t* location = &token->locations[token->num_locations++];
+    location->filename = filename;
+    location->row = row;
+    location->col = col;
 }
 
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy) {

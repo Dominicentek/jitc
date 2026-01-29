@@ -4,12 +4,28 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-typedef struct jitc_context_t jitc_context_t;
+#ifndef JITC_LOCATION_DEPTH
+#define JITC_LOCATION_DEPTH 16
+#endif
+
 typedef struct {
-    const char* msg;
-    const char* file;
     int row, col;
-} jitc_error_t;
+    const char* filename;
+} jitc_source_location_t;
+
+typedef struct jitc_context_t jitc_context_t;
+typedef struct jitc_error_t jitc_error_t;
+struct jitc_error_t {
+    const char* msg;
+    int num_locations;
+    union {
+        jitc_source_location_t locations[JITC_LOCATION_DEPTH];
+        struct {
+            int row, col;
+            const char* file;
+        };
+    };
+};
 
 jitc_context_t* jitc_create_context();
 void jitc_create_header(jitc_context_t* context, const char* name, const char* content);

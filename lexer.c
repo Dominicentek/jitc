@@ -194,6 +194,7 @@ static jitc_token_t* mktoken(queue_t* _tokens, jitc_token_type_t type, const cha
     token->filename = (char*)filename;
     token->row = row;
     token->col = col;
+    token->num_locations = 1;
     return token;
 }
 

@@ -32,6 +32,8 @@ typedef struct {
 
 #define number_token(val) (jitc_token_t){ \
     .type = TOKEN_INTEGER, \
+    .num_locations = 1, \
+    .filename = "<builtin>", \
     .value.integer = val, \
     .flags.int_flags.type_kind = Type_Int32, \
     .flags.int_flags.is_unsigned = false, \
@@ -39,11 +41,15 @@ typedef struct {
 
 #define string_token(val) (jitc_token_t){ \
     .type = TOKEN_STRING, \
+    .num_locations = 1, \
+    .filename = "<builtin>", \
     .value.string = val, \
 }
 
 #define identifier_token(val) (jitc_token_t){ \
     .type = TOKEN_IDENTIFIER, \
+    .num_locations = 1, \
+    .filename = "<builtin>", \
     .value.string = val, \
 }
 
@@ -331,9 +337,7 @@ static void expand(jitc_context_t* context, jitc_token_t* base, token_stream_t* 
     while (expanded);
     while (stream2.ptr < list_size(stream2.tokens)) { // 2 -> dest
         jitc_token_t token = list_get(stream2.tokens, stream2.ptr++);
-        token.row = base->row;
-        token.col = base->col;
-        token.filename = base->filename;
+        jitc_push_location(&token, base->filename, base->row, base->col);
         list_add(dest->tokens) = token;
     }
 }
@@ -393,7 +397,7 @@ static bool process_identifier(jitc_context_t* context, token_stream_t* dest, to
             list_add(dest->tokens) = number_token(token->row);
             break;
         case MacroType_FILE:
-            list_add(dest->tokens) = string_token(token->filename ?: "<memory>");
+            list_add(dest->tokens) = string_token((char*)token->filename ?: "<memory>");
             break;
         case MacroType_DATE: {
             struct tm* t = localtime((time_t[]){time(NULL)});
@@ -424,7 +428,9 @@ static bool process_identifier(jitc_context_t* context, token_stream_t* dest, to
                     if (next->type == TOKEN_IDENTIFIER) str_append(new_id, next->value.string);
                     if (next->type == TOKEN_INTEGER) str_appendf(new_id, "%lu", next->value.integer);
                 }
-                list_add(dest->tokens) = identifier_token(jitc_append_string(context, str_data(new_id)));
+                jitc_token_t id_token = identifier_token(jitc_append_string(context, str_data(new_id)));
+                id_token.row = token->row; id_token.col = token->col; id_token.filename = token->filename;
+                list_add(dest->tokens) = id_token;
             }
             else list_add(dest->tokens) = *token;
         }
@@ -517,7 +523,11 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                 if (token->type == TOKEN_STRING) filename = token->value.string;
                 else throw(token, "Expected string");
                 queue(jitc_token_t)* included = try(jitc_include(context, token, filename, macros));
-                while (queue_size(included) > 1) list_add(out_stream.tokens) = queue_pop(included);
+                while (queue_size(included) > 1) {
+                    jitc_token_t* inc_token = &queue_pop(included);
+                    jitc_push_location(inc_token, token->filename, token->row, token->col);
+                    list_add(out_stream.tokens) = *inc_token;
+                }
                 // skip over EOF token
             }
             else if (is_identifier(token, "if")) {
@@ -590,7 +600,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
         jitc_token_t* token = &list_get(result, i);
         if (token->type == TOKEN_STRING && list_get(result, i + 1).type == TOKEN_STRING) {
             string_t* str = str_new();
-            int row = token->row; int col = token->col; char* filename = token->filename;
+            int row = token->row; int col = token->col; char* filename = (char*)token->filename;
             while (token->type == TOKEN_STRING) {
                 str_append(str, token->value.string);
                 token = &list_get(result, ++i);

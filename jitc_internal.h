@@ -371,7 +371,6 @@ struct jitc_context_t {
     KEYWORD(lambda) \
     KEYWORD(long) \
     KEYWORD(nullptr) \
-    KEYWORD(offsetof) \
     KEYWORD(preserve) \
     KEYWORD(register) \
     KEYWORD(restrict) \
@@ -455,7 +454,7 @@ static int num_token_table_entries = sizeof(token_table) / sizeof(*token_table);
 typedef union {
     struct {
         bool is_unsigned : 1;
-        unsigned int type_kind : 2;
+        unsigned char type_kind : 2;
         // there are 4 integer types: 8-bit, 16-bit, 32-bit, 64-bit; fits within 2 bits
     } int_flags;
     struct {
@@ -464,10 +463,16 @@ typedef union {
 } jitc_token_flags_t;
 
 struct jitc_token_t {
-    char* filename;
     jitc_token_type_t type;
     jitc_token_flags_t flags;
-    int row, col;
+    int num_locations;
+    union {
+        jitc_source_location_t locations[JITC_LOCATION_DEPTH];
+        struct {
+            int row, col;
+            const char* filename;
+        };
+    };
     union {
         char* string;
         uint64_t integer;
@@ -521,6 +526,7 @@ bool jitc_pop_scope(jitc_context_t* context);
 jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const char* str, ...);
 jitc_error_t* jitc_error_parser(jitc_token_t* token, const char* str, ...);
 void jitc_error_set(jitc_context_t* context, jitc_error_t* error);
+void jitc_push_location(jitc_token_t* token, const char* filename, int row, int col);
 
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 
