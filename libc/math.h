@@ -42,8 +42,9 @@
     sizeof(x) == sizeof(double) ? ((__DOUBLE_TO_INT(x) + (1UL << 52)) & -1UL >> 1) >= 1UL << 53 : \
     false)
 
+#define isinf(x) (!isfinite(x))
 #define isfinite(x) ( \
-    sizeof(x) == sizeof(float) ? (__FLOAT_BITS(x) & 0x7FFFFFFF) < 0x7F800000 : \
+    sizeof(x) == sizeof(float) ? (__FLOAT_TO_INT(x) & 0x7FFFFFFF) < 0x7F800000 : \
     sizeof(x) == sizeof(double) ? (__DOUBLE_TO_INT(x) & -1UL >> 1) < 0x7FFUL << 52 : \
     false)
 

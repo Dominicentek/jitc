@@ -1,1 +1,1 @@
-./compile.sh && gcc test.c -L. -ljitc -g -o jitc && ./jitc $@
+./compile.sh && gcc tester/test.c -L. -ljitc -g -o jitc-tests && ./jitc-tests

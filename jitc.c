@@ -739,7 +739,7 @@ void jitc_link(jitc_context_t* context) {
         jitc_variable_t* var = &map_get_value(scope->variables);
         if (var->decltype == Decltype_EnumItem || var->decltype == Decltype_Typedef || var->decltype == Decltype_Extern) continue;
         if (var->type->kind != Type_Function || !var->func) continue;
-        var->func->addr->curr_ptr = context->unresolved_symbol ? var->func->addr->ptr : (void*)jitc_link_error_stub;
+        var->func->addr->curr_ptr = !context->unresolved_symbol ? var->func->addr->ptr : (void*)jitc_link_error_stub;
     }
 }
 

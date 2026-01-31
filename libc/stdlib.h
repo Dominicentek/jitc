@@ -31,7 +31,6 @@ void* realloc(void*, size_t);
 void free(void *);
 
 void abort(void);
-int atexit(void(*)(void));
 void exit(int);
 
 char* getenv(const char*);
