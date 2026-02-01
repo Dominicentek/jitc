@@ -15,7 +15,6 @@ struct {
     { "tests/control-flow/012-default.c", "switch not working yet" },
     { "tests/variables/005-shadow.c", "variable shadowing not working yet" },
     { "tests/preprocessor/004-macro-include.c", "segfaulting" },
-    { "tests/floats/004-comparsion.c", "segfaulting" },
     { "tests/floats/005-inf.c", "requires compound literals" },
     { "tests/floats/006-nan.c", "requires compound literals" },
 };

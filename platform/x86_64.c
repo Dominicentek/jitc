@@ -57,16 +57,17 @@ typedef struct {
     };
 } operand_t;
 
-typedef enum: uint8_t {
-    mov, movzx, movsx, lea,
-    add, sub, imul, idiv, and, or, xor, cmp,
-    shl, shr, sar, not, neg, jmp, jz, jnz, call, leave, ret,
-    sete, setne, setl, setle, setg, setge,
-    cbw, cwd, cdq, cqo, opc_push, opc_pop,
-    rep_movsb, rep_movsw, rep_movsd, rep_movsq,
-    rep_stosb, rep_stosw, rep_stosd, rep_stosq,
-    cvt
-} mnemonic_t;
+#define mnemonic_t(ITEM) \
+    ITEM(mov) ITEM(movzx) ITEM(movsx) ITEM(lea) \
+    ITEM(add) ITEM(sub) ITEM(imul) ITEM(idiv) ITEM(and) ITEM(or) ITEM(xor) ITEM(cmp) \
+    ITEM(shl) ITEM(shr) ITEM(sar) ITEM(not) ITEM(neg) ITEM(jmp) ITEM(jz) ITEM(jnz) ITEM(call) ITEM(leave) ITEM(ret) \
+    ITEM(sete) ITEM(setne) ITEM(setl) ITEM(setle) ITEM(setg) ITEM(setge) \
+    ITEM(cbw) ITEM(cwd) ITEM(cdq) ITEM(cqo) ITEM(opc_push) ITEM(opc_pop) \
+    ITEM(rep_movsb) ITEM(rep_movsw) ITEM(rep_movsd) ITEM(rep_movsq) \
+    ITEM(rep_stosb) ITEM(rep_stosw) ITEM(rep_stosd) ITEM(rep_stosq) \
+    ITEM(cvt) \
+
+ENUM(mnemonic_t)
 
 typedef enum: uint16_t {
     force_rexw = (1 << 0),
@@ -288,7 +289,7 @@ static stack_item_t* push(bytewriter_t* writer, stack_item_type_t type, jitc_typ
         (*index)++;
     }
 #ifdef DEBUG
-    printf("PUSH %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[type], opstack_size, opstack_int_index, opstack_float_index);
+    printf("PUSH %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[type], stack_size(opstack), opstack_int_index, opstack_float_index);
 #endif
     return item;
 }
@@ -317,7 +318,7 @@ static stack_item_t pop(bytewriter_t* writer) {
         if (item->extra_storage != 0) stack_free(writer, item->extra_storage);
     }
 #ifdef DEBUG
-    printf("POP  %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[item->type], opstack_size, opstack_int_index, opstack_float_index);
+    printf("POP  %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[item->type], stack_size(opstack), opstack_int_index, opstack_float_index);
 #endif
     return *item;
 }
@@ -562,15 +563,7 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
 
 static void emit(bytewriter_t* writer, mnemonic_t mnemonic, int num_ops, ...) {
 #ifdef DEBUG
-    printf("emitting %s\n", (const char*[]){
-        "mov", "movzx", "movsx", "lea",
-        "add", "sub", "imul", "idiv", "and", "or", "xor", "cmp",
-        "shl", "shr", "sar", "not", "neg", "jmp", "jz", "call", "leave", "ret",
-        "sete", "setne", "setl", "setle", "setg", "setge",
-        "cbw", "cwd", "cdq", "cqo", "opc_push", "opc_pop",
-        "rep_movsb", "rep_movsw", "rep_movsd", "rep_movsq",
-        "cvtsi2ss", "cvtsi2sd", "cvttss2si", "cvttsd2si", "cvtss2sd", "cvtsd2ss"
-    }[mnemonic]);
+    printf("emitting %s\n", mnemonic_t_names[mnemonic]);
 #endif
     legalization_t candidates[sizeof(instructions) / sizeof(instr_t)] = {};
     operand_t ops[num_ops];
@@ -808,23 +801,39 @@ static void write_jump(bytewriter_t* writer) {
     ptr[-1] = bytewriter_size(writer) - offset;
 }
 
-static void jitc_asm_pushi(bytewriter_t* writer, uint64_t value, jitc_type_kind_t kind, bool is_unsigned) {
+#ifdef DEBUG
+#define PRINT_FUNC printf("-- %s\n", __FUNCTION__ + 9);
+#else
+#define PRINT_FUNC
+#endif
+
+static void jitc_asm_rval(bytewriter_t* writer) { PRINT_FUNC
+    stack_item_t* item = peek(0);
+    if (item->type != StackItem_rvalue) {
+        pop(writer);
+        operand_t op1 = op(item);
+        item = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
+        emit(writer, mov, 2, op(item), op1);
+    }
+}
+
+static void jitc_asm_pushi(bytewriter_t* writer, uint64_t value, jitc_type_kind_t kind, bool is_unsigned) { PRINT_FUNC
     pushi(writer, StackItem_literal, kind, is_unsigned, value);
 }
 
-static void jitc_asm_pushf(bytewriter_t* writer, float value) {
+static void jitc_asm_pushf(bytewriter_t* writer, float value) { PRINT_FUNC
     pushf(writer, StackItem_literal, Type_Float32, false, value);
 }
 
-static void jitc_asm_pushd(bytewriter_t* writer, double value) {
+static void jitc_asm_pushd(bytewriter_t* writer, double value) { PRINT_FUNC
     pushf(writer, StackItem_literal, Type_Float64, false, value);
 }
 
-static void jitc_asm_pop(bytewriter_t* writer) {
+static void jitc_asm_pop(bytewriter_t* writer) { PRINT_FUNC
     pop(writer);
 }
 
-static void jitc_asm_load(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) {
+static void jitc_asm_load(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { PRINT_FUNC
     stack_item_t addr = pop(writer);
     stack_item_t* res = push(writer, StackItem_rvalue, Type_Pointer, true);
     if (addr.type != StackItem_rvalue) emit(writer, mov, 2, op(res), op(&addr));
@@ -834,29 +843,29 @@ static void jitc_asm_load(bytewriter_t* writer, jitc_type_kind_t kind, bool is_u
     res->type = StackItem_lvalue_abs;
 }
 
-static void jitc_asm_laddr(bytewriter_t* writer, jitc_variable_t* var, jitc_type_kind_t kind, bool is_unsigned) {
+static void jitc_asm_laddr(bytewriter_t* writer, jitc_variable_t* var, jitc_type_kind_t kind, bool is_unsigned) { PRINT_FUNC
     operand_t op1 = op(push(writer, StackItem_lvalue_abs, kind, is_unsigned));
     emit(writer, mov, 2, unptr(op1), imm((uint64_t)&var->ptr, Type_Pointer, true));
     emit(writer, mov, 2, unptr(op1), op1);
 }
 
-static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) {
+static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) { PRINT_FUNC
     stack_item_t* item = push(writer, StackItem_lvalue, kind, is_unsigned);
     item->offset = -offset;
 }
 
-static void jitc_asm_store(bytewriter_t* writer) {
+static void jitc_asm_store(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, mov, 2, op(peek(1)), op(peek(0)));
     pop(writer);
 }
 
-static void jitc_asm_copy(bytewriter_t* writer, uint64_t size, uint64_t alignment) {
+static void jitc_asm_copy(bytewriter_t* writer, uint64_t size, uint64_t alignment) { PRINT_FUNC
     stack_item_t src = pop(writer);
     stack_item_t* dst = peek(0);
     copy(writer, op(dst), op(&src), size, alignment);
 }
 
-static void jitc_asm_init(bytewriter_t* writer, uint64_t size, uint64_t alignment) {
+static void jitc_asm_init(bytewriter_t* writer, uint64_t size, uint64_t alignment) { PRINT_FUNC
     emit(writer, lea, 2, reg(rdi, Type_Int64, true), op(peek(0)));
     emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(0, Type_Int32, true));
     emit(writer, mov, 2, reg(rcx, Type_Int32, true), imm(size / alignment, Type_Int32, true));
@@ -872,56 +881,56 @@ static void jitc_asm_add(bytewriter_t* writer) {
     binaryop(writer, add);
 }
 
-static void jitc_asm_sub(bytewriter_t* writer) {
+static void jitc_asm_sub(bytewriter_t* writer) { PRINT_FUNC
     binaryop(writer, sub);
 }
 
-static void jitc_asm_mul(bytewriter_t* writer) {
+static void jitc_asm_mul(bytewriter_t* writer) { PRINT_FUNC
     if (isflt(peek(1)->kind)) binaryop(writer, imul);
     else arithcomplex(writer, imul, rax, false);
 }
 
-static void jitc_asm_div(bytewriter_t* writer) {
+static void jitc_asm_div(bytewriter_t* writer) { PRINT_FUNC
     if (isflt(peek(1)->kind)) binaryop(writer, idiv);
     else arithcomplex(writer, idiv, rax, false);
 }
 
-static void jitc_asm_mod(bytewriter_t* writer) {
+static void jitc_asm_mod(bytewriter_t* writer) { PRINT_FUNC
     if (isflt(peek(1)->kind)) binaryop(writer, idiv);
     else arithcomplex(writer, idiv, rdx, false);
 }
 
-static void jitc_asm_and(bytewriter_t* writer) {
+static void jitc_asm_and(bytewriter_t* writer) { PRINT_FUNC
     binaryop(writer, and);
 }
 
-static void jitc_asm_or(bytewriter_t* writer) {
+static void jitc_asm_or(bytewriter_t* writer) { PRINT_FUNC
     binaryop(writer, or);
 }
 
-static void jitc_asm_xor(bytewriter_t* writer) {
+static void jitc_asm_xor(bytewriter_t* writer) { PRINT_FUNC
     binaryop(writer, xor);
 }
 
-static void jitc_asm_shl(bytewriter_t* writer) {
+static void jitc_asm_shl(bytewriter_t* writer) { PRINT_FUNC
     bitshift(writer, false, false);
 }
 
-static void jitc_asm_shr(bytewriter_t* writer) {
+static void jitc_asm_shr(bytewriter_t* writer) { PRINT_FUNC
     bitshift(writer, false, true);
 }
 
-static void jitc_asm_sadd(bytewriter_t* writer) {
+static void jitc_asm_sadd(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, add, 2, op(peek(1)), op(peek(0)));
     pop(writer);
 }
 
-static void jitc_asm_ssub(bytewriter_t* writer) {
+static void jitc_asm_ssub(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, sub, 2, op(peek(1)), op(peek(0)));
     pop(writer);
 }
 
-static void jitc_asm_smul(bytewriter_t* writer) {
+static void jitc_asm_smul(bytewriter_t* writer) { PRINT_FUNC
     if (isflt(peek(1)->kind)) {
         emit(writer, imul, 2, op(peek(1)), op(peek(0)));
         pop(writer);
@@ -929,7 +938,7 @@ static void jitc_asm_smul(bytewriter_t* writer) {
     else arithcomplex(writer, imul, rax, true);
 }
 
-static void jitc_asm_sdiv(bytewriter_t* writer) {
+static void jitc_asm_sdiv(bytewriter_t* writer) { PRINT_FUNC
     if (isflt(peek(1)->kind)) {
         emit(writer, idiv, 2, op(peek(1)), op(peek(0)));
         pop(writer);
@@ -937,7 +946,7 @@ static void jitc_asm_sdiv(bytewriter_t* writer) {
     else arithcomplex(writer, idiv, rax, true);
 }
 
-static void jitc_asm_smod(bytewriter_t* writer) {
+static void jitc_asm_smod(bytewriter_t* writer) { PRINT_FUNC
     if (isflt(peek(1)->kind)) {
         emit(writer, idiv, 2, op(peek(1)), op(peek(0)));
         pop(writer);
@@ -945,51 +954,52 @@ static void jitc_asm_smod(bytewriter_t* writer) {
     arithcomplex(writer, idiv, rdx, true);
 }
 
-static void jitc_asm_sand(bytewriter_t* writer) {
+static void jitc_asm_sand(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, and, 2, op(peek(1)), op(peek(0)));
     pop(writer);
 }
 
-static void jitc_asm_sor(bytewriter_t* writer) {
+static void jitc_asm_sor(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, or, 2, op(peek(1)), op(peek(0)));
     pop(writer);
 }
 
-static void jitc_asm_sxor(bytewriter_t* writer) {
+static void jitc_asm_sxor(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, xor, 2, op(peek(1)), op(peek(0)));
     pop(writer);
 }
 
-static void jitc_asm_sshl(bytewriter_t* writer) {
+static void jitc_asm_sshl(bytewriter_t* writer) { PRINT_FUNC
     bitshift(writer, true, false);
 }
 
-static void jitc_asm_sshr(bytewriter_t* writer) {
+static void jitc_asm_sshr(bytewriter_t* writer) { PRINT_FUNC
     bitshift(writer, true, true);
 }
 
-static void jitc_asm_not(bytewriter_t* writer) {
+static void jitc_asm_not(bytewriter_t* writer) { PRINT_FUNC
     unaryop(writer, not, false);
 }
 
-static void jitc_asm_neg(bytewriter_t* writer) {
-    stack_item_t* op1 = peek(0);
-    if (isflt(op1->kind)) {
-        emit(writer, imul, 2, op(op1), imm(*(uint64_t*)&(double){-1}, op1->kind, op1->is_unsigned));
-        pop(writer);
+static void jitc_asm_neg(bytewriter_t* writer) { PRINT_FUNC
+    if (isflt(peek(0)->kind)) {
+        if (peek(0)->type != StackItem_rvalue) jitc_asm_rval(writer);
+        stack_item_t op1 = pop(writer);
+        stack_item_t* res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
+        emit(writer, imul, 2, op(&op1), imm(*(uint64_t*)&(double){-1}, op1.kind, op1.is_unsigned));
     }
     else unaryop(writer, neg, false);
 }
 
-static void jitc_asm_inc(bytewriter_t* writer, bool suffix, int32_t step) {
+static void jitc_asm_inc(bytewriter_t* writer, bool suffix, int32_t step) { PRINT_FUNC
     increment(writer, step, suffix);
 }
 
-static void jitc_asm_zero(bytewriter_t* writer) {
+static void jitc_asm_zero(bytewriter_t* writer) { PRINT_FUNC
     compare_against(writer, sete, imm(0, peek(0)->kind, peek(0)->is_unsigned));
 }
 
-static void jitc_asm_addrof(bytewriter_t* writer) {
+static void jitc_asm_addrof(bytewriter_t* writer) { PRINT_FUNC
     stack_item_t item = pop(writer);
     operand_t op1 = op(&item);
     operand_t res = op(push(writer, StackItem_rvalue, Type_Pointer, true));
@@ -998,51 +1008,41 @@ static void jitc_asm_addrof(bytewriter_t* writer) {
     if (item.type != StackItem_rvalue) emit(writer, lea, 2, res, op1);
 }
 
-static void jitc_asm_eql(bytewriter_t* writer) {
+static void jitc_asm_eql(bytewriter_t* writer) { PRINT_FUNC
     compare(writer, sete);
 }
 
-static void jitc_asm_neq(bytewriter_t* writer) {
+static void jitc_asm_neq(bytewriter_t* writer) { PRINT_FUNC
     compare(writer, setne);
 }
 
-static void jitc_asm_lst(bytewriter_t* writer) {
+static void jitc_asm_lst(bytewriter_t* writer) { PRINT_FUNC
     compare(writer, setl);
 }
 
-static void jitc_asm_lte(bytewriter_t* writer) {
+static void jitc_asm_lte(bytewriter_t* writer) { PRINT_FUNC
     compare(writer, setle);
 }
 
-static void jitc_asm_grt(bytewriter_t* writer) {
+static void jitc_asm_grt(bytewriter_t* writer) { PRINT_FUNC
     compare(writer, setg);
 }
 
-static void jitc_asm_gte(bytewriter_t* writer) {
+static void jitc_asm_gte(bytewriter_t* writer) { PRINT_FUNC
     compare(writer, setge);
 }
 
-static void jitc_asm_swp(bytewriter_t* writer) {
+static void jitc_asm_swp(bytewriter_t* writer) { PRINT_FUNC
     stack_item_t tmp = *peek(0);
     *peek(0) = *peek(1);
     *peek(1) = tmp;
 }
 
-static void jitc_asm_rval(bytewriter_t* writer) {
-    stack_item_t* item = peek(0);
-    if (item->type != StackItem_rvalue) {
-        pop(writer);
-        operand_t op1 = op(item);
-        item = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
-        emit(writer, mov, 2, op(item), op1);
-    }
-}
-
-static void jitc_asm_sc_begin(bytewriter_t* writer) {
+static void jitc_asm_sc_begin(bytewriter_t* writer) { PRINT_FUNC
     push_shortcircuit(writer);
 }
 
-static void jitc_asm_land(bytewriter_t* writer) {
+static void jitc_asm_land(bytewriter_t* writer) { PRINT_FUNC
     jitc_asm_rval(writer);
     stack_item_t item = pop(writer);
     emit(writer, cmp, 2, op(&item), imm(0, item.kind, item.is_unsigned));
@@ -1050,7 +1050,7 @@ static void jitc_asm_land(bytewriter_t* writer) {
     push_shortcircuit_jump(writer);
 }
 
-static void jitc_asm_lor(bytewriter_t* writer) {
+static void jitc_asm_lor(bytewriter_t* writer) { PRINT_FUNC
     jitc_asm_rval(writer);
     stack_item_t item = pop(writer);
     emit(writer, cmp, 2, op(&item), imm(0, item.kind, item.is_unsigned));
@@ -1058,7 +1058,7 @@ static void jitc_asm_lor(bytewriter_t* writer) {
     push_shortcircuit_jump(writer);
 }
 
-static void jitc_asm_sc_end(bytewriter_t* writer) {
+static void jitc_asm_sc_end(bytewriter_t* writer) { PRINT_FUNC
     pop_shortcircuit(writer);
     jitc_asm_rval(writer);
     stack_item_t item = pop(writer);
@@ -1067,7 +1067,7 @@ static void jitc_asm_sc_end(bytewriter_t* writer) {
     emit(writer, setne, 1, op(res));
 }
 
-static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) {
+static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { PRINT_FUNC
     stack_item_t item = pop(writer);
     operand_t op1 = op(&item);
     operand_t res = op(push(writer, StackItem_rvalue, kind, is_unsigned));
@@ -1135,13 +1135,13 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
     }
 }
 
-static void jitc_asm_type(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) {
+static void jitc_asm_type(bytewriter_t* writer, jitc_type_kind_t kind, bool is_unsigned) { PRINT_FUNC
     correct_kind(&kind, &is_unsigned);
     peek(0)->kind = kind;
     peek(0)->is_unsigned = is_unsigned;
 }
 
-static stack_item_t* jitc_asm_stackalloc(bytewriter_t* writer, uint32_t bytes) {
+static stack_item_t* jitc_asm_stackalloc(bytewriter_t* writer, uint32_t bytes) { PRINT_FUNC
     if (bytes % 8 != 0) bytes += 8 - (bytes % 8);
     stack_sub(writer, bytes);
     stack_item_t* item = push(writer, StackItem_rvalue, Type_Pointer, true);
@@ -1152,11 +1152,11 @@ static stack_item_t* jitc_asm_stackalloc(bytewriter_t* writer, uint32_t bytes) {
     return item;
 }
 
-static void jitc_asm_offset(bytewriter_t* writer, int32_t off) {
+static void jitc_asm_offset(bytewriter_t* writer, int32_t off) { PRINT_FUNC
     peek(0)->offset += off;
 }
 
-static void jitc_asm_normalize(bytewriter_t* writer, int32_t size) {
+static void jitc_asm_normalize(bytewriter_t* writer, int32_t size) { PRINT_FUNC
     if (peek(0)->type == StackItem_literal || peek(0)->type == StackItem_lvalue) jitc_asm_rval(writer);
     if (size == 0) return;
     mnemonic_t mnemonic = size < 0 ? shr : shl;
@@ -1166,35 +1166,35 @@ static void jitc_asm_normalize(bytewriter_t* writer, int32_t size) {
     emit(writer, mnemonic, 2, op(peek(0)), imm(amount, Type_Int8, true));
 }
 
-static void jitc_asm_if(bytewriter_t* writer, bool loop) {
+static void jitc_asm_if(bytewriter_t* writer, bool loop) { PRINT_FUNC
     push_branch(writer, loop);
 }
 
-static void jitc_asm_then(bytewriter_t* writer) {
+static void jitc_asm_then(bytewriter_t* writer) { PRINT_FUNC
     stack_item_t item = pop(writer);
     emit(writer, cmp, 2, op(&item), imm(0, item.kind, item.is_unsigned));
     emit(writer, jz, 1, imm(0, Type_Int32, true));
     set_jump(writer);
 }
 
-static void jitc_asm_else(bytewriter_t* writer) {
+static void jitc_asm_else(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, jmp, 1, imm(0, Type_Int32, true));
     write_jump(writer);
     set_jump(writer);
 }
 
-static void jitc_asm_end(bytewriter_t* writer) {
+static void jitc_asm_end(bytewriter_t* writer) { PRINT_FUNC
     write_jump(writer);
     pop_branch(writer);
 }
 
-static void jitc_asm_goto_start(bytewriter_t* writer) {
+static void jitc_asm_goto_start(bytewriter_t* writer) { PRINT_FUNC
     branch_t* branch = &stack_peek(branches);
     emit(writer, jmp, 1, imm(0, Type_Int32, false));
     ((int32_t*)(bytewriter_data(writer) + bytewriter_size(writer)))[-1] = branch->branch_start - bytewriter_size(writer);
 }
 
-static void jitc_asm_goto_end(bytewriter_t* writer) {
+static void jitc_asm_goto_end(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, jmp, 1, imm(0, Type_Int32, false));
     branch_t* branch = &stack_peek(branches);
     stack_push(branch->end_stack) = bytewriter_size(writer);
@@ -1218,7 +1218,7 @@ static void clear_labels() {
     goto_labels = map_new(compare_string, char*, goto_t);
 }
 
-static void jitc_asm_goto(bytewriter_t* writer, const char* label_name) {
+static void jitc_asm_goto(bytewriter_t* writer, const char* label_name) { PRINT_FUNC
     emit(writer, jmp, 1, imm(0, Type_Int32, false));
     map_add(goto_labels) = (char*)label_name;
     goto_t* label = NULL;
@@ -1233,7 +1233,7 @@ static void jitc_asm_goto(bytewriter_t* writer, const char* label_name) {
     else *(int32_t*)(bytewriter_data(writer) + bytewriter_size(writer) - 4) = label->position - pos;
 }
 
-static void jitc_asm_label(bytewriter_t* writer, const char* label_name) {
+static void jitc_asm_label(bytewriter_t* writer, const char* label_name) { PRINT_FUNC
     map_add(goto_labels) = (char*)label_name;
     if (map_commit(goto_labels)) {
         goto_t* label = &map_get_value(goto_labels);

@@ -1,1 +1,1 @@
-gcc $(find . -maxdepth 1 -name "*.c" ! -name "test.c") -o libjitc.so -lm -g -fPIC -shared
+gcc $(find . -maxdepth 1 -name "*.c" ! -name "test.c") -o libjitc.so -lm -g -fPIC -shared $@

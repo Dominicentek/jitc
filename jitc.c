@@ -855,8 +855,19 @@ void jitc_create_header(jitc_context_t* context, const char* name, const char* c
 
 bool jitc_parse(jitc_context_t* context, const char* code, const char* filename) {
     smartptr(queue(jitc_token_t)) tokens = try(jitc_lex(context, code, filename));
+#ifdef DEBUG
+    extern queue_t* print_tokens(const char* source, queue_t* tokens);
+    tokens = print_tokens("Lexer", tokens);
+#endif
     tokens = try(jitc_preprocess(context, move(tokens), NULL));
+#ifdef DEBUG
+    tokens = print_tokens("Preprocessor", tokens);
+#endif
     smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens);
+#ifdef DEBUG
+    extern void print_ast(jitc_ast_t* ast, int indent);
+    print_ast(ast, 0);
+#endif
     while (jitc_pop_scope(context));
     while (queue_size(context->instantiation_requests) > 0) queue_pop(context->instantiation_requests);
     if (!ast) return false;

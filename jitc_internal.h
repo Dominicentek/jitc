@@ -7,144 +7,159 @@
 
 typedef struct jitc_token_t jitc_token_t;
 
-typedef enum: uint8_t {
-    Decltype_None,
-    Decltype_Static,
-    Decltype_Extern,
-    Decltype_Typedef,
-    Decltype_EnumItem,
-    Decltype_Template = (1 << 3)
-} jitc_decltype_t;
+#define jitc_decltype_t(ITEM) \
+    ITEM(Decltype_None) \
+    ITEM(Decltype_Static) \
+    ITEM(Decltype_Extern) \
+    ITEM(Decltype_Typedef) \
+    ITEM(Decltype_EnumItem) \
+    ITEM(Decltype_Template, 1 << 3) \
 
-typedef enum: uint8_t {
-    Preserve_IfConst,
-    Preserve_Always,
-    Preserve_Never
-} jitc_preserve_t;
+#define jitc_preserve_t(ITEM) \
+    ITEM(Preserve_IfConst) \
+    ITEM(Preserve_Always) \
+    ITEM(Preserve_Never) \
 
-typedef enum: uint8_t {
-    Type_Int8,
-    Type_Int16,
-    Type_Int32,
-    Type_Int64,
-    Type_Float32,
-    Type_Float64,
-    Type_Pointer,
-    Type_Array,
-    Type_Function,
-    Type_Struct,
-    Type_Union,
-    Type_Enum,
-    Type_StructRef,
-    Type_UnionRef,
-    Type_EnumRef,
-    Type_Void,
-    Type_Varargs,
-    Type_Template,
-    Type_Placeholder,
-} jitc_type_kind_t;
+#define jitc_type_kind_t(ITEM) \
+    ITEM(Type_Int8) \
+    ITEM(Type_Int16) \
+    ITEM(Type_Int32) \
+    ITEM(Type_Int64) \
+    ITEM(Type_Float32) \
+    ITEM(Type_Float64) \
+    ITEM(Type_Pointer) \
+    ITEM(Type_Array) \
+    ITEM(Type_Function) \
+    ITEM(Type_Struct) \
+    ITEM(Type_Union) \
+    ITEM(Type_Enum) \
+    ITEM(Type_StructRef) \
+    ITEM(Type_UnionRef) \
+    ITEM(Type_EnumRef) \
+    ITEM(Type_Void) \
+    ITEM(Type_Varargs) \
+    ITEM(Type_Template) \
+    ITEM(Type_Placeholder) \
 
-typedef enum: uint8_t {
-    AST_Unary,
-    AST_Binary,
-    AST_Ternary,
-    AST_Branch,
-    AST_List,
-    AST_Type,
-    AST_Declaration,
-    AST_Function,
-    AST_Loop,
-    AST_Scope,
-    AST_Break,
-    AST_Continue,
-    AST_Return,
-    AST_Integer,
-    AST_Floating,
-    AST_StringLit,
-    AST_Variable,
-    AST_WalkStruct,
-    AST_Initializer,
-    AST_Goto,
-    AST_Label,
-} jitc_ast_type_t;
+#define jitc_ast_type_t(ITEM) \
+    ITEM(AST_Unary) \
+    ITEM(AST_Binary) \
+    ITEM(AST_Ternary) \
+    ITEM(AST_Branch) \
+    ITEM(AST_List) \
+    ITEM(AST_Type) \
+    ITEM(AST_Declaration) \
+    ITEM(AST_Function) \
+    ITEM(AST_Loop) \
+    ITEM(AST_Scope) \
+    ITEM(AST_Break) \
+    ITEM(AST_Continue) \
+    ITEM(AST_Return) \
+    ITEM(AST_Integer) \
+    ITEM(AST_Floating) \
+    ITEM(AST_StringLit) \
+    ITEM(AST_Variable) \
+    ITEM(AST_WalkStruct) \
+    ITEM(AST_Initializer) \
+    ITEM(AST_Goto) \
+    ITEM(AST_Label) \
 
-typedef enum: uint8_t {
-    Unary_PrefixIncrement,
-    Unary_PrefixDecrement,
-    Unary_SuffixIncrement,
-    Unary_SuffixDecrement,
-    Unary_PtrPrefixIncrement,
-    Unary_PtrPrefixDecrement,
-    Unary_PtrSuffixIncrement,
-    Unary_PtrSuffixDecrement,
-    Unary_ArithPlus,
-    Unary_ArithNegate,
-    Unary_LogicNegate,
-    Unary_BinaryNegate,
-    Unary_AddressOf,
-    Unary_Dereference,
-} jitc_unary_op_t;
+#define jitc_unary_op_t(ITEM) \
+    ITEM(Unary_PrefixIncrement) \
+    ITEM(Unary_PrefixDecrement) \
+    ITEM(Unary_SuffixIncrement) \
+    ITEM(Unary_SuffixDecrement) \
+    ITEM(Unary_PtrPrefixIncrement) \
+    ITEM(Unary_PtrPrefixDecrement) \
+    ITEM(Unary_PtrSuffixIncrement) \
+    ITEM(Unary_PtrSuffixDecrement) \
+    ITEM(Unary_ArithPlus) \
+    ITEM(Unary_ArithNegate) \
+    ITEM(Unary_LogicNegate) \
+    ITEM(Unary_BinaryNegate) \
+    ITEM(Unary_AddressOf) \
+    ITEM(Unary_Dereference) \
 
-typedef enum: uint8_t {
-    Binary_Cast,
-    Binary_FunctionCall,
-    Binary_PtrAddition,
-    Binary_PtrSubtraction,
-    Binary_PtrDiff,
-    Binary_Addition,
-    Binary_Subtraction,
-    Binary_Multiplication,
-    Binary_Division,
-    Binary_Modulo,
-    Binary_BitshiftLeft,
-    Binary_BitshiftRight,
-    Binary_LessThan,
-    Binary_GreaterThan,
-    Binary_LessThanOrEqualTo,
-    Binary_GreaterThanOrEqualTo,
-    Binary_Equals,
-    Binary_NotEquals,
-    Binary_And,
-    Binary_Or,
-    Binary_Xor,
-    Binary_LogicAnd,
-    Binary_LogicOr,
-    Binary_Assignment,
-    Binary_AssignConst,
-    Binary_AssignPtrAddition,
-    Binary_AssignPtrSubtraction,
-    Binary_AssignPtrDiff,
-    Binary_AssignAddition,
-    Binary_AssignSubtraction,
-    Binary_AssignMultiplication,
-    Binary_AssignDivision,
-    Binary_AssignModulo,
-    Binary_AssignBitshiftLeft,
-    Binary_AssignBitshiftRight,
-    Binary_AssignAnd,
-    Binary_AssignOr,
-    Binary_AssignXor,
-    Binary_Comma,
-} jitc_binary_op_t;
+#define jitc_binary_op_t(ITEM) \
+    ITEM(Binary_Cast) \
+    ITEM(Binary_FunctionCall) \
+    ITEM(Binary_PtrAddition) \
+    ITEM(Binary_PtrSubtraction) \
+    ITEM(Binary_PtrDiff) \
+    ITEM(Binary_Addition) \
+    ITEM(Binary_Subtraction) \
+    ITEM(Binary_Multiplication) \
+    ITEM(Binary_Division) \
+    ITEM(Binary_Modulo) \
+    ITEM(Binary_BitshiftLeft) \
+    ITEM(Binary_BitshiftRight) \
+    ITEM(Binary_LessThan) \
+    ITEM(Binary_GreaterThan) \
+    ITEM(Binary_LessThanOrEqualTo) \
+    ITEM(Binary_GreaterThanOrEqualTo) \
+    ITEM(Binary_Equals) \
+    ITEM(Binary_NotEquals) \
+    ITEM(Binary_And) \
+    ITEM(Binary_Or) \
+    ITEM(Binary_Xor) \
+    ITEM(Binary_LogicAnd) \
+    ITEM(Binary_LogicOr) \
+    ITEM(Binary_Assignment) \
+    ITEM(Binary_AssignConst) \
+    ITEM(Binary_AssignPtrAddition) \
+    ITEM(Binary_AssignPtrSubtraction) \
+    ITEM(Binary_AssignPtrDiff) \
+    ITEM(Binary_AssignAddition) \
+    ITEM(Binary_AssignSubtraction) \
+    ITEM(Binary_AssignMultiplication) \
+    ITEM(Binary_AssignDivision) \
+    ITEM(Binary_AssignModulo) \
+    ITEM(Binary_AssignBitshiftLeft) \
+    ITEM(Binary_AssignBitshiftRight) \
+    ITEM(Binary_AssignAnd) \
+    ITEM(Binary_AssignOr) \
+    ITEM(Binary_AssignXor) \
+    ITEM(Binary_Comma) \
 
-typedef enum {
-    TypePolicy_NoVoid = (1 << 0),
-    TypePolicy_NoUnkArrSize = (1 << 1),
-    TypePolicy_NoFunction = (1 << 2),
-    TypePolicy_NoArray = (1 << 3),
-    TypePolicy_NoUndefTags = (1 << 4),
-    TypePolicy_NoTemplates = (1 << 5),
+#define jitc_type_policy_t(ITEM) \
+    ITEM(TypePolicy_NoVoid, 1 << 0) \
+    ITEM(TypePolicy_NoUnkArrSize, 1 << 1) \
+    ITEM(TypePolicy_NoFunction, 1 << 2) \
+    ITEM(TypePolicy_NoArray, 1 << 3) \
+    ITEM(TypePolicy_NoUndefTags, 1 << 4) \
+    ITEM(TypePolicy_NoTemplates, 1 << 5) \
+    ITEM(TypePolicy_NoDerived, TypePolicy_NoFunction | TypePolicy_NoArray) \
+    ITEM(TypePolicy_NoIncomplete, TypePolicy_NoVoid | TypePolicy_NoUnkArrSize | TypePolicy_NoUndefTags | TypePolicy_NoTemplates) \
 
-    TypePolicy_NoDerived = TypePolicy_NoFunction | TypePolicy_NoArray,
-    TypePolicy_NoIncomplete = TypePolicy_NoVoid | TypePolicy_NoUnkArrSize | TypePolicy_NoUndefTags | TypePolicy_NoTemplates,
-} jitc_type_policy_t;
+#define jitc_parse_type_t(ITEM) \
+    ITEM(ParseType_Command,     1 << 0) \
+    ITEM(ParseType_Declaration, 1 << 1) \
+    ITEM(ParseType_Expression,  1 << 2) \
+    ITEM(ParseType_Any, ParseType_Command | ParseType_Declaration | ParseType_Expression) \
 
-typedef enum {
-    ParseType_Command     = (1 << 0),
-    ParseType_Declaration = (1 << 1),
-    ParseType_Expression  = (1 << 2),
-    ParseType_Any = ParseType_Command | ParseType_Declaration | ParseType_Expression
-} jitc_parse_type_t;
+#define CHOOSE(a, b, ...) b
+#define ENUM_ITEM(x, ...) x CHOOSE(__VA_OPT__(,) ENUM_ASSIGN, COMMA)(__VA_ARGS__)
+#define STRING_ITEM(x, ...) CHOOSE(__VA_OPT__(,) ARR_DESIGNATOR, DISCARD)(__VA_ARGS__) #x,
+#define ENUM_ASSIGN(...) = (__VA_ARGS__),
+#define ARR_DESIGNATOR(...) [__VA_ARGS__] =
+#define COMMA(...) ,
+#define DISCARD(...)
+#define ENUM(name) \
+    typedef enum { \
+        name(ENUM_ITEM) \
+    } name; \
+    static const char* name##_names[] = { \
+        name(STRING_ITEM) \
+    }; \
+
+ENUM(jitc_decltype_t)
+ENUM(jitc_preserve_t)
+ENUM(jitc_type_kind_t)
+ENUM(jitc_ast_type_t)
+ENUM(jitc_unary_op_t)
+ENUM(jitc_binary_op_t)
+ENUM(jitc_type_policy_t)
+ENUM(jitc_parse_type_t)
 
 typedef struct jitc_type_t jitc_type_t;
 struct jitc_type_t {

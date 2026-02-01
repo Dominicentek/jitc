@@ -7,11 +7,7 @@
 #include <stdarg.h>
 #include <dlfcn.h>
 
-//#define DEBUG
-
-#if defined(DEBUG)
-#include "platform/debug.c"
-#elif defined(_WIN32) && defined(__x86_64__)
+#if defined(_WIN32) && defined(__x86_64__)
 #include "platform/win-x86_64.c"
 #elif defined(__x86_64__)
 #include "platform/sysv-x86_64.c"
