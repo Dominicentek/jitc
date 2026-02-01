@@ -1102,25 +1102,19 @@ bool jitc_verify_gotos(jitc_context_t* context, jitc_ast_t* ast) {
 
 typedef struct {
     jitc_type_t* type;
-    int base_index;
-    int end_index;
-} init_frame_t;
-
-typedef struct {
-    jitc_type_t* type;
     jitc_type_t* aggregate;
     int offset;
 } init_element_t;
 
-static init_element_t* jitc_init_append(list_t* _elements, jitc_type_t* type, int base_offset) {
+static init_element_t* jitc_init_append(list_t* _elements, jitc_type_t* type, int base_offset, bool set_aggregate) {
     list(init_element_t)* elements = _elements;
     init_element_t* element = NULL;
     if ((type->kind == Type_Struct || type->kind == Type_Union) && type->str.num_fields != 0) for (int i = 0; i < type->str.num_fields; i++) {
-        init_element_t* inner = jitc_init_append(elements, type->str.fields[i], base_offset + type->str.offsets[i]);
+        init_element_t* inner = jitc_init_append(elements, type->str.fields[i], base_offset + type->str.offsets[i], true);
         if (i == 0) element = inner;
     }
     else if ((type->kind == Type_Array) && type->arr.size != 0) for (int i = 0; i < (type->arr.size == -1 ? 1 : type->arr.size); i++) {
-        init_element_t* inner = jitc_init_append(elements, type->arr.base, base_offset + i * type->arr.base->size);
+        init_element_t* inner = jitc_init_append(elements, type->arr.base, base_offset + i * type->arr.base->size, true);
         if (i == 0) element = inner;
     }
     else {
@@ -1128,7 +1122,7 @@ static init_element_t* jitc_init_append(list_t* _elements, jitc_type_t* type, in
         element->type = type;
         element->offset = base_offset;
     }
-    element->aggregate = type;
+    element->aggregate = set_aggregate ? type : element->type;
     return element;
 }
 
@@ -1164,13 +1158,8 @@ static int jitc_init_designate_struct(jitc_type_t* type, const char* name) {
 
 jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* _tokens, jitc_token_t* token, jitc_type_t* type, size_t* array_size, bool constant_only) {
     queue(jitc_token_t)* tokens = _tokens;
-    smartptr(stack(init_frame_t)) frames = stack_new(init_frame_t);
     smartptr(list(init_element_t)) elements = list_new(init_element_t);
-    if (type) jitc_init_append(elements, type, 0);
-    init_frame_t* frame = &stack_push(frames);
-    frame->type = type;
-    frame->base_index = 0;
-    frame->end_index = list_size(elements);
+    if (type) jitc_init_append(elements, type, 0, false);
     int cursor = 0;
 
     smartptr(jitc_ast_t) node = mknode(AST_Initializer, token);

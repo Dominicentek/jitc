@@ -81,7 +81,12 @@ static void test_directory(const char* dirname, int* total, int* ran, int* faile
 
 int main(int argc, char** argv) {
     int total = 0, ran = 0, failed = 0;
-    test_directory("tests/", &total, &ran, &failed);
+    if (argc == 1)
+        test_directory("tests/", &total, &ran, &failed);
+    else for (int i = 1; i < argc; i++) {
+        total++; ran++;
+        if (!run_test(argv[i])) failed++;
+    }
     printf("Ran %d out of %d tests, %d failing (%.2f%% success rate, %.2f%% overall)\n", ran, total, failed, (1 - (float)failed / ran) * 100, (1 - (float)(failed + total - ran) / total) * 100);
     return 0;
 }

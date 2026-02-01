@@ -11,6 +11,6 @@ int main() {
     if (s1.x != s2.x) return 1;
     if (s1.y != s2.y) return 2;
     if (s1.z != s2.z) return 3;
-    if (s3.z != 0) return 3;
+    if (s3.z != 0) return 4;
     return 0;
 }
