@@ -2,7 +2,8 @@
 #define __STD_STDDEF_H
 
 #define NULL nullptr
-#define offsetof(type, member) ((size_t)((char*)&((typeof(type)*)0)->member - (char*)0))
+#define offsetof(type, member) ((size_t)(&(nullof(type)->member)))
+#define nullof(type) ((typeof(type)*)nullptr)
 
 typedef unsigned long size_t;
 typedef long ptrdiff_t;

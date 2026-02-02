@@ -66,7 +66,7 @@ static bool is_floating(jitc_type_t* type) {
 }
 
 static bool is_pointer(jitc_type_t* type) {
-    return type->kind == Type_Pointer;
+    return type->kind == Type_Pointer || type->kind == Type_Array;
 }
 
 static bool is_number(jitc_type_t* type) {
@@ -261,6 +261,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
     jitc_token_t* unsigned_token = NULL, *first_token = NULL;
     jitc_type_t* type = NULL;
     size_t align = -1;
+    bool had_identifier = false;
     while (true) {
         jitc_decltype_t decl = Decltype_None;
         jitc_preserve_t prsv = Preserve_IfConst;
@@ -297,7 +298,8 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
             new_specs |= Spec_Char;
             is_unsigned = true;
         }
-        else if ((token = NEXT_TOKEN)->type == TOKEN_IDENTIFIER) {
+        else if ((token = NEXT_TOKEN)->type == TOKEN_IDENTIFIER && !had_identifier) {
+            had_identifier = true;
             jitc_variable_t* variable = jitc_get_variable(context, token->value.string);
             if (specs != 0 || !variable || variable->decltype != Decltype_Typedef) {
                 if (first_token) break;
@@ -523,7 +525,8 @@ jitc_type_t* jitc_type_promotion(jitc_context_t* context, jitc_type_t* left, jit
 }
 
 bool jitc_can_cast(jitc_type_t* from, jitc_type_t* to, bool explicit, bool is_zero) {
-    if (from->kind == Type_Void || to->kind == Type_Void) return false;
+    if (from->kind == Type_Void) return false;
+    if (to->kind == Type_Void) return true;
     if (from == to) return true;
     if (
         from->kind == Type_Struct ||
@@ -555,7 +558,7 @@ jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* ty
                     : Type_Float64
                 );
             }
-            else {
+            else if (!is_pointer(type)) {
                 bool is_negative = !node->integer.is_unsigned && ((node->integer.value >> 63) & 1);
                 node->integer.type_kind = is_pointer(type) ? Type_Int64 : type->kind;
                 node->integer.is_unsigned = is_pointer(type) ? true : type->is_unsigned;
@@ -563,6 +566,7 @@ jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* ty
                 node->exprtype = jitc_typecache_primitive(context, node->integer.type_kind);
                 if (node->integer.is_unsigned) node->exprtype = jitc_typecache_unsigned(context, node->exprtype);
             }
+            else goto fallback;
             break;
         case AST_Floating:
             if (is_floating(type)) {
@@ -590,7 +594,7 @@ jitc_ast_t* jitc_cast(jitc_context_t* context, jitc_ast_t* node, jitc_type_t* ty
             node->exprtype = jitc_typecache_const(context, node->exprtype);
             node->exprtype = jitc_typecache_pointer(context, node->exprtype);
             break;
-        default: {
+        default: fallback: {
             jitc_ast_t* cast = mknode(AST_Binary, node->token);
             jitc_ast_t* type_node = mknode(AST_Type, node->token);
             type_node->type.type = type;

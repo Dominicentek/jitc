@@ -253,7 +253,7 @@ static bool compute_expression(jitc_context_t* context, map_t* macros, token_str
             case TOKEN_DOUBLE_LESS_THAN: *left <<= right; break;
             case TOKEN_DOUBLE_GREATER_THAN: *left >>= right; break;
             case TOKEN_DOUBLE_EQUALS: *left = *left == right; break;
-            case TOKEN_NOT_EQUALS: *left = *left == right; break;
+            case TOKEN_NOT_EQUALS: *left = *left != right; break;
             case TOKEN_LESS_THAN: *left = *left < right; break;
             case TOKEN_GREATER_THAN: *left = *left > right; break;
             case TOKEN_LESS_THAN_EQUALS: *left = *left <= right; break;
@@ -471,12 +471,12 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
             token = optional(advance(&stream, &curr_line), continue);
             if (is_identifier(token, "define")) {
                 token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_IDENTIFIER, "Expected identifier");
-                macro_t* macro = new_macro(macros, token->value.string, MacroType_Ordinary);
+                macro_t* macro = do_things ? new_macro(macros, token->value.string, MacroType_Ordinary) : NULL;
                 jitc_token_t* paren = lookahead(&stream, curr_line);
                 if (paren && paren->type == TOKEN_PARENTHESIS_OPEN && paren->row == token->row && paren->col == token->col + strlen(token->value.string)) {
                     advance(&stream, &curr_line);
                     smartptr(list(char*)) list = list_new(char*);
-                    macro->type = MacroType_OrdinaryFunction;
+                    if (macro) macro->type = MacroType_OrdinaryFunction;
                     if ((token = lookahead(&stream, curr_line)) && token->type != TOKEN_PARENTHESIS_CLOSE) while (true) {
                         token = expect(advance(&stream, &curr_line), "Unexpected EOL");
                         const char* name = NULL;
@@ -497,23 +497,28 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                         throw(token, "Expected %s')'", vararg ? "" : "',' or ");
                     }
                     else advance(&stream, &curr_line);
-                    macro->args = (void*)move(list);
+                    if (macro) macro->args = (void*)move(list);
                 }
-                while ((token = advance(&stream, &curr_line))) list_add(macro->tokens) = *token;
+                while ((token = advance(&stream, &curr_line))) if (macro) list_add(macro->tokens) = *token;
             }
             else if (is_identifier(token, "undef")) {
                 token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_IDENTIFIER, "Expected identifier");
-                map_find(macros, &token->value.string);
-                map_remove(macros);
+                if (do_things) {
+                    map_find(macros, &token->value.string);
+                    map_remove(macros);
+                }
             }
             else if (is_identifier(token, "include") || is_identifier(token, "embed")) {
                 token = expect_and(advance(&stream, &curr_line),
                     this->type == TOKEN_STRING ||
                     this->type == TOKEN_IDENTIFIER,
                 "Expected string");
+                smartptr(list(jitc_token_t)) macro_stream_list = NULL;
                 token_stream_t macro_stream;
                 token_stream_t* curr_stream = &stream;
                 if (token->type == TOKEN_IDENTIFIER) {
+                    macro_stream_list = list_new(jitc_token_t);
+                    macro_stream = (token_stream_t){(void*)macro_stream_list};
                     curr_stream = &macro_stream;
                     smartptr(set(char*)) used_macros = set_new(compare_string, char*);
                     process_identifier(context, curr_stream, &stream, macros, used_macros, 0);

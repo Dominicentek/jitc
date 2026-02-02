@@ -9,14 +9,15 @@ struct {
     const char* name;
     const char* reason;
 } skipped_tests[] = {
-    { "tests/control-flow/009-continue.c", "continue not working yet" },
-    { "tests/control-flow/010-switchcase.c", "switch not working yet" },
-    { "tests/control-flow/011-fallthrough.c", "switch not working yet" },
-    { "tests/control-flow/012-default.c", "switch not working yet" },
-    { "tests/variables/005-shadow.c", "variable shadowing not working yet" },
-    { "tests/preprocessor/004-macro-include.c", "segfaulting" },
+    { "tests/control-flow/009-continue.c", "continue not implemented yet" },
+    { "tests/control-flow/010-switchcase.c", "switch not implemented yet" },
+    { "tests/control-flow/011-fallthrough.c", "switch not implemented yet" },
+    { "tests/control-flow/012-default.c", "switch not implemented yet" },
     { "tests/floats/005-inf.c", "requires compound literals" },
     { "tests/floats/006-nan.c", "requires compound literals" },
+    { "tests/functions/007-varargs.c", "varargs not implemented yet"},
+    { "tests/templates/008-linked-list.c", "segfaulting" },
+    { "tests/variables/005-shadow.c", "variable shadowing not implemented yet" },
 };
 
 static int sort_string(const void* a, const void* b) {

@@ -198,7 +198,12 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
             case Unary_ArithNegate: assemble(writer, ast->unary.inner, variable_map, 0); promote(writer, ast->unary.inner); jitc_asm_neg(writer); break;
             case Unary_LogicNegate: assemble(writer, ast->unary.inner, variable_map, 0); promote(writer, ast->unary.inner); jitc_asm_zero(writer); break;
             case Unary_BinaryNegate: assemble(writer, ast->unary.inner, variable_map, 0); promote(writer, ast->unary.inner); jitc_asm_not(writer); break;
-            case Unary_Dereference: assemble(writer, ast->unary.inner, variable_map, 0); promote(writer, ast->unary.inner); jitc_asm_load(writer, type(ast->exprtype)); break;
+            case Unary_Dereference:
+                assemble(writer, ast->unary.inner, variable_map, 0);
+                promote(writer, ast->unary.inner);
+                jitc_asm_load(writer, type(ast->exprtype));
+                if (ast->exprtype->kind == Type_Array) jitc_asm_addrof(writer);
+                break;
             case Unary_AddressOf: assemble(writer, ast->unary.inner, variable_map, 0); jitc_asm_addrof(writer); break;
             case Unary_PtrPrefixIncrement: case Unary_PtrPrefixDecrement: case Unary_PtrSuffixIncrement: case Unary_PtrSuffixDecrement:
                 step = ast->exprtype->ptr.base->kind == Type_Function ? 1 : ast->exprtype->ptr.base->size;
@@ -209,8 +214,11 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
         } return true;
         case AST_Binary:
             if (ast->binary.operation == Binary_Cast) {
+                jitc_type_t* type = ast->binary.right->type.type->kind == Type_Void
+                    ? ast->binary.left->exprtype
+                    : ast->binary.right->type.type;
                 assemble(writer, ast->binary.left, variable_map, 0);
-                jitc_asm_cvt(writer, type(ast->binary.right->type.type));
+                jitc_asm_cvt(writer, type(type));
             }
             else if (ast->binary.operation == Binary_FunctionCall) {
                 size_t num_args = list_size(ast->binary.right->list.inner);
@@ -391,6 +399,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
             assemble(writer, ast->walk_struct.struct_ptr, variable_map, 0);
             jitc_asm_type(writer, type(ast->exprtype));
             jitc_asm_offset(writer, ast->walk_struct.offset);
+            if (ast->exprtype->kind == Type_Array) jitc_asm_addrof(writer);
             return false;
         case AST_Initializer: {
             assemble(writer, ast->init.store_to, variable_map, 0);

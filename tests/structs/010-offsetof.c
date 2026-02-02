@@ -1,4 +1,4 @@
-#define offsetof(type, member) ((size_t)((char*)&((typeof(type)*)0)->member - (char*)0))
+#include "stddef.h"
 
 typedef struct {
     int a;
@@ -40,7 +40,7 @@ typedef struct {
 typedef unsigned long size_t;
 
 int main() {
-    if (((size_t)((char *)&((typeof(torture) *)0)->a - (char *)0)) != 0) return 1;
+    if (offsetof(torture, a) != 0) return 1;
     if (offsetof(torture, b) != 8) return 2;
     if (offsetof(torture, c) != 12) return 3;
     if (offsetof(torture, d) != 14) return 4;

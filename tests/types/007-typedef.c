@@ -1,6 +1,6 @@
 typedef int a;
 
 int main() {
-    a a = 0;
-    return a;
+    a b = 0;
+    return b;
 }

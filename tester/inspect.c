@@ -169,6 +169,7 @@ int main(int argc, char** argv) {
         map_index(scope->variables, i);
         jitc_variable_t* var = &map_get_value(scope->variables);
         if (var->type->kind != Type_Function) continue;
+        if (var->decltype != Decltype_None && var->decltype != Decltype_Static) continue;
         printf("%s:\n", var->type->name);
         for (size_t j = 0; j < var->func->addr->size; j++) {
             if (j != 0 && j % 16 == 0) printf("\n");

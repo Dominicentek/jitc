@@ -551,6 +551,7 @@ jitc_error_t* jitc_error_syntax(const char* filename, int row, int col, const ch
     error->file = filename;
     error->row = row;
     error->col = col;
+    error->num_locations = 1;
     return error;
 }
 

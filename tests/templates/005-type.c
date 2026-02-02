@@ -1,11 +1,10 @@
+#include "stddef.h"
+
 int value(int* this) -> 1;
 int value(long* this) -> 2;
 int value(unsigned long* this) -> 3;
 
-<T> int get() {
-    T x;
-    return x.value();
-}
+<T> int get() -> nullof(T).value();
 
 int main() {
     if (get<int>() != 1) return 1;

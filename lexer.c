@@ -5,19 +5,29 @@
 #include <string.h>
 #include <stdlib.h>
 
-static bool is_alphanumeric(char c) {
-    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+#define throw_impl(...) jitc_error_set(context, jitc_error_syntax(file, row, col, __VA_ARGS__))
+
+static bool is_letter(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == '$';
 }
 
-static bool is_numeric(char c) {
+static bool is_number(char c) {
     return c >= '0' && c <= '9';
+}
+
+static bool is_hex_number(char c) {
+    return is_number(c) || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+}
+
+static bool is_alphanumeric(char c) {
+    return is_number(c) || is_letter(c);
 }
 
 static bool is_symbol(char c) {
     return c > ' ' && c <= '~' && !is_alphanumeric(c);
 }
 
-static bool is_whitespace(char c) {
+static bool is_blank(char c) {
     return c == ' ' || c == '\t' || c == '\n';
 }
 
@@ -77,7 +87,9 @@ static bool try_parse_int(string_t* string, uint64_t* out, jitc_token_flags_t* f
     if (str_data(string)[0] == '0') {
         ptr = 2;
         switch (str_data(string)[1]) {
-            case 0:             ptr = 0;   break;
+            case 0:
+            case 'U': case 'u':
+            case 'L': case 'l': ptr = 0;   break;
             case 'x': case 'X': base = 16; break;
             case 'b': case 'B': base = 2;  break;
             case '0'...'7':     base = 8; ptr = 1; break;
@@ -212,6 +224,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
         enum State {
             Idle,
             ParsingWord,
+            ParsingNumber,
             ParsingSymbol,
             ParsingStringLiteral,
             ParsingCharLiteral,
@@ -235,11 +248,10 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 } state;
             } string_state;
             struct {
-                bool first_char;
-                bool dot_in_word;
-                bool can_have_sign;
-                bool can_be_sign;
-            } word_state;
+                bool used_dot;
+                bool used_letter;
+                bool just_used_letter;
+            } number_state;
         };
     } state;
     smartptr(string_t) _buffer;
@@ -266,21 +278,25 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
         else if (state.parse_state == Idle) {
             if      (c == '"' )                       state.parse_state = ParsingStringLiteral;
             else if (c == '\'')                       state.parse_state = ParsingCharLiteral;
-            else if (is_alphanumeric(c) || (c == '.' && is_numeric(code[ptr]))) state.parse_state = ParsingWord;
-            else if (is_symbol      (c)) state.parse_state = ParsingSymbol;
-            else if (is_whitespace  (c)) continue;
-            else { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid codepoint: \\x%02x", c)); return NULL; }
+            else if (is_number(c) || (c == '.' && is_number(code[ptr]))) state.parse_state = ParsingNumber;
+            else if (is_letter(c)) state.parse_state = ParsingWord;
+            else if (is_symbol(c)) state.parse_state = ParsingSymbol;
+            else if (is_blank (c)) continue;
+            else throw("Invalid codepoint: \\x%02x", c);
             str_clear(state.buffer);
             state.row = row;
             state.col = col;
             state.string_state.state = state.parse_state == ParsingCharLiteral ? CharStart : None;
-            if (state.parse_state == ParsingWord || state.parse_state == ParsingSymbol) no_increment = true;
-            if (state.parse_state == ParsingWord) state.word_state.first_char = true;
+            if (state.parse_state == ParsingWord || state.parse_state == ParsingNumber || state.parse_state == ParsingSymbol) no_increment = true;
+            if (state.parse_state == ParsingNumber)
+                state.number_state.used_dot =
+                state.number_state.used_letter =
+                state.number_state.just_used_letter = false;
         }
         else if (state.parse_state == ParsingStringLiteral || state.parse_state == ParsingCharLiteral) {
             switch (state.string_state.state) {
                 case CharStart:
-                    if (c == '\'') { jitc_error_set(context, jitc_error_syntax(file, row, col, "Empty char literal")); return NULL; }
+                    if (c == '\'') throw("Empty char literal");
                     state.string_state.state = None;
                 case None:
                     if (c == '\\') state.string_state.state = Backslash;
@@ -296,7 +312,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                         token->flags.int_flags.is_unsigned = false;
                         data += decode_utf8(str_data(state.buffer), (int*)&token->value.integer);
                         memset((char*)&token->value.integer + 1, (token->value.integer & (1 << 7)) ? 0xFF : 0x00, 7);
-                        if (*data != 0) { jitc_error_set(context, jitc_error_syntax(file, row, col, "Multiple characters in char literal")); return NULL; }
+                        if (*data != 0) throw("Multiple characters in char literal");
                         state.parse_state = Idle;
                     }
                     else str_append(state.buffer, (char[]){ c, 0 });
@@ -321,7 +337,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                         case 'U':       state.string_state.state = Hex8;  break;
                         case '0'...'7': state.string_state.state = Octal; no_increment = true; break;
                         case '\n': c = '\n'; break;
-                        default: { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid escape code")); return NULL; }
+                        default: throw("Invalid escape code");
                     }
                     if (state.string_state.state == Backslash) {
                         str_append(state.buffer, (char[]){ c, 0 });
@@ -335,7 +351,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 if ((state.string_state.state == Octal ? get_octal : get_hexadecimal)(c, &digit))
                     state.string_state.value = state.string_state.value * (state.string_state.state == Octal ? 8 : 16) + digit;
                 else if (state.string_state.state == Octal) state.string_state.num_digits = 2;
-                else { jitc_error_set(context, jitc_error_syntax(file, row, col, "Not a valid digit")); return NULL; }
+                else throw("Not a valid digit");
                 state.string_state.num_digits++;
                 if (state.string_state.num_digits == (
                     state.string_state.state == Octal ? 3 :
@@ -350,71 +366,50 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             }
         }
         else if (state.parse_state == ParsingWord) {
-            if (state.word_state.first_char && (is_numeric(c) || c == '.')) {
-                state.word_state.first_char = false;
-                state.word_state.dot_in_word = true;
-                state.word_state.can_have_sign = true;
+            if (is_alphanumeric(c)) str_append(state.buffer, (char[]){ c, 0 });
+            else {
+                char* buf = str_data(state.buffer);
+                jitc_token_t* token = mktoken(tokens, TOKEN_IDENTIFIER, file, state.row, state.col + str_length(state.buffer) - strlen(buf));
+                token->value.string = jitc_append_string(context, buf);
+                buf[0] = 0;
+                no_increment = true;
+                state.parse_state = Idle;
             }
-            bool just_set = false;
-            if ((c == 'e' || c == 'E' || c == 'p' || c == 'P') && state.word_state.can_have_sign) {
-                state.word_state.can_be_sign = true;
-                state.word_state.can_have_sign = false;
-                just_set = true;
-            }
-            if (is_alphanumeric(c) || (c == '.' && state.word_state.dot_in_word) || ((c == '+' || c == '-') && state.word_state.can_be_sign)) {
-                if (c == '.') state.word_state.dot_in_word = false;
-                if (state.word_state.can_be_sign && !just_set) state.word_state.can_be_sign = false;
+        }
+        else if (state.parse_state == ParsingNumber) {
+            if ((
+                    is_hex_number(c)
+                    || c == 'x' || c == 'X'
+                    || c == 'u' || c == 'U'
+                    || c == 'l' || c == 'L'
+                )
+                || (!state.number_state.used_dot && (
+                    c == '.'
+                ) && (state.number_state.used_dot = true))
+                || (!state.number_state.used_letter && (
+                    c == 'E' || c == 'e' ||
+                    c == 'P' || c == 'p'
+                ) && (state.number_state.used_dot = true)
+                  && (state.number_state.used_letter = true)
+                  && (state.number_state.just_used_letter = true))
+                || (state.number_state.just_used_letter && (
+                    c == '+' || c == '-'
+                ))
+            ) {
+                if (state.number_state.just_used_letter && (
+                    c == 'E' || c == 'e' ||
+                    c == 'P' || c == 'p'
+                )) state.number_state.just_used_letter = false;
                 str_append(state.buffer, (char[]){ c, 0 });
             }
             else {
                 jitc_token_t* token = mktoken(tokens, TOKEN_END_OF_FILE, file, state.row, state.col);
                 if      (try_parse_int(state.buffer, &token->value.integer,  &token->flags)) token->type = TOKEN_INTEGER;
                 else if (try_parse_flt(state.buffer, &token->value.floating, &token->flags)) token->type = TOKEN_FLOAT;
-                else {
-                    char last = str_data(state.buffer)[str_length(state.buffer) - 1];
-                    if (is_numeric(str_data(state.buffer)[0]) || str_data(state.buffer)[0] == '.')
-                        { jitc_error_set(context, jitc_error_syntax(file, row, col, "Invalid number")); return NULL; }
-                    if (last == '+' || last == '-') str_data(state.buffer)[str_length(state.buffer) - 1] = 0;
-                    else last = 0;
-                    token->type = TOKEN_IDENTIFIER;
-                    /*for (int i = 0; i < num_token_table_entries; i++) {
-                        if (!token_table[i]) continue;
-                        if (strcmp(token_table[i], str_data(state.buffer)) == 0) token->type = i;
-                    }
-                    if (token->type == TOKEN_IDENTIFIER) {*/
-                        jitc_token_t* curr_token = token;
-                        int ptr = 0;
-                        char buf[str_length(state.buffer) + 1];
-                        for (int i = 0; i < str_length(state.buffer); i++) {
-                            if (str_data(state.buffer)[i] == '.') {
-                                if (ptr != 0) {
-                                    buf[ptr] = 0;
-                                    if (!curr_token) curr_token = mktoken(tokens, TOKEN_IDENTIFIER, file, state.row, state.col + i - strlen(buf));
-                                    curr_token->value.string = jitc_append_string(context, buf);
-                                    curr_token = NULL;
-                                }
-                                if (!curr_token) curr_token = mktoken(tokens, (jitc_token_type_t[]){
-                                    ['.'] = TOKEN_DOT,
-                                    ['-'] = TOKEN_MINUS,
-                                    ['+'] = TOKEN_PLUS,
-                                }[str_data(state.buffer)[i]], file, state.row, state.col + i);
-                                curr_token = NULL;
-                                ptr = 0;
-                                continue;
-                            }
-                            buf[ptr++] = str_data(state.buffer)[i];
-                        }
-                        if (ptr != 0) {
-                            buf[ptr] = 0;
-                            if (!curr_token) curr_token = mktoken(tokens, TOKEN_IDENTIFIER, file, state.row, state.col + str_length(state.buffer) - strlen(buf));
-                            curr_token->value.string = jitc_append_string(context, buf);
-                            curr_token = NULL;
-                        }
-                    //}
-                    if (last) ptr--;
-                }
-                state.parse_state = Idle;
+                else throw("Invalid number");
+                str_data(state.buffer)[0] = 0;
                 no_increment = true;
+                state.parse_state = Idle;
             }
         }
         else if (state.parse_state == ParsingSymbol) {
@@ -453,7 +448,10 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 }
                 continue;
             }
-            if (exact_match == -1) { jitc_error_set(context, jitc_error_syntax(filename, row, col - str_length(state.buffer), "Invalid token")); return NULL; };
+            if (exact_match == -1) {
+                col -= str_length(state.buffer);
+                throw("Invalid token");
+            }
         }
     }
     mktoken(tokens, TOKEN_END_OF_FILE, file, state.row, state.col);

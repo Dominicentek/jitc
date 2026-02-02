@@ -11,10 +11,11 @@
     _tmp; \
 })
 
-//#define TRACE_ERRORS(str) fprintf(stderr, str " at %s:%d\n", __FILE__, __LINE__)
-//#define TRACE_ERRORS(str) abort()
 
-#ifndef TRACE_ERRORS
+#ifdef DEBUG
+#define TRACE_ERRORS(str) fprintf(stderr, str " at %s:%d (%s)\n", __FILE__, __LINE__, __FUNCTION__)
+//#define TRACE_ERRORS(str) abort()
+#else
 #define TRACE_ERRORS(str)
 #endif
 
