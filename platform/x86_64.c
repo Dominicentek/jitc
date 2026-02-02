@@ -572,6 +572,16 @@ static void emit(bytewriter_t* writer, mnemonic_t mnemonic, int num_ops, ...) {
     va_list list;
     va_start(list, num_ops);
     for (int i = 0; i < num_ops; i++) ops[i] = va_arg(list, operand_t);
+    if (num_ops == 2) {
+        if (ops[1].kind == Type_Struct || ops[1].kind == Type_Union) {
+            ops[1].kind = Type_Int64;
+            ops[1].is_unsigned = true;
+        }
+        else if (ops[0].kind == Type_Struct || ops[0].kind == Type_Union) {
+            ops[0].kind = ops[1].kind;
+            ops[0].is_unsigned = ops[1].is_unsigned;
+        }
+    }
     for (size_t i = 0; i < sizeof(instructions) / sizeof(instr_t); i++) {
         if (instructions[i].mnemonic != mnemonic) continue;
         // ok me using strlen is lowkey stupid here, but it counts bytes until 0,
