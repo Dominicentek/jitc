@@ -525,7 +525,7 @@ bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const 
 bool jitc_template_params_check(jitc_context_t* context, jitc_type_t* type, const char* name);
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
-jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* type);
+jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* type, map_t* templ_map);
 jitc_type_t* jitc_get_tagged_type_notype(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_t* type);
 jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name);

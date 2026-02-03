@@ -5,7 +5,7 @@ typedef struct<T> List {
     T item;
 } List;
 
-<T> void init() {
+<T> List<T>* init() {
     List<T>* list = malloc(sizeof(List<T>));
     list.next = nullptr;
     return list;
@@ -23,7 +23,7 @@ int main() {
         list.add<int>(i);
 
     int counter = 0;
-    while (list) {
+    while (list.next) {
         if (list.item != ++counter) return counter;
         list = list.next;
     }

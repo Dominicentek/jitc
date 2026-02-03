@@ -16,7 +16,6 @@ struct {
     { "tests/floats/005-inf.c", "requires compound literals" },
     { "tests/floats/006-nan.c", "requires compound literals" },
     { "tests/functions/007-varargs.c", "varargs not implemented yet"},
-    { "tests/templates/008-linked-list.c", "segfaulting" },
     { "tests/variables/005-shadow.c", "variable shadowing not implemented yet" },
 };
 

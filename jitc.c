@@ -389,7 +389,7 @@ jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type) {
         func->func.params[0]->kind == Type_Pointer &&
         strcmp(func->func.params[0]->name, "this") == 0
     ) {
-        uint64_t hash = jitc_typecache_named(context, func->ptr.base, NULL)->hash;
+        uint64_t hash = jitc_typecache_named(context, func->func.params[0]->ptr.base, NULL)->hash;
         char new_name[2 + 16 + strlen(type->name) + 1];
         sprintf(new_name, "@m%16lx%s", hash, type->name);
         type = jitc_typecache_named(context, type, jitc_append_string(context, new_name));
@@ -779,9 +779,15 @@ jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, con
     return NULL;
 }
 
-jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* base) {
+jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* base, map_t* _templ_map) {
+    map(char*, jitc_type_t*)* templ_map = _templ_map;
+    uint64_t hash = base->hash;
+    for (size_t i = 0; i < map_size(templ_map); i++) {
+        map_index(templ_map, i);
+        hash = hash_mix(hash, hash_int(map_get_value(templ_map)->hash));
+    }
     char symbol_name[2 + 16 + strlen(base->name) + 1];
-    sprintf(symbol_name, "@t%16lx%s", base->hash, base->name);
+    sprintf(symbol_name, "@t%16lx%s", hash, base->name);
     return jitc_typecache_named(context, base, jitc_append_string(context, symbol_name));
 }
 

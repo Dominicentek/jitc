@@ -637,10 +637,8 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->exprtype = variable->type;
             }
             else if (node->variable.templ_map) {
-                node->exprtype = jitc_mangle_template(context,
-                    jitc_typecache_fill_template(
-                        context, variable->type, node->variable.templ_map
-                ));
+                node->exprtype = jitc_typecache_fill_template(context, variable->type, node->variable.templ_map);
+                node->exprtype = jitc_mangle_template(context, node->exprtype, node->variable.templ_map);
                 node->variable.name = node->exprtype->name;
                 queue_push(context->instantiation_requests) = (jitc_instantiation_request_t){
                     .tokens = variable->ptr,
@@ -1723,11 +1721,14 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
             jitc_type_t* type = base_type;
             jitc_ast_t* decl_node;
             smartptr(jitc_ast_t) node = decl_node = template_list ? NULL : mknode(AST_Declaration, token);
-            if (template_list) for (int i = 0; i < list_size(template_list); i++) {
-                const char* name = list_get(template_list, i);
-                jitc_type_t* placeholder = jitc_typecache_placeholder(context, name);
-                placeholder = jitc_typecache_named(context, placeholder, name);
-                jitc_declare_variable(context, placeholder, Decltype_Typedef, NULL, 0, 0);
+            if (template_list) {
+                jitc_push_scope(context);
+                for (int i = 0; i < list_size(template_list); i++) {
+                    const char* name = list_get(template_list, i);
+                    jitc_type_t* placeholder = jitc_typecache_placeholder(context, name);
+                    placeholder = jitc_typecache_named(context, placeholder, name);
+                    jitc_declare_variable(context, placeholder, Decltype_Typedef, NULL, 0, 0);
+                }
             }
             try(jitc_parse_type_declarations(context, tokens, &type));
             if (type->kind == Type_Function && NEXT_TOKEN->type == TOKEN_SEMICOLON && decltype != Decltype_Typedef) decltype = Decltype_Extern;
@@ -1829,6 +1830,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 if (decltype == Decltype_Extern) throw(token, "Cannot assign to an extern variable");
                 if (type->kind == Type_Function) throw(token, "Assigning to a function");
                 if (!type->name) throw(token, "Assigning to unnamed declaration");
+                jitc_token_t* equals_token = token;
                 if ((token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
                     size_t arr_size;
                     smartptr(jitc_ast_t) initializer = try(jitc_parse_initializer(context, tokens, token, type, &arr_size, list_size(context->scopes) == 1));
@@ -1846,15 +1848,15 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 }
                 else if (incomplete_array) throw(NEXT_TOKEN, "Expected '{'");
                 else {
-                    if (type->kind == Type_Array) throw(token, "Assigning to an array");
-                    smartptr(jitc_ast_t) assign = mknode(AST_Binary, token);
-                    smartptr(jitc_ast_t) variable = mknode(AST_Variable, token);
+                    if (type->kind == Type_Array) throw(equals_token, "Assigning to an array");
+                    smartptr(jitc_ast_t) assign = mknode(AST_Binary, equals_token);
+                    smartptr(jitc_ast_t) variable = mknode(AST_Variable, equals_token);
                     variable->variable.name = type->name;
                     assign->binary.operation = Binary_AssignConst;
                     assign->binary.right = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
                     assign->binary.left = move(variable);
                     if (list_size(context->scopes) == 1 && !is_constant(assign->binary.right))
-                        throw(token, "Assigning a non-literal to a global variable");
+                        throw(equals_token, "Assigning a non-literal to a global variable");
                     list_add(list->list.inner) = try(jitc_process_ast(context, move(assign), NULL));
                 }
             }
