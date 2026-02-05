@@ -346,10 +346,11 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                     while (true) {
                         field_type = jitc_typecache_named(context, field_type, NULL);
                         try(jitc_parse_type_declarations(context, tokens, &field_type));
+                        const char* field_name = field_type->name;
                         if (!jitc_validate_type(field_type, TypePolicy_NoUndefTags)) {
                             jitc_type_t* resolved = jitc_get_tagged_type(context, field_type);
-                            if (!resolved) throw(NEXT_TOKEN, "Cannot access an incomplete struct");
-                            field_type = resolved;
+                            if (!resolved) throw(NEXT_TOKEN, "Cannot declare an incomplete struct");
+                            field_type = jitc_typecache_named(context, resolved, field_name);
                         }
                         if (!jitc_validate_type(field_type, TypePolicy_NoIncomplete)) throw(NEXT_TOKEN, "Field '%s' has incomplete type", field_type->name);
                         if (field_type->name) if (jitc_struct_field_exists_list(fields, field_type->name))
@@ -364,11 +365,8 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                 if (template_names) type = jitc_typecache_template(context, type, template_names);
                 if (name_token) {
                     const char* name = token->type == TOKEN_struct ? "Struct" : "Union";
-                    if (!jitc_template_params_check(context, type, name_token->value.string))
-                        throw(name_token, "%s '%s' has a different number of template parameters", name, name_token->value.string);
                     jitc_pop_scope(context);
-                    if (!jitc_declare_tagged_type(context, type, name_token->value.string))
-                        throw(name_token, "%s '%s' already defined", name, name_token->value.string);
+                    jitc_declare_tagged_type(context, type, name_token->value.string);
                 }
                 else jitc_pop_scope(context);
             }
@@ -401,8 +399,6 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                     }
                 }
                 if (!type) type = (token->type == TOKEN_struct ? jitc_typecache_structref : jitc_typecache_unionref)(context, name_token->value.string, template_list);
-                if (!jitc_template_params_check(context, type, name_token->value.string))
-                    throw(name_token, "%s '%s' has a different number of template parameters", token->type == TOKEN_struct ? "Struct" : "Union", name_token->value.string);
             }
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_enum))) {
@@ -536,8 +532,6 @@ bool jitc_can_cast(jitc_type_t* from, jitc_type_t* to, bool explicit, bool is_ze
     ) return false;
     if (is_floating(from) && is_pointer(to)) return false;
     if (is_floating(to) && is_pointer(from)) return false;
-    if (!explicit && is_integer(from) && is_pointer(to) && from->kind != Type_Int64 && !is_zero) return false;
-    if (!explicit && is_integer(to) && is_pointer(from) &&   to->kind != Type_Int64 && !is_zero) return false;
     return true;
 }
 
@@ -654,17 +648,17 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
         case AST_WalkStruct: if (!node->exprtype) {
             jitc_type_t* type;
             node->walk_struct.struct_ptr = try(jitc_process_ast(context, node->walk_struct.struct_ptr, &type));
-            if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) {
-                jitc_type_t* resolved = jitc_get_tagged_type(context, type);
-                if (!resolved) throw(node->token, "Cannot access an incomplete struct");
-                type = node->walk_struct.struct_ptr->exprtype = resolved;
-            }
             while (is_pointer(type)) {
                 jitc_ast_t* deref = mknode(AST_Unary, node->token);
                 deref->unary.operation = Unary_Dereference;
                 deref->unary.inner = node->walk_struct.struct_ptr;
                 deref->exprtype = type = type->ptr.base;
                 node->walk_struct.struct_ptr = deref;
+            }
+            if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) {
+                jitc_type_t* resolved = jitc_get_tagged_type(context, type);
+                if (!resolved) throw(node->token, "Cannot access an incomplete struct");
+                type = node->walk_struct.struct_ptr->exprtype = resolved;
             }
             if (is_struct(type) && jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset)) {
                 if (node->walk_struct.templ_list) throw(node->token, "Template parameter list on a struct field");
@@ -1647,6 +1641,11 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
         return mknode(AST_Break, token);
     }
+    if ((token = jitc_token_expect(tokens, TOKEN_interrupt))) {
+        if (!(allowed & ParseType_Command)) throw(token, "'interrupt' not allowed here");
+        if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
+        return mknode(AST_Interrupt, token);
+    }
     if ((token = jitc_token_expect(tokens, TOKEN_goto))) {
         if (!(allowed & ParseType_Command)) throw(token, "'goto' not allowed here");
         if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) throw(NEXT_TOKEN, "Expected identifier");
@@ -1893,10 +1892,9 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* _tokens) {
             continue;
         }
         list(jitc_token_t)* token_list = request->tokens;
-        smartptr(queue(jitc_token_t)) func_tokens = queue_new(jitc_token_t);
+        smartptr(queue(jitc_token_t)) func_tokens = (void*)(tokens = queue_new(jitc_token_t));
         smartptr(jitc_ast_t) func = mknode(AST_Function, NEXT_TOKEN);
         smartptr(jitc_ast_t) body = mknode(AST_List, NEXT_TOKEN);
-        tokens = (void*)func_tokens;
         for (int i = 0; i < list_size(token_list); i++) queue_push(tokens) = list_get(token_list, i);
         func->func.variable = type;
         jitc_push_scope(context);

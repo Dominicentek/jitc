@@ -167,7 +167,7 @@ int main(int argc, char** argv) {
     jitc_scope_t* scope = &list_get(context->scopes, 0);
     for (int i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
-        jitc_variable_t* var = &map_get_value(scope->variables);
+        jitc_variable_t* var = map_get_value(scope->variables);
         if (var->type->kind != Type_Function) continue;
         if (var->decltype != Decltype_None && var->decltype != Decltype_Static) continue;
         printf("%s:\n", var->type->name);

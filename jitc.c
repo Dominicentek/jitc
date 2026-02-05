@@ -376,6 +376,10 @@ jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from) {
 }
 
 bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
+    if (a->kind == Type_StructRef || a->kind == Type_UnionRef || a->kind == Type_EnumRef)
+        a = jitc_get_tagged_type(context, a) ?: a;
+    if (b->kind == Type_StructRef || b->kind == Type_UnionRef || b->kind == Type_EnumRef)
+        b = jitc_get_tagged_type(context, b) ?: b;
     if ((a->kind == Type_Struct || a->kind == Type_Union) && (b->kind == Type_Struct || b->kind  == Type_Union))
         return a->str.source_token = b->str.source_token;
     return jitc_typecache_named(context, a, NULL) == jitc_typecache_named(context, b, NULL);
@@ -391,7 +395,7 @@ jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type) {
     ) {
         uint64_t hash = jitc_typecache_named(context, func->func.params[0]->ptr.base, NULL)->hash;
         char new_name[2 + 16 + strlen(type->name) + 1];
-        sprintf(new_name, "@m%16lx%s", hash, type->name);
+        sprintf(new_name, "@m%016lx%s", hash, type->name);
         type = jitc_typecache_named(context, type, jitc_append_string(context, new_name));
     }
     return type;
@@ -411,7 +415,12 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
         if (!jitc_typecmp(context, prev->type, type)) preserve_policy = Preserve_Never; // todo: add compatible merges
         if (prev->decltype != decltype) preserve_policy = Preserve_Never;
         if (preserve_policy == Preserve_Never) {
-            if (prev->decltype != Decltype_EnumItem && prev->type->kind != Type_Function) free(prev->ptr);
+            if (
+                prev->decltype != Decltype_EnumItem &&
+                prev->decltype != Decltype_Extern &&
+                prev->decltype != Decltype_Typedef &&
+                prev->type->kind != Type_Function
+            ) free(prev->ptr);
             prev->type = type;
             prev->decltype = decltype;
             if (prev->type->kind != Type_Function) prev->enum_value = value;
@@ -425,13 +434,15 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     bool global = scope == &list_get(context->scopes, 0);
     map_add(scope->variables) = (char*)type->name;
     map_commit(scope->variables);
-    jitc_variable_t* var = &map_get_value(scope->variables);
+    jitc_variable_t* var = malloc(sizeof(jitc_variable_t));
     var->type = type;
     var->extern_symbol = extern_symbol;
     var->decltype = decltype;
     var->enum_value = value;
     var->preserve_policy = preserve_policy;
     var->initial = true;
+    var->ptr = 0;
+    map_get_value(scope->variables) = var;
     return true;
 }
 
@@ -444,28 +455,11 @@ bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const 
     if (kind == Type_Union) map = (void*)scope->unions;
     if (kind == Type_Enum) map = (void*)scope->enums;
     if (!map) return false;
-    if (map_find(map, &name)) return false;
-    map_add(map) = (char*)name;
-    map_commit(map);
+    if (!map_find(map, &name)) {
+        map_add(map) = (char*)name;
+        map_commit(map);
+    }
     map_get_value(map) = type;
-    return true;
-}
-
-bool jitc_template_params_check(jitc_context_t* context, jitc_type_t* type, const char* name) {
-    jitc_scope_t* scope = &list_get(context->scopes, list_size(context->scopes) - 1);
-    map(char*, int)* map = NULL;
-    int num_params = -1;
-    if (type->kind == Type_Template) num_params = type->templ.num_names;
-    if (type->kind == Type_StructRef || type->kind == Type_UnionRef) num_params = type->ref.templ_types ? type->ref.templ_num_types : -1;
-    jitc_type_kind_t kind = type->kind;
-    if (kind == Type_Template) kind = type->templ.base->kind;
-    if (kind == Type_Struct || kind == Type_StructRef) map = (void*)scope->struct_template_params;
-    if (kind == Type_Union || kind == Type_UnionRef) map = (void*)scope->union_template_params;
-    if (!map) return false;
-    if (map_find(map, &name)) return map_get_value(map) == num_params;
-    map_add(map) = (char*)name;
-    map_commit(map);
-    map_get_value(map) = num_params;
     return true;
 }
 
@@ -477,7 +471,7 @@ jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
         jitc_scope_t* scope = &list_get(context->scopes, i);
         if (scope->func) outside_of_function = true;
         if (!map_find(scope->variables, &name)) continue;
-        return &map_get_value(scope->variables);
+        return map_get_value(scope->variables);
     }
     return NULL;
 }
@@ -518,8 +512,6 @@ void jitc_push_scope(jitc_context_t* context) {
     scope->structs = map_new(compare_string, char*, jitc_type_t*);
     scope->unions = map_new(compare_string, char*, jitc_type_t*);
     scope->enums = map_new(compare_string, char*, jitc_type_t*);
-    scope->struct_template_params = map_new(compare_string, char*, int);
-    scope->union_template_params = map_new(compare_string, char*, int);
     scope->func = false;
 }
 
@@ -529,12 +521,14 @@ void jitc_push_function(jitc_context_t* context) {
 }
 
 static void jitc_destroy_scope(jitc_scope_t* scope) {
+    for (size_t i = 0; i < map_size(scope->variables); i++) {
+        map_index(scope->variables, i);
+        free(map_get_value(scope->variables));
+    }
     map_delete(scope->variables);
     map_delete(scope->structs);
     map_delete(scope->unions);
     map_delete(scope->enums);
-    map_delete(scope->struct_template_params);
-    map_delete(scope->union_template_params);
 }
 
 bool jitc_pop_scope(jitc_context_t* context) {
@@ -702,7 +696,7 @@ jitc_context_t* jitc_create_context() {
 static jitc_variable_t* jitc_get_symbol(jitc_context_t* context, const char* name, bool normal_only) {
     jitc_scope_t* scope = &list_get(context->scopes, 0);
     if (!map_find(scope->variables, &name)) return NULL;
-    jitc_variable_t* var = &map_get_value(scope->variables);
+    jitc_variable_t* var = map_get_value(scope->variables);
     if (var->decltype == Decltype_Typedef) return NULL;
     if (var->decltype == Decltype_Extern && normal_only) return NULL;
     if (var->decltype == Decltype_Static && normal_only) return NULL;
@@ -721,7 +715,7 @@ void jitc_link(jitc_context_t* context) {
     jitc_scope_t* scope = &list_get(context->scopes, 0);
     for (size_t i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
-        jitc_variable_t* var = &map_get_value(scope->variables);
+        jitc_variable_t* var = map_get_value(scope->variables);
         if (var->decltype == Decltype_EnumItem || var->decltype == Decltype_Typedef || var->ptr) continue;
         if (var->decltype != Decltype_Extern) {
             context->unresolved_symbol = var->type->name;
@@ -737,7 +731,7 @@ void jitc_link(jitc_context_t* context) {
     }
     for (size_t i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
-        jitc_variable_t* var = &map_get_value(scope->variables);
+        jitc_variable_t* var = map_get_value(scope->variables);
         if (var->decltype == Decltype_EnumItem || var->decltype == Decltype_Typedef || var->decltype == Decltype_Extern) continue;
         if (var->type->kind != Type_Function || !var->func) continue;
         var->func->addr->curr_ptr = !context->unresolved_symbol ? var->func->addr->ptr : (void*)jitc_link_error_stub;
@@ -754,7 +748,7 @@ jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, con
     jitc_scope_t* scope = &list_get(context->scopes, 0);
     for (size_t i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
-        jitc_variable_t* var = &map_get_value(scope->variables);
+        jitc_variable_t* var = map_get_value(scope->variables);
         const char* symbol_name = map_get_key(scope->variables);
         const char* method_name = symbol_name + 18;
         if (strncmp(symbol_name, "@m", 2) != 0) continue;
@@ -787,7 +781,7 @@ jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* base, ma
         hash = hash_mix(hash, hash_int(map_get_value(templ_map)->hash));
     }
     char symbol_name[2 + 16 + strlen(base->name) + 1];
-    sprintf(symbol_name, "@t%16lx%s", hash, base->name);
+    sprintf(symbol_name, "@t%016lx%s", hash, base->name);
     return jitc_typecache_named(context, base, jitc_append_string(context, symbol_name));
 }
 
@@ -862,16 +856,16 @@ void jitc_create_header(jitc_context_t* context, const char* name, const char* c
 
 bool jitc_parse(jitc_context_t* context, const char* code, const char* filename) {
     smartptr(queue(jitc_token_t)) tokens = try(jitc_lex(context, code, filename));
-#ifdef DEBUG
+#if JITC_DEBUG || JITC_DEBUG_TOKENS
     extern queue_t* print_tokens(const char* source, queue_t* tokens);
     tokens = print_tokens("Lexer", tokens);
 #endif
     tokens = try(jitc_preprocess(context, move(tokens), NULL));
-#ifdef DEBUG
+#if JITC_DEBUG || JITC_DEBUG_PREPROCESSOR
     tokens = print_tokens("Preprocessor", tokens);
 #endif
     smartptr(jitc_ast_t) ast = jitc_parse_ast(context, tokens);
-#ifdef DEBUG
+#if JITC_DEBUG || JITC_DEBUG_AST
     extern void print_ast(jitc_ast_t* ast, int indent);
     print_ast(ast, 0);
 #endif

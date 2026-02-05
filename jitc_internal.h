@@ -63,6 +63,7 @@ typedef struct jitc_token_t jitc_token_t;
     ITEM(AST_Initializer) \
     ITEM(AST_Goto) \
     ITEM(AST_Label) \
+    ITEM(AST_Interrupt) \
 
 #define jitc_unary_op_t(ITEM) \
     ITEM(Unary_PrefixIncrement) \
@@ -325,12 +326,10 @@ typedef struct {
 } jitc_memchunk_t;
 
 typedef struct {
-    map(char*, jitc_variable_t)* variables;
+    map(char*, jitc_variable_t*)* variables;
     map(char*, jitc_type_t*)* structs;
     map(char*, jitc_type_t*)* unions;
     map(char*, jitc_type_t*)* enums;
-    map(char*, int)* struct_template_params;
-    map(char*, int)* union_template_params;
     bool func;
 } jitc_scope_t;
 
@@ -383,6 +382,7 @@ struct jitc_context_t {
     KEYWORD(if) \
     KEYWORD(inline) \
     KEYWORD(int) \
+    KEYWORD(interrupt) \
     KEYWORD(lambda) \
     KEYWORD(long) \
     KEYWORD(nullptr) \
@@ -522,7 +522,6 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b);
 jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type);
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, const char* extern_symbol, jitc_preserve_t preserve_policy, uint64_t value);
 bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const char* name);
-bool jitc_template_params_check(jitc_context_t* context, jitc_type_t* type, const char* name);
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* type, map_t* templ_map);
@@ -558,5 +557,7 @@ void jitc_link(jitc_context_t* context);
 
 void jitc_destroy_ast(jitc_ast_t* ast);
 void jitc_delete_memchunks(jitc_context_t* context);
+
+void jitc_gdb_map_function(void* from, void* to, const char* name);
 
 #endif

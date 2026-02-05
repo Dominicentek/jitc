@@ -1,12 +1,11 @@
 #include "../jitc_internal.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 
 #include "../compares.h"
-
-//#define DEBUG
 
 typedef enum: uint8_t {
     rax, rcx, rdx, rbx,
@@ -65,7 +64,7 @@ typedef struct {
     ITEM(cbw) ITEM(cwd) ITEM(cdq) ITEM(cqo) ITEM(opc_push) ITEM(opc_pop) \
     ITEM(rep_movsb) ITEM(rep_movsw) ITEM(rep_movsd) ITEM(rep_movsq) \
     ITEM(rep_stosb) ITEM(rep_stosw) ITEM(rep_stosd) ITEM(rep_stosq) \
-    ITEM(cvt) \
+    ITEM(cvt) ITEM(int3) \
 
 ENUM(mnemonic_t)
 
@@ -229,6 +228,7 @@ static instr_t instructions[] = {
     { call, 0xFF, modrm_op2, { C_REG | C_MEM | C_S64 }, 0b010 },
     { leave, 0xC9 },
     { ret, 0xC3 },
+    { int3, 0xCC },
     { cbw, 0x98 },
     { cwd, 0x99, force_size },
     { cdq, 0x99 },
@@ -288,7 +288,7 @@ static stack_item_t* push(bytewriter_t* writer, stack_item_type_t type, jitc_typ
         }
         (*index)++;
     }
-#ifdef DEBUG
+#if JITC_DEBUG || JITC_DEBUG_CODEGEN_STACK
     printf("PUSH %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[type], stack_size(opstack), opstack_int_index, opstack_float_index);
 #endif
     return item;
@@ -317,7 +317,7 @@ static stack_item_t pop(bytewriter_t* writer) {
         if (!(item->value & (1L << 63))) stack_free(writer, 8);
         if (item->extra_storage != 0) stack_free(writer, item->extra_storage);
     }
-#ifdef DEBUG
+#if JITC_DEBUG || JITC_DEBUG_CODEGEN_STACK
     printf("POP  %s %d (%d %d)\n", (const char*[]){"literal", "rvalue", "lvalue", "lvalue_abs"}[item->type], stack_size(opstack), opstack_int_index, opstack_float_index);
 #endif
     return *item;
@@ -562,7 +562,7 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
 }
 
 static void emit(bytewriter_t* writer, mnemonic_t mnemonic, int num_ops, ...) {
-#ifdef DEBUG
+#if JITC_DEBUG || JITC_DEBUG_CODEGEN_EMIT
     printf("emitting %s\n", mnemonic_t_names[mnemonic]);
 #endif
     legalization_t candidates[sizeof(instructions) / sizeof(instr_t)] = {};
@@ -811,7 +811,7 @@ static void write_jump(bytewriter_t* writer) {
     ptr[-1] = bytewriter_size(writer) - offset;
 }
 
-#ifdef DEBUG
+#if JITC_DEBUG || JITC_DEBUG_IR
 #define PRINT_FUNC printf("-- %s\n", __FUNCTION__ + 9);
 #else
 #define PRINT_FUNC
@@ -1011,8 +1011,9 @@ static void jitc_asm_zero(bytewriter_t* writer) { PRINT_FUNC
 
 static void jitc_asm_addrof(bytewriter_t* writer) { PRINT_FUNC
     stack_item_t item = pop(writer);
+    stack_item_t* out = push(writer, StackItem_rvalue, Type_Pointer, true);
     operand_t op1 = op(&item);
-    operand_t res = op(push(writer, StackItem_rvalue, Type_Pointer, true));
+    operand_t res = op(out);
     op1.kind = Type_Pointer;
     op1.is_unsigned = true;
     if (item.type != StackItem_rvalue) emit(writer, lea, 2, res, op1);
@@ -1258,4 +1259,8 @@ static void jitc_asm_label(bytewriter_t* writer, const char* label_name) { PRINT
             *(int32_t*)(bytewriter_data(writer) + pos - 4) = label->position - pos;
         }
     }
+}
+
+static void jitc_asm_int(bytewriter_t* writer) { PRINT_FUNC
+    emit(writer, int3, 0);
 }

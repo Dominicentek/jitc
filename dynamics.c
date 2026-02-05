@@ -203,8 +203,6 @@ void map_index(map_t* _map, size_t index) {
     map->cursor = &map->entries[index * map->pair_size];
 }
 
-#include <stdio.h>
-
 bool map_commit(map_t* _map) {
     __map_t* map = _map;
     void* last_entry = &map->entries[(map->length - 1) * map->pair_size];

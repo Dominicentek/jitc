@@ -1,1 +1,1 @@
-./compile.sh -DDEBUG=1 && gcc tester/inspect.c -L. -ljitc -g -o jitc-inspect && ./jitc-inspect $@
+./compile.sh -DJITC_DEBUG=1 && gcc tester/inspect.c -L. -ljitc -g -o jitc-inspect && ./jitc-inspect $@

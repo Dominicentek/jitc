@@ -12,7 +12,7 @@
 })
 
 
-#ifdef DEBUG
+#if JITC_DEBUG || JITC_DEBUG_ERRORS
 #define TRACE_ERRORS(str) fprintf(stderr, str " at %s:%d (%s)\n", __FILE__, __LINE__, __FUNCTION__)
 //#define TRACE_ERRORS(str) abort()
 #else

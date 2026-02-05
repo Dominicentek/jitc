@@ -527,11 +527,14 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                 char* filename = NULL;
                 if (token->type == TOKEN_STRING) filename = token->value.string;
                 else throw(token, "Expected string");
-                queue(jitc_token_t)* included = try(jitc_include(context, token, filename, macros));
-                while (queue_size(included) > 1) {
-                    jitc_token_t* inc_token = &queue_pop(included);
-                    jitc_push_location(inc_token, token->filename, token->row, token->col);
-                    list_add(out_stream.tokens) = *inc_token;
+                if (do_things) {
+                    queue(jitc_token_t)* included = try(jitc_include(context, token, filename, macros));
+                    while (queue_size(included) > 1) {
+                        offsetof(jitc_variable_t, ptr);
+                        jitc_token_t* inc_token = &queue_pop(included);
+                        jitc_push_location(inc_token, token->filename, token->row, token->col);
+                        list_add(out_stream.tokens) = *inc_token;
+                    }
                 }
                 // skip over EOF token
             }

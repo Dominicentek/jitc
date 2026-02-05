@@ -420,6 +420,9 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
         case AST_Label: {
             jitc_asm_label(writer, ast->label.name);
         } return false;
+        case AST_Interrupt: {
+            jitc_asm_int(writer);
+        } return false;
         default: break;
     }
     return false;
@@ -454,7 +457,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
         case AST_Function: {
             jitc_scope_t* global_scope = &list_get(context->scopes, 0);
             map_find(global_scope->variables, &ast->func.variable->name);
-            jitc_variable_t* var = &map_get_value(global_scope->variables);
+            jitc_variable_t* var = map_get_value(global_scope->variables);
             if (var->decltype == Decltype_Extern || var->decltype == Decltype_Typedef) break;
             if (var->func && var->preserve_policy == Preserve_Always) break;
 
@@ -464,7 +467,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             for (size_t i = 0; i < map_size(global_scope->variables); i++) {
                 map_index(global_scope->variables, i);
                 const char* name = map_get_key(global_scope->variables);
-                jitc_variable_t* var = &map_get_value(global_scope->variables);
+                jitc_variable_t* var = map_get_value(global_scope->variables);
                 map_add(variable_map) = (char*)name;
                 map_commit(variable_map);
                 stackvar_t* stackvar = &map_get_value(variable_map);
@@ -489,6 +492,9 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             size_t size = bytewriter_size(writer);
             autofree void* data = bytewriter_delete(writer);
             void* func_ptr = make_executable(context, data, size);
+#if JITC_DEBUG || JITC_DEBUG_GDB
+            jitc_gdb_map_function(func_ptr, (char*)func_ptr + size, ast->func.variable->name);
+#endif
             if (var->func) {
                 var->func->addr->ptr = func_ptr;
                 var->func->addr->size = size;
@@ -501,6 +507,9 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                 func->mov_rax[0] = 0x48; func->mov_rax[1] = 0xB8;
                 func->jmp_rax[0] = 0xFF; func->jmp_rax[1] = 0x20;
                 var->func = make_executable(context, func, sizeof(jitc_func_trampoline_t));
+#if JITC_DEBUG || JITC_DEBUG_GDB
+                jitc_gdb_map_function(var->func, (char*)var->func + sizeof(jitc_func_trampoline_t), ast->func.variable->name);
+#endif
             }
         } break;
         default: break;
