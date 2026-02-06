@@ -1,4 +1,6 @@
 jitc-tests
 jitc-inspect
 libjitc.so
+libjitc.a
+obj
 *.txt

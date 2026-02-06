@@ -381,7 +381,7 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
     if (b->kind == Type_StructRef || b->kind == Type_UnionRef || b->kind == Type_EnumRef)
         b = jitc_get_tagged_type(context, b) ?: b;
     if ((a->kind == Type_Struct || a->kind == Type_Union) && (b->kind == Type_Struct || b->kind  == Type_Union))
-        return a->str.source_token = b->str.source_token;
+        return a->str.source_token == b->str.source_token;
     return jitc_typecache_named(context, a, NULL) == jitc_typecache_named(context, b, NULL);
 }
 
@@ -441,7 +441,6 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     var->enum_value = value;
     var->preserve_policy = preserve_policy;
     var->initial = true;
-    var->ptr = 0;
     map_get_value(scope->variables) = var;
     return true;
 }
