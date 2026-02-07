@@ -413,6 +413,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
                 curr_offset += diff;
             }
             jitc_asm_offset(writer, -curr_offset);
+            if (ast->exprtype->kind == Type_Array) jitc_asm_addrof(writer);
         } return true;
         case AST_Goto: {
             jitc_asm_goto(writer, ast->label.name);

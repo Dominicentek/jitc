@@ -301,8 +301,8 @@ struct jitc_ast_t {
         struct {
             const char* name;
             jitc_ast_t* this_ptr;
-            bool write_dest;
             map_t* templ_map;
+            bool write_dest;
         } variable;
         struct {
             jitc_ast_t* struct_ptr;

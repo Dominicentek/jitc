@@ -632,6 +632,11 @@ static const char header_math[] = {
     ,0
 };
 
+static const char header_stdarg[] = {
+#embed "libc/stdarg.h" if_empty('\n')
+    ,0
+};
+
 static const char header_stdbool[] = {
 #embed "libc/stdbool.h" if_empty('\n')
     ,0
@@ -682,6 +687,7 @@ jitc_context_t* jitc_create_context() {
     jitc_create_header(context, "errno.h", header_errno);
     jitc_create_header(context, "limits.h", header_limits);
     jitc_create_header(context, "math.h", header_math);
+    jitc_create_header(context, "stdarg.h", header_stdarg);
     jitc_create_header(context, "stdbool.h", header_stdbool);
     jitc_create_header(context, "stddef.h", header_stddef);
     jitc_create_header(context, "stdint.h", header_stdint);

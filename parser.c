@@ -48,6 +48,7 @@ static struct {
 };
 
 static jitc_ast_t* root_node = NULL;
+static jitc_ast_t* func_node = NULL;
 
 static jitc_ast_t* mknode(jitc_ast_type_t type, jitc_token_t* token) {
     jitc_ast_t* ast = calloc(sizeof(jitc_ast_t), 1);
@@ -94,7 +95,7 @@ static bool is_constant(jitc_ast_t* ast) {
 }
 
 static bool is_lvalue(jitc_ast_t* ast) {
-    return ast->node_type == AST_Variable || (ast->node_type == AST_Unary && ast->unary.operation == Unary_Dereference) || ast->node_type == AST_WalkStruct;
+    return ast->node_type == AST_Variable || (ast->node_type == AST_Unary && ast->unary.operation == Unary_Dereference) || ast->node_type == AST_WalkStruct || ast->node_type == AST_Initializer;
 }
 
 bool jitc_peek_type(jitc_context_t* context, queue_t* _tokens) {
@@ -1349,6 +1350,10 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
             node->integer.value = type->ptr.base->size * type->ptr.arr_size;
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_lambda))) {
+        static uint64_t lambda_counter = 0;
+        char lambda_name[2 + 16 + 1];
+        sprintf(lambda_name, "@l%016lx", lambda_counter++);
+
         jitc_token_t* lambda_token = token;
         smartptr(list(jitc_type_t*)) params = list_new(jitc_type_t*);
         jitc_push_function(context);
@@ -1370,15 +1375,13 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
             throw(NEXT_TOKEN, "Expected ',' or ')'");
         }
         if (!jitc_token_expect(tokens, TOKEN_COLON)) throw(NEXT_TOKEN, "Expected ':'");
-        char lambda_name[2 + 16 + 1];
-        static uint64_t lambda_counter = 0;
-        sprintf(lambda_name, "@l%016lx", lambda_counter++);
         jitc_type_t* func = try(jitc_parse_type(context, tokens, NULL, NULL));
         func = jitc_typecache_function(context, func, params);
         func = jitc_typecache_named(context, func, jitc_append_string(context, lambda_name));
         jitc_declare_variable(context, jitc_typecache_named(context, func->func.ret, "return"), Decltype_None, NULL, 0, 0);
+        jitc_ast_t* prev_func_node = func_node;
         smartptr(jitc_ast_t) func_node = mknode(AST_Function, lambda_token);
-        smartptr(jitc_ast_t) func_body = mknode(AST_List, lambda_token);
+        smartptr(jitc_ast_t) func_body = func_node = mknode(AST_List, lambda_token);
         if (jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) {
             while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
                 list_add(func_body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
@@ -1403,6 +1406,28 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         node = mknode(AST_Variable, lambda_token);
         node->variable.name = func->name;
         list_add(root_node->list.inner) = move(func_node);
+        func_node = prev_func_node;
+    }
+    else if (stack_size(unary_stack) > 0 && stack_peek(unary_stack)->binary.operation == Binary_Cast && (token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
+        static uint64_t compound_literal_counter = 0;
+        char compound_literal_name[2 + 16 + 1];
+        sprintf(compound_literal_name, "@c%016lx", compound_literal_counter++);
+        char* name = jitc_append_string(context, compound_literal_name);
+
+        smartptr(jitc_ast_t) cast_node = stack_pop(unary_stack);
+        jitc_type_t* type = cast_node->binary.right->type.type;
+        size_t array_size;
+        node = try(jitc_parse_initializer(context, tokens, cast_node->token, type, &array_size, false));
+        node->init.store_to = mknode(AST_Variable, cast_node->token);
+        node->init.store_to->variable.name = name;
+        node->init.store_to->variable.write_dest = true;
+        if (type->kind == Type_Array && type->arr.size == -1) node->init.type = type = jitc_typecache_array(context, type->arr.base, array_size);
+
+        jitc_ast_t* decl = mknode(AST_Declaration, cast_node->token);
+        decl->decl.decltype = Decltype_None;
+        decl->decl.type = jitc_typecache_named(context, type, name);
+        jitc_declare_variable(context, decl->decl.type, Decltype_None, NULL, Preserve_IfConst, 0);
+        list_add(func_node->list.inner) = decl;
     }
     else throw(NEXT_TOKEN, "Expected expression");
     while (true) {
@@ -1547,15 +1572,28 @@ jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* _tokens, int
     return jitc_process_ast(context, move(left), exprtype);
 }
 
+jitc_ast_t* jitc_parse_parens(jitc_context_t* context, queue_t* _tokens) {
+    queue(jitc_token_t)* tokens = _tokens;
+    bool has_parens = jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN);
+    jitc_ast_t* node = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
+    if (has_parens) {
+        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
+    }
+    else {
+        if (jitc_token_expect(tokens, TOKEN_EQUALS_ARROW)) (void)0;
+        else if (queue_peek(tokens).type == TOKEN_BRACE_OPEN) (void)0;
+        else throw(NEXT_TOKEN, "Expected '=>' or '{'");
+    }
+    return node;
+}
+
 jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc_parse_type_t allowed) {
     queue(jitc_token_t)* tokens = _tokens;
     jitc_token_t* token = NULL;
     if ((token = jitc_token_expect(tokens, TOKEN_if))) {
         if (!(allowed & ParseType_Command)) throw(token, "'if' not allowed here");
         smartptr(jitc_ast_t) node = mknode(AST_Branch, token);
-        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) throw(NEXT_TOKEN, "Expected '('");
-        node->ternary.when = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
-        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
+        node->ternary.when = try(jitc_parse_parens(context, tokens));
         jitc_push_scope(context);
         node->ternary.then = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
         jitc_pop_scope(context);
@@ -1571,9 +1609,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
     if ((token = jitc_token_expect(tokens, TOKEN_while))) {
         if (!(allowed & ParseType_Command)) throw(token, "'while' not allowed here");
         smartptr(jitc_ast_t) node = mknode(AST_Loop, token);
-        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) throw(NEXT_TOKEN, "Expected '('");
-        node->loop.cond = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
-        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
+        node->loop.cond = try(jitc_parse_parens(context, tokens));
         jitc_push_scope(context);
         node->loop.body = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
         jitc_pop_scope(context);
@@ -1586,9 +1622,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
         smartptr(jitc_ast_t) scope = mknode(AST_Scope, token);
         list_add(scope->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
         if (!jitc_token_expect(tokens, TOKEN_while)) throw(NEXT_TOKEN, "Expected 'while'");
-        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN))  throw(NEXT_TOKEN, "Expected '('");
         smartptr(jitc_ast_t) condition = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
-        if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
         smartptr(jitc_ast_t) ternary = mknode(AST_Branch, token);
         ternary->ternary.when = move(condition);
@@ -1791,7 +1825,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 }
                 else {
                     smartptr(jitc_ast_t) func = mknode(AST_Function, token);
-                    smartptr(jitc_ast_t) body = mknode(AST_List, token);
+                    smartptr(jitc_ast_t) body = func_node = mknode(AST_List, token);
                     func->func.variable = type;
                     jitc_push_scope(context);
                     jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, NULL, Preserve_IfConst, 0);
@@ -1894,7 +1928,7 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* _tokens) {
         list(jitc_token_t)* token_list = request->tokens;
         smartptr(queue(jitc_token_t)) func_tokens = (void*)(tokens = queue_new(jitc_token_t));
         smartptr(jitc_ast_t) func = mknode(AST_Function, NEXT_TOKEN);
-        smartptr(jitc_ast_t) body = mknode(AST_List, NEXT_TOKEN);
+        smartptr(jitc_ast_t) body = func_node = mknode(AST_List, NEXT_TOKEN);
         for (int i = 0; i < list_size(token_list); i++) queue_push(tokens) = list_get(token_list, i);
         func->func.variable = type;
         jitc_push_scope(context);

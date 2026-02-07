@@ -188,6 +188,10 @@ static bool get_operand(jitc_context_t* context, map_t* macros, token_stream_t* 
         try(compute_expression(context, macros, stream, value, 1));
         expect_and(&list_get(stream->tokens, stream->ptr++), this->type == TOKEN_PARENTHESIS_CLOSE, "Expected ')'");
     }
+    else if (token->type == TOKEN_IDENTIFIER) {
+        // undefined macro
+        *value = 0;
+    }
     else throw(token, "Expected operand");
     while (stack_size(stack)) {
         jitc_token_type_t type = stack_pop(stack);
