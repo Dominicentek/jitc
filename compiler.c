@@ -387,7 +387,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
             jitc_type_kind_t kind = var->var.type->kind;
             bool is_unsigned = var->var.type->is_unsigned;
             if (var->var.type->kind == Type_Array) {
-                kind = var->var.type->arr.base->kind;
+                kind = var->is_global ? Type_Pointer : var->var.type->arr.base->kind;
                 is_unsigned = var->var.type->arr.base->is_unsigned;
             }
             if (var->is_global) jitc_asm_laddr(writer, var->var.ptr, kind, is_unsigned);

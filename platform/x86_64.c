@@ -60,7 +60,7 @@ typedef struct {
     ITEM(mov) ITEM(movzx) ITEM(movsx) ITEM(lea) \
     ITEM(add) ITEM(sub) ITEM(imul) ITEM(idiv) ITEM(and) ITEM(or) ITEM(xor) ITEM(cmp) \
     ITEM(shl) ITEM(shr) ITEM(sar) ITEM(not) ITEM(neg) ITEM(jmp) ITEM(jz) ITEM(jnz) ITEM(call) ITEM(leave) ITEM(ret) \
-    ITEM(sete) ITEM(setne) ITEM(setl) ITEM(setle) ITEM(setg) ITEM(setge) \
+    ITEM(sete) ITEM(setne) ITEM(setl) ITEM(setle) ITEM(setg) ITEM(setge) ITEM(seta) ITEM(setae) ITEM(setb) ITEM(setbe) \
     ITEM(cbw) ITEM(cwd) ITEM(cdq) ITEM(cqo) ITEM(opc_push) ITEM(opc_pop) \
     ITEM(rep_movsb) ITEM(rep_movsw) ITEM(rep_movsd) ITEM(rep_movsq) \
     ITEM(rep_stosb) ITEM(rep_stosw) ITEM(rep_stosd) ITEM(rep_stosq) \
@@ -79,6 +79,7 @@ typedef enum: uint16_t {
     twobyte = (1 << 7),
     flip_modrm = (1 << 8),
     no_rax = (1 << 9),
+    no_writeback = (1 << 10),
 
     modrm_op2 = modrm_op2_mask | has_modrm,
 } instr_flags_t;
@@ -191,15 +192,15 @@ static instr_t instructions[] = {
     { xor, 0x80, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b110 },
     { xor, 0x83, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b110 },
     { xor, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b110 },
-    { cmp, 0x38, has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
-    { cmp, 0x39, has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
-    { cmp, 0x3A, has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
-    { cmp, 0x3B, has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
-    { cmp, 0x80, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b111 },
-    { cmp, 0x83, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b111 },
-    { cmp, 0x81, modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b111 },
-    { cmp, 0x2E, has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
-    { cmp, 0x2E, has_modrm | twobyte | force_size | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
+    { cmp, 0x38, no_writeback | has_modrm, { C_REG | C_MEM | C__S8, C_REG | C__S8 }},
+    { cmp, 0x39, no_writeback | has_modrm, { C_REG | C_MEM | C_NO8, C_REG | C_NO8 }},
+    { cmp, 0x3A, no_writeback | has_modrm | flip_modrm, { C_REG | C__S8, C_REG | C_MEM | C__S8 }},
+    { cmp, 0x3B, no_writeback | has_modrm | flip_modrm, { C_REG | C_NO8, C_REG | C_MEM | C_NO8 }},
+    { cmp, 0x80, no_writeback | modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b111 },
+    { cmp, 0x83, no_writeback | modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C__S8 }, 0b111 },
+    { cmp, 0x81, no_writeback | modrm_op2, { C_REG | C_MEM | C_NO8, C_IMM | C_S16 | C_S32 }, 0b111 },
+    { cmp, 0x2E, no_writeback | has_modrm | twobyte | flip_modrm, { C_XMM | C_S32, C_XMM | C_MEM | C_S32 }},
+    { cmp, 0x2E, no_writeback | has_modrm | twobyte | force_size | flip_modrm, { C_XMM | C_S64, C_XMM | C_MEM | C_S64 }},
     { shl, 0xD2, modrm_op2, { C_REG | C_MEM | C__S8 }, 0b100 },
     { shl, 0xD3, modrm_op2, { C_REG | C_MEM | C_NO8 }, 0b100 },
     { shl, 0xC0, modrm_op2, { C_REG | C_MEM | C__S8, C_IMM | C__S8 }, 0b100 },
@@ -220,6 +221,10 @@ static instr_t instructions[] = {
     { setle, 0x9E, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
     { setg,  0x9F, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
     { setge, 0x9D, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { seta,  0x97, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { setae, 0x93, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { setb,  0x92, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
+    { setbe, 0x96, modrm_op2 | twobyte, { C_REG | C_MEM | C__S8 }, 0b000 },
     { jmp, 0xE9, 0, { C_IMM | C_S32 }},
     { jz, 0x84, twobyte, { C_IMM | C_S32 }},
     { jnz, 0x85, twobyte, { C_IMM | C_S32 }},
@@ -439,24 +444,24 @@ static bool legalize(legalization_t* legalization, operand_t op, instr_constrain
     instr_constraints_t size_mask = (instr_constraints_t[]){ C__S8, C_S16, C_S32, C_S64, C_S32, C_S64, C_S64 }[op.kind];
     if (!(constraints & size_mask)) return legalization->cost = 0;
     if (op.type == OpType_imm) {
-        if (constraints & C_IMM) (void)0;
-        else if (constraints & C_REG) step() = Legal_imm_reg;
-        else if (constraints & C_XMM) {
+        if ((constraints & C_IMM) && !isflt(op.kind)) (void)0;
+        else if ((constraints & C_REG) && !isflt(op.kind)) step() = Legal_imm_reg;
+        else if ((constraints & C_XMM) &&  isflt(op.kind)) {
             step() = Legal_imm_reg;
             step() = Legal_to_xmm;
         }
         else return legalization->cost = 0;
     }
     if (op.type == OpType_reg) {
-        if (isflt(op.kind) && (constraints & C_REG) && !(constraints & C_XMM) && !last_operand) step() = Legal_to_reg;
+        /*if (isflt(op.kind) && (constraints & C_REG) && !(constraints & C_XMM) && !last_operand) step() = Legal_to_reg;
         else if (!isflt(op.kind) && (constraints & C_XMM) && !(constraints & C_REG) && !last_operand) step() = Legal_to_xmm;
-        else if (!(constraints & (isflt(op.kind) ? C_XMM : C_REG))) return legalization->cost = 0;
+        else*/ if (!(constraints & (isflt(op.kind) ? C_XMM : C_REG))) return legalization->cost = 0;
     }
     if (op.type == OpType_ptrptr) step() = Legal_deref_mem;
     if (op.type == OpType_ptrptr || op.type == OpType_ptr) {
         if (constraints & C_MEM) (void)0;
-        else if (constraints & C_REG) step() = Legal_deref_reg;
-        else if (constraints & C_XMM) step() = Legal_deref_xmm;
+        else if ((constraints & C_REG) && !isflt(op.kind)) step() = Legal_deref_reg;
+        else if ((constraints & C_XMM) &&  isflt(op.kind)) step() = Legal_deref_xmm;
         else return legalization->cost = 0;
     }
     step() = Legal_perform;
@@ -589,7 +594,7 @@ static void emit(bytewriter_t* writer, mnemonic_t mnemonic, int num_ops, ...) {
         // this effectively counts the number of operands
         if (strnlen((char*)instructions[i].constraints, 2) != num_ops) continue;
         for (int j = num_ops - 1; j >= 0; j--) {
-            if (!legalize(&candidates[i], ops[j], instructions[i].constraints[j], j == 0)) break;
+            if (!legalize(&candidates[i], ops[j], instructions[i].constraints[j], j == 0 && !(instructions[i].flags & no_writeback))) break;
             if (j != 0) candidates[i].steps[candidates[i].cost - 1] = Legal_next_op;
         }
         if (candidates[i].cost == 0) {
@@ -717,17 +722,19 @@ static void bitshift(bytewriter_t* writer, bool store, bool is_right) {
     emit(writer, is_right ? shr : shl, 1, op(res));
 }
 
-static void compare(bytewriter_t* writer, mnemonic_t mnemonic) {
+static void compare(bytewriter_t* writer, mnemonic_t signed_mnemonic, mnemonic_t unsigned_mnemonic) {
     stack_item_t op2 = pop(writer);
     stack_item_t op1 = pop(writer);
     operand_t res = op(push(writer, StackItem_rvalue, Type_Int8, true));
+    mnemonic_t mnemonic = isflt(op1.kind) || op1.is_unsigned ? unsigned_mnemonic : signed_mnemonic;
     emit(writer, cmp, 2, op(&op1), op(&op2));
     emit(writer, mnemonic, 1, res);
 }
 
-static void compare_against(bytewriter_t* writer, mnemonic_t mnemonic, operand_t op2) {
+static void compare_against(bytewriter_t* writer, mnemonic_t signed_mnemonic, mnemonic_t unsigned_mnemonic, operand_t op2) {
     stack_item_t op1 = pop(writer);
     operand_t res = op(push(writer, StackItem_rvalue, Type_Int8, true));
+    mnemonic_t mnemonic = isflt(op1.kind) || op1.is_unsigned ? unsigned_mnemonic : signed_mnemonic;
     emit(writer, cmp, 2, op(&op1), op2);
     emit(writer, mnemonic, 1, res);
 }
@@ -931,17 +938,23 @@ static void jitc_asm_shr(bytewriter_t* writer) { PRINT_FUNC
 }
 
 static void jitc_asm_sadd(bytewriter_t* writer) { PRINT_FUNC
+    if (isflt(peek(0)->kind) && peek(0)->type == StackItem_literal)
+        jitc_asm_rval(writer);
     emit(writer, add, 2, op(peek(1)), op(peek(0)));
     pop(writer);
 }
 
 static void jitc_asm_ssub(bytewriter_t* writer) { PRINT_FUNC
+    if (isflt(peek(0)->kind) && peek(0)->type == StackItem_literal)
+        jitc_asm_rval(writer);
     emit(writer, sub, 2, op(peek(1)), op(peek(0)));
     pop(writer);
 }
 
 static void jitc_asm_smul(bytewriter_t* writer) { PRINT_FUNC
     if (isflt(peek(1)->kind)) {
+        if (peek(0)->type == StackItem_literal)
+            jitc_asm_rval(writer);
         emit(writer, imul, 2, op(peek(1)), op(peek(0)));
         pop(writer);
     }
@@ -950,6 +963,8 @@ static void jitc_asm_smul(bytewriter_t* writer) { PRINT_FUNC
 
 static void jitc_asm_sdiv(bytewriter_t* writer) { PRINT_FUNC
     if (isflt(peek(1)->kind)) {
+        if (peek(0)->type == StackItem_literal)
+            jitc_asm_rval(writer);
         emit(writer, idiv, 2, op(peek(1)), op(peek(0)));
         pop(writer);
     }
@@ -1006,7 +1021,7 @@ static void jitc_asm_inc(bytewriter_t* writer, bool suffix, int32_t step) { PRIN
 }
 
 static void jitc_asm_zero(bytewriter_t* writer) { PRINT_FUNC
-    compare_against(writer, sete, imm(0, peek(0)->kind, peek(0)->is_unsigned));
+    compare_against(writer, sete, sete, imm(0, peek(0)->kind, peek(0)->is_unsigned));
 }
 
 static void jitc_asm_addrof(bytewriter_t* writer) { PRINT_FUNC
@@ -1020,27 +1035,27 @@ static void jitc_asm_addrof(bytewriter_t* writer) { PRINT_FUNC
 }
 
 static void jitc_asm_eql(bytewriter_t* writer) { PRINT_FUNC
-    compare(writer, sete);
+    compare(writer, sete, sete);
 }
 
 static void jitc_asm_neq(bytewriter_t* writer) { PRINT_FUNC
-    compare(writer, setne);
+    compare(writer, setne, setne);
 }
 
 static void jitc_asm_lst(bytewriter_t* writer) { PRINT_FUNC
-    compare(writer, setl);
+    compare(writer, setl, setb);
 }
 
 static void jitc_asm_lte(bytewriter_t* writer) { PRINT_FUNC
-    compare(writer, setle);
+    compare(writer, setle, setbe);
 }
 
 static void jitc_asm_grt(bytewriter_t* writer) { PRINT_FUNC
-    compare(writer, setg);
+    compare(writer, setg, seta);
 }
 
 static void jitc_asm_gte(bytewriter_t* writer) { PRINT_FUNC
-    compare(writer, setge);
+    compare(writer, setge, setae);
 }
 
 static void jitc_asm_swp(bytewriter_t* writer) { PRINT_FUNC

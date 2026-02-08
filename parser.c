@@ -48,7 +48,7 @@ static struct {
 };
 
 static jitc_ast_t* root_node = NULL;
-static jitc_ast_t* func_node = NULL;
+static jitc_ast_t* func_body_node = NULL;
 
 static jitc_ast_t* mknode(jitc_ast_type_t type, jitc_token_t* token) {
     jitc_ast_t* ast = calloc(sizeof(jitc_ast_t), 1);
@@ -1379,9 +1379,9 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         func = jitc_typecache_function(context, func, params);
         func = jitc_typecache_named(context, func, jitc_append_string(context, lambda_name));
         jitc_declare_variable(context, jitc_typecache_named(context, func->func.ret, "return"), Decltype_None, NULL, 0, 0);
-        jitc_ast_t* prev_func_node = func_node;
+        jitc_ast_t* prev_func_node = func_body_node;
         smartptr(jitc_ast_t) func_node = mknode(AST_Function, lambda_token);
-        smartptr(jitc_ast_t) func_body = func_node = mknode(AST_List, lambda_token);
+        smartptr(jitc_ast_t) func_body = func_body_node = mknode(AST_List, lambda_token);
         if (jitc_token_expect(tokens, TOKEN_BRACE_OPEN)) {
             while (!jitc_token_expect(tokens, TOKEN_BRACE_CLOSE)) {
                 list_add(func_body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
@@ -1406,7 +1406,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         node = mknode(AST_Variable, lambda_token);
         node->variable.name = func->name;
         list_add(root_node->list.inner) = move(func_node);
-        func_node = prev_func_node;
+        func_body_node = prev_func_node;
     }
     else if (stack_size(unary_stack) > 0 && stack_peek(unary_stack)->binary.operation == Binary_Cast && (token = jitc_token_expect(tokens, TOKEN_BRACE_OPEN))) {
         static uint64_t compound_literal_counter = 0;
@@ -1427,7 +1427,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         decl->decl.decltype = Decltype_None;
         decl->decl.type = jitc_typecache_named(context, type, name);
         jitc_declare_variable(context, decl->decl.type, Decltype_None, NULL, Preserve_IfConst, 0);
-        list_add(func_node->list.inner) = decl;
+        list_add(func_body_node->list.inner) = decl;
     }
     else throw(NEXT_TOKEN, "Expected expression");
     while (true) {
@@ -1825,7 +1825,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 }
                 else {
                     smartptr(jitc_ast_t) func = mknode(AST_Function, token);
-                    smartptr(jitc_ast_t) body = func_node = mknode(AST_List, token);
+                    smartptr(jitc_ast_t) body = func_body_node = mknode(AST_List, token);
                     func->func.variable = type;
                     jitc_push_scope(context);
                     jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, NULL, Preserve_IfConst, 0);
@@ -1928,7 +1928,7 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* _tokens) {
         list(jitc_token_t)* token_list = request->tokens;
         smartptr(queue(jitc_token_t)) func_tokens = (void*)(tokens = queue_new(jitc_token_t));
         smartptr(jitc_ast_t) func = mknode(AST_Function, NEXT_TOKEN);
-        smartptr(jitc_ast_t) body = func_node = mknode(AST_List, NEXT_TOKEN);
+        smartptr(jitc_ast_t) body = func_body_node = mknode(AST_List, NEXT_TOKEN);
         for (int i = 0; i < list_size(token_list); i++) queue_push(tokens) = list_get(token_list, i);
         func->func.variable = type;
         jitc_push_scope(context);

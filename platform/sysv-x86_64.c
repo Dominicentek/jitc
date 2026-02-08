@@ -22,6 +22,9 @@ typedef struct {
     uint16_t size, offset;
 } abi_primitive_t;
 
+static jitc_type_t* func_signature = NULL;
+static size_t stack_storage_size = 0;
+
 static void append_primitives(list_t* _list, jitc_type_t* type, size_t offset) {
     list(abi_primitive_t)* list = _list;
     if (type->kind == Type_Struct || type->kind == Type_Union) for (size_t i = 0; i < type->str.num_fields; i++) {
@@ -78,7 +81,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     stack_item_t func = pop(writer);
 
     // classify
-    int int_params = 0, float_params = 0, stack_params = 0, vararg_float_params = 0, stack_size = 0;
+    int int_params = 0, float_params = 0, stack_params = 0, vararg_float_params = 0;
     bool has_varargs = signature->func.num_params != 0 && signature->func.params[signature->func.num_params - 1]->kind == Type_Varargs;
     abi_arg_t args[num_args + 1];
     args[0] = classify(signature->func.ret, &int_params, &float_params, &stack_params);
@@ -87,28 +90,42 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     for (size_t i = 0; i < num_args; i++) {
         args[i + 1] = classify(arg_types[i], &int_params, &float_params, &stack_params);
     }
+    
+    // preserve registers
+    int num_preserved_regs = 0;
+    for (size_t i = num_args; i < stack_size(opstack); i++) {
+        stack_item_t* item = peek(i);
+        if (item->type != StackItem_rvalue && item->type != StackItem_lvalue_abs) continue;
+        if (!(item->value & (1L << 63))) continue;
+        int index = item->value & ~(1L << 63);
+        reg_t value_reg = (isflt(item->kind) ? stack_xmms : stack_regs)[index];
+        jitc_type_kind_t kind = isflt(item->kind) ? Type_Float64 : Type_Int64;
+        if (!isflt(item->kind) && value_reg != r10 && value_reg != r11) continue;
+        emit(writer, mov, 2, ptr(rbp, -stack_storage_size - ++num_preserved_regs * 8, kind, false), reg(value_reg, kind, false));
+    }
 
     // allocate stack
+    int stack_used_bytes = 0;
     int varargs_offset = 0;
     for (size_t i = 0; i < num_args + 1; i++) {
         if (!args[i].is_big) continue;
-        if (stack_size % args[i].type->alignment) stack_size += args[i].type->alignment - (stack_size % args[i].type->alignment);
-        args[i].stack_offset = stack_size;
-        stack_size += args[i].type->size;
+        if (stack_used_bytes % args[i].type->alignment) stack_used_bytes += args[i].type->alignment - (stack_used_bytes % args[i].type->alignment);
+        args[i].stack_offset = stack_used_bytes;
+        stack_used_bytes += args[i].type->size;
     }
     if (has_varargs) {
-        varargs_offset = stack_size;
-        stack_size += 8;
+        varargs_offset = stack_used_bytes;
+        stack_used_bytes += 8;
     }
-    stack_size += stack_params * 8;
-    if ((stack_size + stack_bytes) % 16 != 0) stack_size += 16 - ((stack_size + stack_bytes) % 16);
-    if (stack_size != 0) stack_sub(writer, stack_size);
+    stack_used_bytes += stack_params * 8;
+    if ((stack_used_bytes + stack_bytes) % 16 != 0) stack_used_bytes += 16 - ((stack_used_bytes + stack_bytes) % 16);
+    if (stack_used_bytes != 0) stack_sub(writer, stack_used_bytes);
 
     // copy shit onto stack
     for (size_t i = 1; i < num_args + 1; i++) {
         if (!args[i].is_big) continue;
         stack_item_t* item = peek(i - 1);
-        copy(writer, ptr(rsp, stack_size - args[i].stack_offset - args[i].type->size, Type_Int64, true), op(item), args[i].type->size, args[i].type->alignment);
+        copy(writer, ptr(rsp, stack_used_bytes - args[i].stack_offset - args[i].type->size, Type_Int64, true), op(item), args[i].type->size, args[i].type->alignment);
     }
 
     // copy args
@@ -116,7 +133,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     if (has_varargs) num_fixed_args--;
     int_params = float_params = stack_params = 0;
     if (args[0].is_big) {
-        emit(writer, lea, 2, reg(rdi, Type_Int64, true), ptr(rsp, stack_size - args[0].stack_offset - args[0].type->size, Type_Int64, true));
+        emit(writer, lea, 2, reg(rdi, Type_Int64, true), ptr(rsp, stack_used_bytes - args[0].stack_offset - args[0].type->size, Type_Int64, true));
         int_params = 1;
     }
     for (size_t i = 1; i < num_args + 1; i++) {
@@ -124,7 +141,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
         for (size_t j = 0; j <= args[i].is_128bit; j++) {
             abi_class_t class = (&args[i].class)[j];
             if (j != 0) item.offset += 8;
-            operand_t op1 = args[i].is_big ? ptr(rsp, stack_size - args[i].stack_offset - args[i].type->size, Type_Int64, true) : op(&item);
+            operand_t op1 = args[i].is_big ? ptr(rsp, stack_used_bytes - args[i].stack_offset - args[i].type->size, Type_Int64, true) : op(&item);
             mnemonic_t mnemonic = args[i].is_big ? lea : mov;
             if (class == ABIClass_FLOATING && float_params < 8) {
                 if (i > num_fixed_args && has_varargs) vararg_float_params++;
@@ -146,7 +163,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     if (func.type == StackItem_literal) {
         if (!has_varargs) emit(writer, call, 1, op(&func));
         else {
-            operand_t func_op = ptr(rsp, stack_size - varargs_offset - 8, Type_Pointer, true);
+            operand_t func_op = ptr(rsp, stack_used_bytes - varargs_offset - 8, Type_Pointer, true);
             emit(writer, mov, 2, func_op, op(&func));
             emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
             emit(writer, call, 1, func_op);
@@ -162,13 +179,13 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
         else if (func_op.disp == 0) emit(writer, call, 1, op(&func));
         else {
             func_op = reg(rax, Type_Pointer, true);
-            if (has_varargs) func_op = ptr(rsp, stack_size - varargs_offset - 8, Type_Pointer, true);
+            if (has_varargs) func_op = ptr(rsp, stack_used_bytes - varargs_offset - 8, Type_Pointer, true);
             emit(writer, lea, 2, func_op, op(&func));
             if (has_varargs) emit(writer, mov, 2, reg(rax, Type_Int32, true), imm(vararg_float_params, Type_Int32, true));
             emit(writer, call, 1, func_op);
         }
     }
-    if (stack_size != 0) stack_free(writer, stack_size);
+    if (stack_used_bytes != 0) stack_free(writer, stack_used_bytes);
 
     // return value
     stack_item_t* ret;
@@ -196,13 +213,26 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
             emit(writer, mov, 2, op(ret), reg(rax, ret->kind, ret->is_unsigned));
     }
     else ret = pushi(writer, StackItem_literal, Type_Int32, false, 0);
+
+    // restore preserved registers
+    num_preserved_regs = 0;
+    for (size_t i = 1; i < stack_size(opstack); i++) {
+        stack_item_t* item = peek(i);
+        if (item->type != StackItem_rvalue && item->type != StackItem_lvalue_abs) continue;
+        if (!(item->value & (1L << 63))) continue;
+        int index = item->value & ~(1L << 63);
+        reg_t value_reg = (isflt(item->kind) ? stack_xmms : stack_regs)[index];
+        jitc_type_kind_t kind = isflt(item->kind) ? Type_Float64 : Type_Int64;
+        if (!isflt(item->kind) && value_reg != r10 && value_reg != r11) continue;
+        emit(writer, mov, 2, reg(value_reg, kind, false), ptr(rbp, -stack_storage_size - ++num_preserved_regs * 8, kind, false));
+    }
 }
 
-static jitc_type_t* func_signature = NULL;
-
 static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t stack_size) {
+    if (stack_size % 16 != 0) stack_size += 16 - (stack_size % 16);
     clear_labels();
     func_signature = signature;
+    stack_storage_size = stack_size;
     emit(writer, opc_push, 1, reg(rbx, Type_Int64, true));
     emit(writer, opc_push, 1, reg(r12, Type_Int64, true));
     emit(writer, opc_push, 1, reg(r13, Type_Int64, true));
@@ -210,9 +240,7 @@ static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t s
     emit(writer, opc_push, 1, reg(r15, Type_Int64, true));
     emit(writer, opc_push, 1, reg(rbp, Type_Int64, true));
     emit(writer, mov, 2, reg(rbp, Type_Pointer, true), reg(rsp, Type_Pointer, true));
-    stack_size += 8;
-    if (stack_size % 16 != 0) stack_size += 16 - (stack_size % 16);
-    stack_size -= 8;
+    stack_size += 72; // used for caller-saved registers
     if (stack_size != 0) emit(writer, sub, 2, reg(rsp, Type_Pointer, true), imm(stack_size, Type_Int32, true));
 
     int int_params = 0, float_params = 0, stack_params = 7, offset = 0;
