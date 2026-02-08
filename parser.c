@@ -1447,12 +1447,15 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
             smartptr(list(jitc_type_t*)) template_list = NULL;
             if (!(token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) throw(NEXT_TOKEN, "Expected identifier");
             if (jitc_token_expect(tokens, TOKEN_LESS_THAN)) {
-                template_list = list_new(jitc_type_t*);
-                if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) while (true) {
-                    list_add(template_list) = try(jitc_parse_type(context, tokens, NULL, NULL));
-                    if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
-                    if (jitc_token_expect(tokens, TOKEN_GREATER_THAN)) break;
-                    throw(NEXT_TOKEN, "Expected ',' or '>'");
+                if (NEXT_TOKEN->type != TOKEN_GREATER_THAN && !jitc_peek_type(context, tokens)) queue_rollback(tokens);
+                else {
+                    template_list = list_new(jitc_type_t*);
+                    if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) while (true) {
+                        list_add(template_list) = try(jitc_parse_type(context, tokens, NULL, NULL));
+                        if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
+                        if (jitc_token_expect(tokens, TOKEN_GREATER_THAN)) break;
+                        throw(NEXT_TOKEN, "Expected ',' or '>'");
+                    }
                 }
             }
             if (dot->type == TOKEN_ARROW) {

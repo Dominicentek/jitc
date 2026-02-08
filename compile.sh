@@ -3,7 +3,7 @@ if not ls obj 2> /dev/null > /dev/null; then
 fi
 
 for i in $(find . -maxdepth 1 -name "*.c"); do
-    (gcc -c -o obj/${i%.c}.o $i -fPIC -g && echo Compiled $i) &
+    (gcc -c -o obj/${i%.c}.o $i -fPIC -g $@ && echo Compiled $i) &
 done
 wait $(jobs -p)
 

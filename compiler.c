@@ -125,7 +125,8 @@ static void append_to_size_tree(list_t* _list, jitc_ast_t* node) {
                 append_to_size_tree(size->list, list_get(node->list.inner, i));
             }
         } break;
-        case AST_Ternary: {
+        case AST_Ternary:
+        case AST_Branch: {
             stackvar_t* size = &list_add(list);
             size->is_leaf = false;
             size->is_global = false;
@@ -240,7 +241,7 @@ static bool assemble(bytewriter_t* writer, jitc_ast_t* ast, map_t* _variable_map
             }
             else {
                 if (ast->binary.operation != Binary_LogicAnd && ast->binary.operation != Binary_LogicOr) {
-                    if (get_su_number(ast->binary.left) < get_su_number(ast->binary.right)) {
+                    if (get_su_number(ast->binary.left) < get_su_number(ast->binary.right) && ast->binary.operation < Binary_Assignment) {
                         assemble(writer, ast->binary.right, variable_map, 0);
                         assemble(writer, ast->binary.left, variable_map, 0);
                         jitc_asm_swp(writer);

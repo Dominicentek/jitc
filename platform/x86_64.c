@@ -561,7 +561,10 @@ static void emit_instructions(bytewriter_t* writer, instr_t* instr, legalization
         } break;
         case Legal_next_op:
             curr_op--;
-            if (tmp_used) int_tmp++;
+            if (tmp_used) {
+                int_tmp = (int_tmp + 1) % 16;
+                flt_tmp = (flt_tmp + 1) % 16;
+            }
             break;
     }
 }
@@ -1007,8 +1010,8 @@ static void jitc_asm_not(bytewriter_t* writer) { PRINT_FUNC
 }
 
 static void jitc_asm_neg(bytewriter_t* writer) { PRINT_FUNC
+    if (peek(0)->type != StackItem_rvalue) jitc_asm_rval(writer);
     if (isflt(peek(0)->kind)) {
-        if (peek(0)->type != StackItem_rvalue) jitc_asm_rval(writer);
         stack_item_t op1 = pop(writer);
         stack_item_t* res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
         emit(writer, imul, 2, op(&op1), imm(*(uint64_t*)&(double){-1}, op1.kind, op1.is_unsigned));

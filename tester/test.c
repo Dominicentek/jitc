@@ -13,8 +13,6 @@ struct {
     { "tests/control-flow/010-switchcase.c", "switch not implemented yet" },
     { "tests/control-flow/011-fallthrough.c", "switch not implemented yet" },
     { "tests/control-flow/012-default.c", "switch not implemented yet" },
-    { "tests/floats/005-inf.c", "requires compound literals" },
-    { "tests/floats/006-nan.c", "requires compound literals" },
     { "tests/functions/007-varargs.c", "varargs not implemented yet"},
     { "tests/variables/005-shadow.c", "variable shadowing not implemented yet" },
 };
