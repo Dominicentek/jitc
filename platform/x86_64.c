@@ -263,6 +263,14 @@ static bool isflt(jitc_type_kind_t kind) {
     return kind == Type_Float32 || kind == Type_Float64;
 }
 
+static bool isswp(stack_item_t* op1, stack_item_t* op2) {
+    if (op1->type != StackItem_rvalue && op1->type != StackItem_lvalue_abs) return false;
+    if (op2->type != StackItem_rvalue && op2->type != StackItem_lvalue_abs) return false;
+    int val1 = op1->value & ~(1L << 63);
+    int val2 = op2->value & ~(1L << 63);
+    return val2 < val1;
+}
+
 static void correct_kind(jitc_type_kind_t* kind, bool* is_unsigned) {
     if (*kind > Type_Pointer && *kind != Type_Struct && *kind != Type_Union) *kind = Type_Pointer;
     if (*kind == Type_Pointer) *is_unsigned = true;
@@ -635,7 +643,7 @@ static void binaryop(bytewriter_t* writer, mnemonic_t mnemonic) {
     stack_item_t op1 = pop(writer);
     stack_item_t* res = push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);
     stack_item_t* writeback = NULL;
-    if (op1.type != StackItem_rvalue) {
+    if (op1.type != StackItem_rvalue || isswp(&op1, &op2)) {
         if (op2.type == StackItem_rvalue || op2.type == StackItem_lvalue_abs) {
             writeback = res;
             push(writer, StackItem_rvalue, op1.kind, op1.is_unsigned);

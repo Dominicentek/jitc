@@ -1350,11 +1350,18 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
             node->integer.value = type->ptr.base->size * type->ptr.arr_size;
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_lambda))) {
-        static uint64_t lambda_counter = 0;
-        char lambda_name[2 + 16 + 1];
-        sprintf(lambda_name, "@l%016lx", lambda_counter++);
-
         jitc_token_t* lambda_token = token;
+        char* lambda_name;
+        if ((token = jitc_token_expect(tokens, TOKEN_IDENTIFIER))) {
+            lambda_name = token->value.string;
+        }
+        else {
+            static uint64_t lambda_counter = 0;
+            char name[2 + 16 + 1];
+            sprintf(name, "@l%016lx", lambda_counter++);
+            lambda_name = jitc_append_string(context, name);
+        }
+
         smartptr(list(jitc_type_t*)) params = list_new(jitc_type_t*);
         jitc_push_function(context);
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) throw(NEXT_TOKEN, "Expected '('");
@@ -1377,7 +1384,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
         if (!jitc_token_expect(tokens, TOKEN_COLON)) throw(NEXT_TOKEN, "Expected ':'");
         jitc_type_t* func = try(jitc_parse_type(context, tokens, NULL, NULL));
         func = jitc_typecache_function(context, func, params);
-        func = jitc_typecache_named(context, func, jitc_append_string(context, lambda_name));
+        func = jitc_typecache_named(context, func, lambda_name);
         jitc_declare_variable(context, jitc_typecache_named(context, func->func.ret, "return"), Decltype_None, NULL, 0, 0);
         jitc_ast_t* prev_func_node = func_body_node;
         smartptr(jitc_ast_t) func_node = mknode(AST_Function, lambda_token);
