@@ -67,7 +67,9 @@ static uint64_t hash_type(jitc_type_t* type) {
             break;
         case Type_Struct:
         case Type_Union:
-            hash = hash_mix(hash, hash_ptr(type->str.source_token));
+            hash = hash_mix(hash, hash_int(type->str.source_location.row));
+            hash = hash_mix(hash, hash_int(type->str.source_location.col));
+            hash = hash_mix(hash, hash_ptr((char*)type->str.source_location.filename));
             for (size_t i = 0; i < type->str.num_fields; i++)
                 hash = hash_mix(hash, hash_ptr(type->str.fields[i]));
             break;
@@ -244,7 +246,7 @@ jitc_type_t* jitc_typecache_struct(jitc_context_t* context, list_t* _fields, jit
     str.str.num_fields = list_size(fields);
     str.str.fields = malloc(sizeof(jitc_type_t*) * list_size(fields));
     str.str.offsets = malloc(sizeof(size_t) * list_size(fields));
-    str.str.source_token = source;
+    str.str.source_location = source->locations[0];
     for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get(fields, i);
     jitc_update_struct(&str);
     return jitc_register_type(context, &str, true);
@@ -257,7 +259,7 @@ jitc_type_t* jitc_typecache_union(jitc_context_t* context, list_t* _fields, jitc
     str.str.num_fields = list_size(fields);
     str.str.fields = malloc(sizeof(jitc_type_t*) * list_size(fields));
     str.str.offsets = malloc(sizeof(size_t) * list_size(fields));
-    str.str.source_token = source;
+    str.str.source_location = source->locations[0];
     for (size_t i = 0; i < list_size(fields); i++) str.str.fields[i] = list_get(fields, i);
     jitc_update_struct(&str);
     return jitc_register_type(context, &str, true);
@@ -380,8 +382,6 @@ bool jitc_typecmp(jitc_context_t* context, jitc_type_t* a, jitc_type_t* b) {
         a = jitc_get_tagged_type(context, a) ?: a;
     if (b->kind == Type_StructRef || b->kind == Type_UnionRef || b->kind == Type_EnumRef)
         b = jitc_get_tagged_type(context, b) ?: b;
-    if ((a->kind == Type_Struct || a->kind == Type_Union) && (b->kind == Type_Struct || b->kind  == Type_Union))
-        return a->str.source_token == b->str.source_token;
     return jitc_typecache_named(context, a, NULL) == jitc_typecache_named(context, b, NULL);
 }
 
@@ -406,6 +406,15 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     jitc_variable_t* prev = jitc_get_variable(context, type->name);
     if (prev) {
         if (list_size(context->scopes) > 1) return false;
+        if (!jitc_typecmp(context, prev->type, type)) return false;
+        if (decltype == Decltype_Extern && (
+            prev->decltype == Decltype_None ||
+            prev->decltype == Decltype_Static
+        )) decltype = prev->decltype;
+        if (!(prev->decltype == Decltype_Extern && (
+            decltype == Decltype_None ||
+            decltype == Decltype_Static
+        )) && prev->decltype != decltype) return false;
         bool policy_ifconst = preserve_policy == Preserve_IfConst && prev->preserve_policy == Preserve_IfConst;
         if (preserve_policy == Preserve_IfConst) preserve_policy = prev->preserve_policy;
         if (preserve_policy == Preserve_IfConst) {

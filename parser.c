@@ -1797,7 +1797,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 if (decltype != Decltype_Typedef) list_add(list->list.inner) = move(node);
             }
             if (!jitc_declare_variable(context, type, decltype | (template_list ? Decltype_Template : 0), extern_symbol, preserve_policy, 0))
-                throw(token, "Symbol '%s' already declared", type->name);
+                throw(token, "Symbol '%s' already declared with a different signature", type->name);
             bool incomplete_array = !jitc_validate_type(type, TypePolicy_NoUnkArrSize);
             jitc_variable_t* var = jitc_get_variable(context, type->name);
 

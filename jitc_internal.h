@@ -189,7 +189,7 @@ struct jitc_type_t {
             jitc_type_t** fields;
             size_t* offsets;
             size_t num_fields;
-            jitc_token_t* source_token;
+            jitc_source_location_t source_location;
         } str;
         struct {
             const char* name;
