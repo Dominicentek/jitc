@@ -76,6 +76,7 @@ void* bytewriter_delete(bytewriter_t* writer);
 
 list_t* __list_new(size_t item_size);
 size_t list_size(list_t* list);
+void list_clear(list_t* list);
 void* __list_add(list_t* list);
 void* __list_get(list_t* list, size_t index);
 void list_remove(list_t* list, size_t index);
@@ -88,6 +89,7 @@ void list_delete(list_t* list);
 
 map_t* __map_new(compare_t compare, size_t key_size, size_t value_size);
 size_t map_size(map_t* map);
+void map_clear(map_t* map);
 bool map_find(map_t* map, void* key);
 void map_index(map_t* map, size_t index);
 bool map_commit(map_t* map);
@@ -105,6 +107,7 @@ void map_delete(map_t* map);
 
 set_t* __set_new(compare_t compare, size_t item_size);
 size_t set_size(set_t* set);
+void set_clear(set_t* set);
 bool set_commit(set_t* set);
 int set_indexof(set_t* set, void* key);
 void* __set_add(set_t* set);
@@ -120,6 +123,7 @@ void set_delete(set_t* set);
 
 stack_t* __stack_new(size_t item_size);
 size_t stack_size(stack_t* stack);
+void stack_clear(stack_t* stack);
 void* __stack_push(stack_t* stack);
 void* __stack_peek(stack_t* stack);
 void* __stack_pop(stack_t* stack);
@@ -133,6 +137,7 @@ void stack_delete(stack_t* stack);
 
 queue_t* __queue_new(size_t item_size);
 size_t queue_size(queue_t* queue);
+void queue_clear(queue_t* queue);
 void* __queue_push(queue_t* queue);
 void* __queue_peek(queue_t* queue);
 void* __queue_pop(queue_t* queue);

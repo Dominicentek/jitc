@@ -442,7 +442,7 @@ static bool process_identifier(jitc_context_t* context, token_stream_t* dest, to
     return true;
 }
 
-queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* _macros) {
+queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* _macros, list_t* _dependencies) {
     typedef struct {
         jitc_token_t* start;
         enum {
@@ -454,6 +454,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
     } cond_t;
 
     map(char*, macro_t)* macros = _macros;
+    list(jitc_token_t)* dependencies = _dependencies;
     queue(jitc_token_t)* token_queue = _token_queue;
     smartptr(list(jitc_token_t)) result = list_new(jitc_token_t);
     smartptr(list(jitc_token_t)) tokens = list_new(jitc_token_t);
@@ -532,7 +533,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                 if (token->type == TOKEN_STRING) filename = token->value.string;
                 else throw(token, "Expected string");
                 if (do_things) {
-                    queue(jitc_token_t)* included = try(jitc_include(context, token, filename, macros));
+                    queue(jitc_token_t)* included = try(jitc_include(context, token, filename, macros, dependencies));
                     while (queue_size(included) > 1) {
                         offsetof(jitc_variable_t, ptr);
                         jitc_token_t* inc_token = &queue_pop(included);
@@ -594,6 +595,10 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                 if (cond->has_else) throw(token, "Duplicate else");
                 cond->start = token;
                 cond->state = cond->state != Cond_Expanded ? pass ? Cond_Expanding : Cond_WillExpand : Cond_Expanded;
+            }
+            else if ((is_identifier(token, "depends"))) {
+                token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_STRING, "Expected string literal");
+                if (do_things) list_add(dependencies) = *token;
             }
             else throw(token, "Invalid preprocessor directive");
             while (advance(&stream, &curr_line));

@@ -41,6 +41,16 @@
     _tmp; \
 })
 
+#ifdef __clang__ // shut up clangd
+#define defer
+#else // gcc
+#define defer __DEFER__(__COUNTER__)
+#define __DEFER__(id) \
+    auto void __deferf_##id(int*); \
+    __attribute__((cleanup(__deferf_##id))) int __deferv_##id; \
+    auto void __deferf_##id(int*)
+#endif
+
 void __cleanup_alloc(void* ptr);
 
 void __cleanup_FILE(void* file);

@@ -414,7 +414,10 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
         if (!(prev->decltype == Decltype_Extern && (
             decltype == Decltype_None ||
             decltype == Decltype_Static
-        )) && prev->decltype != decltype) return false;
+        )) && !(
+            (decltype == Decltype_None && prev->decltype == Decltype_Static) ||
+            (prev->decltype == Decltype_None && decltype == Decltype_Static)
+        ) && prev->decltype != decltype) return false;
         bool policy_ifconst = preserve_policy == Preserve_IfConst && prev->preserve_policy == Preserve_IfConst;
         if (preserve_policy == Preserve_IfConst) preserve_policy = prev->preserve_policy;
         if (preserve_policy == Preserve_IfConst) {
@@ -686,6 +689,7 @@ jitc_context_t* jitc_create_context() {
     context->strings = set_new(compare_string, char*);
     context->typecache = map_new(compare_int64, char*, jitc_type_t);
     context->headers = map_new(compare_string, char*, char*);
+    context->tasks = map_new(compare_string, char*, jitc_build_task_t);
     context->labels = list_new(char*);
     context->scopes = list_new(jitc_scope_t);
     context->memchunks = list_new(jitc_memchunk_t);
@@ -851,14 +855,14 @@ static char* read_whole_file(jitc_context_t* context, const char* filename) {
     return code;
 }
 
-queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* filename, map_t* macros) {
+queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* filename, map_t* macros, list_t* dependencies) {
     smartptr(queue(jitc_token_t)) tokens = NULL;
     if (!map_find(context->headers, &filename)) {
         autofree char* content = try(read_whole_file(context, filename));
         tokens = try(jitc_lex(context, content, filename));
     }
     else tokens = try(jitc_lex(context, map_get_value(context->headers), filename));
-    tokens = try(jitc_preprocess(context, move(tokens), macros));
+    tokens = try(jitc_preprocess(context, move(tokens), macros, dependencies));
     return move(tokens);
 }
 
@@ -874,7 +878,7 @@ bool jitc_parse(jitc_context_t* context, const char* code, const char* filename)
     extern queue_t* print_tokens(const char* source, queue_t* tokens);
     tokens = print_tokens("Lexer", tokens);
 #endif
-    tokens = try(jitc_preprocess(context, move(tokens), NULL));
+    tokens = try(jitc_preprocess(context, move(tokens), NULL, NULL));
 #if JITC_DEBUG || JITC_DEBUG_PREPROCESSOR
     tokens = print_tokens("Preprocessor", tokens);
 #endif
@@ -922,6 +926,7 @@ void jitc_destroy_context(jitc_context_t* context) {
     }
     map_delete(context->typecache);
     map_delete(context->headers);
+    map_delete(context->tasks);
     list_delete(context->labels);
     queue_delete(context->instantiation_requests);
     jitc_delete_memchunks(context);
@@ -929,4 +934,100 @@ void jitc_destroy_context(jitc_context_t* context) {
     jitc_destroy_scope(&list_get(context->scopes, 0));
     list_delete(context->scopes);
     free(context);
+}
+
+#define throw_impl(filename, ...) jitc_error_set(context, jitc_error_syntax(filename, 0, 0, __VA_ARGS__))
+
+bool jitc_append_task(jitc_context_t* context, const char* code, const char* filename) {
+    if (!filename) throw("<memory>", "Filename can't be null");
+    if (map_find(context->tasks, &filename)) throw(filename, "Duplicate compile task");
+    jitc_build_task_t task;
+    smartptr(queue(jitc_token_t)) tokens = try(jitc_lex(context, code, filename));
+    smartptr(list(jitc_token_t)) dependencies = list_new(jitc_token_t);
+    task.state = TaskState_Unvisited;
+    task.tokens = try(jitc_preprocess(context, move(tokens), NULL, dependencies));
+    task.dependencies = (void*)move(dependencies);
+    map_add(context->tasks) = (char*)filename;
+    map_commit(context->tasks);
+    map_get_value(context->tasks) = task;
+    return true;
+}
+
+bool jitc_append_task_file(jitc_context_t* context, const char* filename) {
+    autofree char* code = try(read_whole_file(context, filename));
+    return try(jitc_append_task(context, code, filename));
+}
+
+static bool jitc_dfs_cycle(jitc_context_t* context, jitc_build_task_t* task, stack_t* _stack) {
+    stack(jitc_build_task_t*)* inv_stack = _stack;
+    smartptr(stack(jitc_build_task_t*)) stack = stack_new(jitc_build_task_t*);
+    while (stack_size(inv_stack) > 0) stack_push(stack) = stack_pop(inv_stack);
+    while (stack_size(stack) > 0) {
+        if (stack_peek(stack) == task) break;
+        stack_pop(stack);
+    }
+    smartptr(string_t) string = str_new();
+    while (stack_size(stack) > 0) {
+        jitc_token_t* tok = &queue_peek(stack_pop(stack)->tokens);
+        str_appendf(string, "'%s' -> ", tok->locations[tok->num_locations - 1].filename);
+    }
+    jitc_token_t* tok = &queue_peek(task->tokens);
+    str_appendf(string, "'%s'", tok->locations[tok->num_locations - 1].filename);
+    throw(NULL, "Dependency cycle detected (%s)", str_data(string));
+}
+
+#undef throw_impl
+#define throw_impl(...) jitc_error_set(context, jitc_error_parser(token, __VA_ARGS__))
+
+static bool jitc_dfs(jitc_context_t* context, jitc_build_task_t* task, list_t* _out, stack_t* _stack) {
+    list(jitc_build_task_t*)* out = _out;
+    stack(jitc_build_task_t*)* stack = _stack;
+    if (task->state == TaskState_Visiting) try(jitc_dfs_cycle(context, task, stack));
+    if (task->state == TaskState_Visited) return true;
+    task->state = TaskState_Visiting;
+    stack_push(stack) = task;
+    for (int i = 0; i < list_size(task->dependencies); i++) {
+        jitc_token_t* token = &list_get(task->dependencies, i);
+        if (!map_find(context->tasks, &token->value.string)) throw("Cannot find file");
+        try(jitc_dfs(context, &map_get_value(context->tasks), out, stack));
+    }
+    stack_pop(stack);
+    task->state = TaskState_Visited;
+    list_add(out) = task;
+    return true;
+}
+
+static list_t* jitc_sort_builds(jitc_context_t* context) {
+    smartptr(list(jitc_build_task_t*)) out = list_new(jitc_build_task_t*);
+    smartptr(stack(jitc_build_task_t*)) stack = stack_new(jitc_build_task_t);
+    for (int i = 0; i < map_size(context->tasks); i++) {
+        map_index(context->tasks, i);
+        if (map_get_value(context->tasks).state != TaskState_Unvisited) continue;
+        try(jitc_dfs(context, &map_get_value(context->tasks), out, stack));
+    }
+    return move(out);
+}
+
+bool jitc_build(jitc_context_t* context, jitc_build_callback_t callback) {
+    defer { map_clear(context->tasks); }
+    smartptr(list(jitc_build_task_t*)) tasks = try(jitc_sort_builds(context));
+    for (size_t i = 0; i < list_size(tasks); i++) {
+        if (callback) {
+            jitc_token_t* tok = &queue_peek(list_get(tasks, i)->tokens);
+            callback(
+                tok->locations[tok->num_locations - 1].filename,
+                list_size(context->tasks), i
+            );
+        }
+        smartptr(jitc_ast_t) ast = jitc_parse_ast(context, list_get(tasks, i)->tokens);
+        while (jitc_pop_scope(context));
+        while (queue_size(context->instantiation_requests) > 0) queue_pop(context->instantiation_requests);
+        if (!ast) return false;
+        for (size_t i = 0; i < list_size(ast->list.inner); i++) {
+            jitc_compile(context, list_get(ast->list.inner, i));
+        }
+        jitc_link(context);
+    }
+    if (callback) callback(NULL, list_size(context->tasks), list_size(context->tasks));
+    return true;
 }

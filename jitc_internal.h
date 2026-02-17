@@ -138,6 +138,11 @@ typedef struct jitc_token_t jitc_token_t;
     ITEM(ParseType_Expression,  1 << 2) \
     ITEM(ParseType_Any, ParseType_Command | ParseType_Declaration | ParseType_Expression) \
 
+#define jitc_task_state_t(ITEM) \
+    ITEM(TaskState_Unvisited) \
+    ITEM(TaskState_Visiting) \
+    ITEM(TaskState_Visited) \
+
 #define CHOOSE(a, b, ...) b
 #define ENUM_ITEM(x, ...) x CHOOSE(__VA_OPT__(,) ENUM_ASSIGN, COMMA)(__VA_ARGS__)
 #define STRING_ITEM(x, ...) CHOOSE(__VA_OPT__(,) ARR_DESIGNATOR, DISCARD)(__VA_ARGS__) #x,
@@ -161,6 +166,7 @@ ENUM(jitc_unary_op_t)
 ENUM(jitc_binary_op_t)
 ENUM(jitc_type_policy_t)
 ENUM(jitc_parse_type_t)
+ENUM(jitc_task_state_t)
 
 typedef struct jitc_type_t jitc_type_t;
 struct jitc_type_t {
@@ -333,10 +339,17 @@ typedef struct {
     bool func;
 } jitc_scope_t;
 
+typedef struct {
+    jitc_task_state_t state;
+    queue(jitc_token_t)* tokens;
+    list(jitc_token_t)* dependencies;
+} jitc_build_task_t;
+
 struct jitc_context_t {
     set(char*)* strings;
     map(uint64_t, jitc_type_t*)* typecache;
     map(char*, char*)* headers;
+    map(char*, jitc_build_task_t)* tasks;
     list(char*)* labels;
     list(jitc_scope_t)* scopes;
     list(jitc_memchunk_t)* memchunks;
@@ -454,7 +467,7 @@ struct jitc_context_t {
     SYMBOL("##", DOUBLE_HASHTAG) \
     SYMBOL("\\", BACKSLASH) \
     SYMBOL("//", COMMENT) \
-    SYMBOL("/""*", MULTILINE_COMMENT) \
+    SYMBOL("/*", MULTILINE_COMMENT) \
     SPECIAL(COUNT) \
 
 typedef enum: uint8_t {
@@ -497,7 +510,7 @@ struct jitc_token_t {
 
 jitc_token_t* jitc_token_expect(queue_t* token_queue, jitc_token_type_t kind);
 queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filename);
-queue_t* jitc_preprocess(jitc_context_t* context, queue_t* tokens, map_t* macros);
+queue_t* jitc_preprocess(jitc_context_t* context, queue_t* tokens, map_t* macros, list_t* dependencies);
 
 jitc_type_t* jitc_typecache_primitive(jitc_context_t* context, jitc_type_kind_t kind);
 jitc_type_t* jitc_typecache_unsigned(jitc_context_t* context, jitc_type_t* base);
@@ -545,7 +558,7 @@ void jitc_push_location(jitc_token_t* token, const char* filename, int row, int 
 bool jitc_validate_type(jitc_type_t* type, jitc_type_policy_t policy);
 
 char* jitc_append_string(jitc_context_t* context, const char* string);
-queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* filename, map_t* macros);
+queue_t* jitc_include(jitc_context_t* context, jitc_token_t* token, const char* filename, map_t* macros, list_t* dependencies);
 
 jitc_type_t* jitc_parse_type(jitc_context_t* context, queue_t* tokens, jitc_decltype_t* decltype, jitc_preserve_t* preserve_policy);
 jitc_ast_t* jitc_parse_expression(jitc_context_t* context, queue_t* tokens, int min_prec, jitc_type_t** exprtype);

@@ -13,6 +13,8 @@ typedef struct {
     const char* filename;
 } jitc_source_location_t;
 
+typedef void(*jitc_build_callback_t)(const char* curr_file, int num_files_total, int num_files_compiled);
+
 typedef struct jitc_context_t jitc_context_t;
 typedef struct jitc_error_t jitc_error_t;
 struct jitc_error_t {
@@ -38,5 +40,9 @@ jitc_error_t* jitc_get_error(jitc_context_t* context);
 void jitc_destroy_error(jitc_error_t* error);
 
 void jitc_report_error(jitc_context_t* context, FILE* stream);
+
+bool jitc_append_task(jitc_context_t* context, const char* code, const char* filename);
+bool jitc_append_task_file(jitc_context_t* context, const char* filename);
+bool jitc_build(jitc_context_t* context, jitc_build_callback_t callback);
 
 #endif

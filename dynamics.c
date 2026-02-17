@@ -144,6 +144,10 @@ size_t list_size(list_t* list) {
     return ((__list_t*)list)->length;
 }
 
+void list_clear(list_t* list) {
+    ((__list_t*)list)->length = 0;
+}
+
 void* __list_add(list_t* _list) {
     __list_t* list = _list;
     if (list->length == list->capacity) {
@@ -190,6 +194,10 @@ map_t* __map_new(compare_t compare, size_t key_size, size_t value_size) {
 
 size_t map_size(map_t* map) {
     return ((__map_t*)map)->length;
+}
+
+void map_clear(map_t* map) {
+    ((__map_t*)map)->length = 0;
 }
 
 bool map_find(map_t* _map, void* key) {
@@ -271,6 +279,10 @@ size_t set_size(set_t* set) {
     return ((__set_t*)set)->length;
 }
 
+void set_clear(set_t* set) {
+    ((__set_t*)set)->length = 0;
+}
+
 int set_indexof(set_t* _set, void* key) {
     __set_t* set = _set;
     void* ptr = bsearch(key, set->list, set->length, set->item_size, set->compare);
@@ -330,6 +342,10 @@ size_t stack_size(stack_t* stack) {
     return ((__stack_t*)stack)->length;
 }
 
+void stack_clear(stack_t* stack) {
+    ((__stack_t*)stack)->length = 0;
+}
+
 void* __stack_push(stack_t* _stack) {
     __stack_t* stack = _stack;
     if (stack->length == stack->capacity) {
@@ -370,6 +386,10 @@ queue_t* __queue_new(size_t item_size) {
 
 size_t queue_size(queue_t* queue) {
     return ((__queue_t*)queue)->length;
+}
+
+void queue_clear(queue_t* queue) {
+    ((__queue_t*)queue)->length = 0;
 }
 
 void* __queue_push(queue_t* _queue) {
