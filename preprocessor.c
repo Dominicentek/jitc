@@ -598,7 +598,7 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
             }
             else if ((is_identifier(token, "depends"))) {
                 token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_STRING, "Expected string literal");
-                if (do_things) list_add(dependencies) = *token;
+                if (do_things && dependencies) list_add(dependencies) = *token;
             }
             else throw(token, "Invalid preprocessor directive");
             while (advance(&stream, &curr_line));
