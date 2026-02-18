@@ -388,8 +388,9 @@ size_t queue_size(queue_t* queue) {
     return ((__queue_t*)queue)->length;
 }
 
-void queue_clear(queue_t* queue) {
-    ((__queue_t*)queue)->length = 0;
+void queue_clear(queue_t* _queue) {
+    __queue_t* queue = _queue;
+    queue->length = queue->tail = queue->head = 0;
 }
 
 void* __queue_push(queue_t* _queue) {
@@ -397,8 +398,8 @@ void* __queue_push(queue_t* _queue) {
     if (queue->length == queue->capacity) {
         queue->capacity *= 2;
         void* new_items = malloc(queue->item_size * queue->capacity);
-        memcpy(new_items, queue->list + queue->tail, queue->item_size * (queue->length - queue->tail));
-        memcpy(new_items + queue->length - queue->tail, queue->list, queue->item_size * queue->tail);
+        memcpy(new_items, queue->list + queue->tail * queue->item_size, queue->item_size * (queue->length - queue->tail));
+        memcpy(new_items + (queue->length - queue->tail) * queue->item_size, queue->list, queue->item_size * queue->tail);
         free(queue->list);
         queue->tail = 0;
         queue->head = queue->length;
@@ -429,7 +430,7 @@ void* __queue_rollback(queue_t* _queue) {
     __queue_t* queue = _queue;
     if (queue->length == 0) return NULL;
     queue->length++;
-    return &queue->list[--queue->tail * queue->item_size];
+    return &queue->list[(queue->tail = (queue->tail + queue->capacity - 1) % queue->capacity) * queue->item_size];
 }
 
 void queue_delete(queue_t* _queue) {

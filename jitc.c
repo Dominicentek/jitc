@@ -1016,7 +1016,7 @@ bool jitc_build(jitc_context_t* context, jitc_build_callback_t callback) {
             jitc_token_t* tok = &queue_peek(list_get(tasks, i)->tokens);
             callback(
                 tok->locations[tok->num_locations - 1].filename,
-                list_size(context->tasks), i
+                list_size(tasks), i
             );
         }
         smartptr(jitc_ast_t) ast = jitc_parse_ast(context, list_get(tasks, i)->tokens);
@@ -1028,6 +1028,6 @@ bool jitc_build(jitc_context_t* context, jitc_build_callback_t callback) {
         }
         jitc_link(context);
     }
-    if (callback) callback(NULL, list_size(context->tasks), list_size(context->tasks));
+    if (callback) callback(NULL, list_size(tasks), list_size(tasks));
     return true;
 }
