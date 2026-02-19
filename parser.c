@@ -677,6 +677,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             node->variable.this_ptr = node->walk_struct.struct_ptr;
             node->variable.name = method->type->name;
             node->variable.templ_map = template_map;
+            node->variable.write_dest = false;
             node->exprtype = NULL;
             node = try(jitc_process_ast(context, node, NULL));
         } break;

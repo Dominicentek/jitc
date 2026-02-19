@@ -8,7 +8,7 @@ done
 wait $(jobs -p)
 
 echo Linking libjitc.so
-gcc $(find obj -name "*.o") -o libjitc.so -fPIC -lm -g -shared
+gcc $(find obj -name "*.o") -o libjitc.so -fPIC -lm -g -shared $@
 
 echo Packaging libjitc.a
 ar rcs libjitc.a $(find obj -name "*.o")
