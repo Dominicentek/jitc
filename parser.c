@@ -1104,23 +1104,24 @@ typedef struct {
     int offset;
 } init_element_t;
 
-static init_element_t* jitc_init_append(list_t* _elements, jitc_type_t* type, int base_offset, bool set_aggregate) {
+static int jitc_init_append(list_t* _elements, jitc_type_t* type, int base_offset, bool set_aggregate) {
     list(init_element_t)* elements = _elements;
-    init_element_t* element = NULL;
+    int element = 0;
     if ((type->kind == Type_Struct || type->kind == Type_Union) && type->str.num_fields != 0) for (int i = 0; i < type->str.num_fields; i++) {
-        init_element_t* inner = jitc_init_append(elements, type->str.fields[i], base_offset + type->str.offsets[i], true);
+        int inner = jitc_init_append(elements, type->str.fields[i], base_offset + type->str.offsets[i], true);
         if (i == 0) element = inner;
     }
     else if ((type->kind == Type_Array) && type->arr.size != 0) for (int i = 0; i < (type->arr.size == -1 ? 1 : type->arr.size); i++) {
-        init_element_t* inner = jitc_init_append(elements, type->arr.base, base_offset + i * type->arr.base->size, true);
+        int inner = jitc_init_append(elements, type->arr.base, base_offset + i * type->arr.base->size, true);
         if (i == 0) element = inner;
     }
     else {
-        element = &list_add(elements);
-        element->type = type;
-        element->offset = base_offset;
+        element = list_size(elements);
+        init_element_t* el = &list_add(elements);
+        el->type = type;
+        el->offset = base_offset;
     }
-    element->aggregate = set_aggregate ? type : element->type;
+    list_get(elements, element).aggregate = set_aggregate ? type : list_get(elements, element).type;
     return element;
 }
 
