@@ -491,6 +491,7 @@ typedef union {
 } jitc_token_flags_t;
 
 struct jitc_token_t {
+    bool disabled;
     jitc_token_type_t type;
     jitc_token_flags_t flags;
     int num_locations;

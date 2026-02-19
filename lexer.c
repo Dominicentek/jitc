@@ -207,6 +207,7 @@ static jitc_token_t* mktoken(queue_t* _tokens, jitc_token_type_t type, const cha
     token->row = row;
     token->col = col;
     token->num_locations = 1;
+    token->disabled = false;
     return token;
 }
 
@@ -265,14 +266,16 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
     while (ptr == 0 || code[ptr - 1]) {
         c = code[no_increment ? ptr - 1 : ptr++];
         if (c == 0) c = '\n'; // basically inserts a new line at the end of files
+        if (c == '\n') {
+            state.first_token_on_line = true;
+            state.preprocessor = false;
+            state.include = false;
+        }
         if (!no_increment) {
             col++;
             if (c == '\n') {
                 col = 0;
                 row++;
-                state.first_token_on_line = true;
-                state.preprocessor = false;
-                state.include = false;
             }
         }
         no_increment = false;

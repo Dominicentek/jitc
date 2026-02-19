@@ -65,6 +65,9 @@ static macro_t* new_macro(map_t* _macros, const char* name, macro_type_t type) {
 }
 
 static void predefine(map_t* macros) {
+    list_add(new_macro(macros, "bool", MacroType_Ordinary)->tokens) = identifier_token("bool");
+    list_add(new_macro(macros, "true", MacroType_Ordinary)->tokens) = identifier_token("true");
+    list_add(new_macro(macros, "false", MacroType_Ordinary)->tokens) = identifier_token("false");
     list_add(new_macro(macros, "__STDC_HOSTED__", MacroType_Ordinary)->tokens) = number_token(1);
     list_add(new_macro(macros, "__STDC_NO_ATOMICS__", MacroType_Ordinary)->tokens) = number_token(1);
     list_add(new_macro(macros, "__STDC_NO_COMPLEX__", MacroType_Ordinary)->tokens) = number_token(1);
@@ -341,6 +344,7 @@ static void expand(jitc_context_t* context, jitc_token_t* base, token_stream_t* 
     while (expanded);
     while (stream2.ptr < list_size(stream2.tokens)) { // 2 -> dest
         jitc_token_t token = list_get(stream2.tokens, stream2.ptr++);
+        token.disabled = true;
         jitc_push_location(&token, base->filename, base->row, base->col);
         list_add(dest->tokens) = token;
     }
@@ -350,7 +354,7 @@ static bool process_identifier(jitc_context_t* context, token_stream_t* dest, to
     map(char*, macro_t)* macros = _macros;
     set(char*)* used_macros = _used_macros;
     jitc_token_t* token = &list_get(tokens->tokens, tokens->ptr - 1);
-    if (!map_find(macros, &token->value.string) || set_find(used_macros, &token->value.string)) {
+    if (!map_find(macros, &token->value.string) || set_find(used_macros, &token->value.string) || token->disabled) {
         list_add(dest->tokens) = *token;
         return false;
     }
@@ -512,6 +516,10 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                     map_find(macros, &token->value.string);
                     map_remove(macros);
                 }
+            }
+            else if (is_identifier(token, "error")) {
+                token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_STRING, "Expected string");
+                if (do_things) throw(token, "%s", token->value.string);
             }
             else if (is_identifier(token, "include") || is_identifier(token, "embed")) {
                 token = expect_and(advance(&stream, &curr_line),
