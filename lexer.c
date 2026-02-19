@@ -233,8 +233,12 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
         } parse_state;
         string_t* buffer;
         int row, col;
+        bool first_token_on_line;
+        bool preprocessor;
+        bool include;
         union {
             struct {
+                bool angled;
                 int num_digits;
                 uint32_t value;
                 enum {
@@ -257,6 +261,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
     smartptr(string_t) _buffer;
     memset(&state, 0, sizeof(state));
     _buffer = state.buffer = str_new();
+    state.first_token_on_line = true;
     while (ptr == 0 || code[ptr - 1]) {
         c = code[no_increment ? ptr - 1 : ptr++];
         if (c == 0) c = '\n'; // basically inserts a new line at the end of files
@@ -265,6 +270,9 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             if (c == '\n') {
                 col = 0;
                 row++;
+                state.first_token_on_line = true;
+                state.preprocessor = false;
+                state.include = false;
             }
         }
         no_increment = false;
@@ -276,8 +284,8 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             asterisk = c == '*';
         }
         else if (state.parse_state == Idle) {
-            if      (c == '"' )                       state.parse_state = ParsingStringLiteral;
-            else if (c == '\'')                       state.parse_state = ParsingCharLiteral;
+            if      (c == '"' || (state.include && c == '<')) state.parse_state = ParsingStringLiteral;
+            else if (c == '\'') state.parse_state = ParsingCharLiteral;
             else if (is_number(c) || (c == '.' && is_number(code[ptr]))) state.parse_state = ParsingNumber;
             else if (is_letter(c)) state.parse_state = ParsingWord;
             else if (is_symbol(c)) state.parse_state = ParsingSymbol;
@@ -287,6 +295,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             state.row = row;
             state.col = col;
             state.string_state.state = state.parse_state == ParsingCharLiteral ? CharStart : None;
+            state.string_state.angled = c == '<';
             if (state.parse_state == ParsingWord || state.parse_state == ParsingNumber || state.parse_state == ParsingSymbol) no_increment = true;
             if (state.parse_state == ParsingNumber)
                 state.number_state.used_dot =
@@ -294,13 +303,17 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                 state.number_state.just_used_letter = false;
         }
         else if (state.parse_state == ParsingStringLiteral || state.parse_state == ParsingCharLiteral) {
+            state.first_token_on_line = state.preprocessor = false;
             switch (state.string_state.state) {
                 case CharStart:
                     if (c == '\'') throw("Empty char literal");
                     state.string_state.state = None;
                 case None:
                     if (c == '\\') state.string_state.state = Backslash;
-                    else if (c == '"' && state.parse_state == ParsingStringLiteral) {
+                    else if ((
+                        (!state.string_state.angled && c == '"') ||
+                        ( state.string_state.angled && c == '>')
+                    ) && state.parse_state == ParsingStringLiteral) {
                         jitc_token_t* token = mktoken(tokens, TOKEN_STRING, file, state.row, state.col);
                         token->value.string = jitc_append_string(context, str_data(state.buffer));
                         state.parse_state = Idle;
@@ -330,6 +343,7 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                         case 't':  c = '\t'; break;
                         case 'v':  c = '\v'; break;
                         case '"':  c = '"';  break;
+                        case '>':  c = '>';  break;
                         case '\\': c = '\\'; break;
                         case '\'': c = '\''; break;
                         case 'x':       state.string_state.state = Hex2;  break;
@@ -366,17 +380,21 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
             }
         }
         else if (state.parse_state == ParsingWord) {
+            state.first_token_on_line = false;
             if (is_alphanumeric(c)) str_append(state.buffer, (char[]){ c, 0 });
             else {
                 char* buf = str_data(state.buffer);
+                if (strcmp(buf, "include") == 0 && state.preprocessor) state.include = true;
                 jitc_token_t* token = mktoken(tokens, TOKEN_IDENTIFIER, file, state.row, state.col + str_length(state.buffer) - strlen(buf));
                 token->value.string = jitc_append_string(context, buf);
                 buf[0] = 0;
                 no_increment = true;
                 state.parse_state = Idle;
+                state.preprocessor = false;
             }
         }
         else if (state.parse_state == ParsingNumber) {
+            state.first_token_on_line = state.preprocessor = false;
             if ((
                     is_hex_number(c)
                     || c == 'x' || c == 'X'
@@ -425,9 +443,11 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                     state.parse_state = exact_match == TOKEN_COMMENT ? ParsingComment : ParsingMultilineComment;
                     continue;
                 }
+                if (exact_match == TOKEN_HASHTAG && state.first_token_on_line) state.preprocessor = true;
                 mktoken(tokens, exact_match, file, state.row, state.col);
                 state.parse_state = Idle;
                 no_increment = true;
+                state.first_token_on_line = false;
                 continue;
             }
             if (is_symbol(c) && starts_with != 0) {
@@ -442,9 +462,11 @@ queue_t* jitc_lex(jitc_context_t* context, const char* code, const char* filenam
                         state.parse_state = exact_match == TOKEN_COMMENT ? ParsingComment : ParsingMultilineComment;
                         continue;
                     }
+                    if (exact_match == TOKEN_HASHTAG && state.first_token_on_line) state.preprocessor = true;
                     mktoken(tokens, exact_match, file, state.row, state.col);
                     state.parse_state = Idle;
                     no_increment = true;
+                    state.first_token_on_line = false;
                 }
                 continue;
             }
