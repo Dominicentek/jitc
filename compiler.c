@@ -445,7 +445,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             if (!var->initial) {
                 if (var->preserve_policy == Preserve_Always) break;
                 if (var->preserve_policy == Preserve_IfConst) {
-                    if (var->type->is_const || var->type->kind == Type_Function || var->type->kind == Type_Array) break;
+                    if (var->type->is_const || var->type->kind == Type_Function) break;
                 }
             }
             var->initial = false;

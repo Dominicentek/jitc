@@ -427,15 +427,9 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
         if (!jitc_typecmp(context, prev->type, type)) preserve_policy = Preserve_Never; // todo: add compatible merges
         if (prev->decltype != decltype) preserve_policy = Preserve_Never;
         if (preserve_policy == Preserve_Never) {
-            if (
-                prev->decltype != Decltype_EnumItem &&
-                prev->decltype != Decltype_Extern &&
-                prev->decltype != Decltype_Typedef &&
-                prev->type->kind != Type_Function
-            ) free(prev->ptr);
             prev->type = type;
             prev->decltype = decltype;
-            if (prev->type->kind != Type_Function) prev->enum_value = value;
+            if (decltype == Decltype_EnumItem) prev->enum_value = value;
         }
         prev->preserve_policy = policy_ifconst ? Preserve_IfConst : preserve_policy;
         return true;
