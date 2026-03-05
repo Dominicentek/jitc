@@ -1028,8 +1028,10 @@ jitc_ast_t* jitc_flatten_ast(jitc_ast_t* ast, list_t* _list) {
     list(jitc_ast_t*)* list = _list;
     if (!ast) return NULL;
     if (ast->node_type != AST_List && ast->node_type != AST_Scope) {
-        if (ast->node_type == AST_Loop) {
+        if (ast->node_type == AST_WhileLoop || ast->node_type == AST_DoWhileLoop || ast->node_type == AST_ForLoop) {
+            ast->loop.init = jitc_flatten_ast(ast->loop.init, NULL);
             ast->loop.cond = jitc_flatten_ast(ast->loop.cond, NULL);
+            ast->loop.iter = jitc_flatten_ast(ast->loop.iter, NULL);
             ast->loop.body = jitc_flatten_ast(ast->loop.body, NULL);
         }
         else if (ast->node_type == AST_Branch) {
@@ -1078,7 +1080,9 @@ bool jitc_verify_gotos(jitc_context_t* context, jitc_ast_t* ast) {
                 try(jitc_verify_gotos(context, list_get(ast->list.inner, i)));
             }
             break;
-        case AST_Loop:
+        case AST_WhileLoop:
+        case AST_DoWhileLoop:
+        case AST_ForLoop:
             if (ast->loop.body) try(jitc_verify_gotos(context, ast->loop.body));
             break;
         case AST_Ternary:
@@ -1620,62 +1624,53 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
     }
     if ((token = jitc_token_expect(tokens, TOKEN_while))) {
         if (!(allowed & ParseType_Command)) throw(token, "'while' not allowed here");
-        smartptr(jitc_ast_t) node = mknode(AST_Loop, token);
+        smartptr(jitc_ast_t) node = mknode(AST_WhileLoop, token);
         node->loop.cond = try(jitc_parse_parens(context, tokens));
         jitc_push_scope(context);
         node->loop.body = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
         jitc_pop_scope(context);
         return move(node);
     }
-    if (jitc_token_expect(tokens, TOKEN_do)) {
+    if ((token = jitc_token_expect(tokens, TOKEN_do))) {
         if (!(allowed & ParseType_Command)) throw(token, "'do' not allowed here");
-        smartptr(jitc_ast_t) node = mknode(AST_Scope, token);
-        smartptr(jitc_ast_t) loop = mknode(AST_Loop, token);
-        smartptr(jitc_ast_t) scope = mknode(AST_Scope, token);
-        list_add(scope->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
+        smartptr(jitc_ast_t) node = mknode(AST_DoWhileLoop, token);
+        jitc_push_scope(context);
+        node->loop.body = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
+        jitc_pop_scope(context);
         if (!jitc_token_expect(tokens, TOKEN_while)) throw(NEXT_TOKEN, "Expected 'while'");
-        smartptr(jitc_ast_t) condition = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
+        node->loop.cond = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON)) throw(NEXT_TOKEN, "Expected ';'");
-        smartptr(jitc_ast_t) ternary = mknode(AST_Branch, token);
-        ternary->ternary.when = move(condition);
-        ternary->ternary.then = mknode(AST_List, token);
-        ternary->ternary.otherwise = mknode(AST_Break, token);
-        list_add(scope->list.inner) = try(jitc_process_ast(context, move(ternary), NULL));
-        ternary = NULL;
-        loop->loop.body = move(scope);
-        list_add(node->list.inner) = move(loop);
         return move(node);
     }
-    if (jitc_token_expect(tokens, TOKEN_for)) {
+    if ((token = jitc_token_expect(tokens, TOKEN_for))) {
         if (!(allowed & ParseType_Command)) throw(token, "'for' not allowed here");
-        smartptr(jitc_ast_t) node = mknode(AST_Scope, token);
-        smartptr(jitc_ast_t) loop = mknode(AST_Loop, token);
-        smartptr(jitc_ast_t) body = mknode(AST_List, token);
-        smartptr(jitc_ast_t) init = NULL;
-        smartptr(jitc_ast_t) cond = NULL;
-        smartptr(jitc_ast_t) expr = NULL;
+        smartptr(jitc_ast_t) node = mknode(AST_ForLoop, token);
         jitc_push_scope(context);
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_OPEN)) throw(NEXT_TOKEN, "Expected '('");
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON))
-            init = try(jitc_parse_statement(context, tokens, ParseType_Expression | ParseType_Declaration));
+            node->loop.init = try(jitc_parse_statement(context, tokens, ParseType_Expression | ParseType_Declaration));
         if (!jitc_token_expect(tokens, TOKEN_SEMICOLON))
-            cond = try(jitc_parse_statement(context, tokens, ParseType_Expression));
+            node->loop.cond = try(jitc_parse_statement(context, tokens, ParseType_Expression));
         if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) {
-            expr = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
+            node->loop.iter = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
             if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
         }
-        list_add(body->list.inner) = try(jitc_parse_statement(context, tokens, ParseType_Any));
-        if (expr) list_add(body->list.inner) = move(expr);
-        if (init) list_add(node->list.inner) = move(init);
-        loop->loop.body = move(body);
-        loop->loop.cond = move(cond);
-        list_add(node->list.inner) = move(loop);
+        if (!node->loop.init) node->loop.init = mknode(AST_List, token);
+        if (!node->loop.iter) node->loop.iter = mknode(AST_List, token);
+        if (!node->loop.cond) {
+            node->loop.cond = mknode(AST_Integer, token);
+            node->loop.cond->integer.is_unsigned = true;
+            node->loop.cond->integer.type_kind = Type_Int8;
+            node->loop.cond->integer.value = 1;
+        }
+        jitc_push_scope(context);
+        node->loop.body = try(jitc_parse_statement(context, tokens, ParseType_Command | ParseType_Expression));
+        jitc_pop_scope(context);
         jitc_pop_scope(context);
         return move(node);
     }
-    if (jitc_token_expect(tokens, TOKEN_switch)) {
-        if (!(allowed & ParseType_Command)) throw(token, "'switch' not allowed here");
-        // todo
+    if ((token = jitc_token_expect(tokens, TOKEN_switch))) {
+        throw(token, "switch not implemented yet 🥀💔");
     }
     if ((token = jitc_token_expect(tokens, TOKEN_continue))) {
         if (!(allowed & ParseType_Command)) throw(token, "'continue' not allowed here");
@@ -1993,8 +1988,12 @@ void jitc_destroy_ast(jitc_ast_t* ast) {
         case AST_Function:
             jitc_destroy_ast(ast->func.body);
             break;
-        case AST_Loop:
+        case AST_WhileLoop:
+        case AST_DoWhileLoop:
+        case AST_ForLoop:
+            jitc_destroy_ast(ast->loop.init);
             jitc_destroy_ast(ast->loop.cond);
+            jitc_destroy_ast(ast->loop.iter);
             jitc_destroy_ast(ast->loop.body);
             break;
         case AST_Return:

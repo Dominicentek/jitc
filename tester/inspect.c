@@ -130,9 +130,21 @@ void print_ast(jitc_ast_t* ast, int indent) {
             print_type(ast->func.variable, indent + 2);
             print_ast(ast->func.body, indent + 2);
             break;
-        case AST_Loop:
+        case AST_WhileLoop:
             printf("\n");
             print_ast(ast->loop.cond, indent + 2);
+            print_ast(ast->loop.body, indent + 2);
+            break;
+        case AST_DoWhileLoop:
+            printf("\n");
+            print_ast(ast->loop.body, indent + 2);
+            print_ast(ast->loop.cond, indent + 2);
+            break;
+        case AST_ForLoop:
+            printf("\n");
+            print_ast(ast->loop.init, indent + 2);
+            print_ast(ast->loop.cond, indent + 2);
+            print_ast(ast->loop.iter, indent + 2);
             print_ast(ast->loop.body, indent + 2);
             break;
         case AST_Return:

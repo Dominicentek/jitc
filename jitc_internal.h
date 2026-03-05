@@ -50,7 +50,9 @@ typedef struct jitc_token_t jitc_token_t;
     ITEM(AST_Type) \
     ITEM(AST_Declaration) \
     ITEM(AST_Function) \
-    ITEM(AST_Loop) \
+    ITEM(AST_WhileLoop) \
+    ITEM(AST_DoWhileLoop) \
+    ITEM(AST_ForLoop) \
     ITEM(AST_Scope) \
     ITEM(AST_Break) \
     ITEM(AST_Continue) \
@@ -283,7 +285,9 @@ struct jitc_ast_t {
             jitc_ast_t* body;
         } func;
         struct {
+            jitc_ast_t* init;
             jitc_ast_t* cond;
+            jitc_ast_t* iter;
             jitc_ast_t* body;
         } loop;
         struct {
