@@ -233,6 +233,7 @@ typedef enum {
     RegType_Void,
     RegType_Variable,
     RegType_Temporary,
+    RegType_Lvalue,
     RegType_Argument,
     RegType_Return,
     RegType_Immediate,
@@ -258,7 +259,7 @@ typedef struct {
     map(char*, int)* gotos;
     stack(int)* break_stack;
     stack(int)* continue_stack;
-    int tmpreg_counter;
+    map(uint64_t, bool)* used_temps;
     int label_counter;
 } ir_state_t;
 
@@ -273,15 +274,66 @@ typedef struct {
 #define GBL(x, t) (ir_t){ IR_reg, (t), { RegType_Global, (t), (x) }}
 #define IMM(x) IMM_T(x, INTEGER)
 
+static ir_register_t new_temporary(jitc_type_t* type, ir_state_t* state) {
+    for (size_t i = 0; i < map_size(state->used_temps); i++) {
+        map_index(state->used_temps, i);
+        if (map_get_value(state->used_temps)) continue;
+        map_get_value(state->used_temps) = true;
+        return (ir_register_t){ RegType_Temporary, type, i };
+    }
+    uint64_t new = map_size(state->used_temps);
+    map_add(state->used_temps) = new;
+    map_commit(state->used_temps);
+    map_get_value(state->used_temps) = true;
+    return (ir_register_t){ RegType_Temporary, type, new };
+}
+
+static void free_temporary(ir_register_t reg, ir_state_t* state) {
+    if (reg.kind != RegType_Temporary && reg.kind != RegType_Lvalue) return;
+    if (!map_find(state->used_temps, &reg.value)) return;
+    map_get_value(state->used_temps) = false;
+}
+
+static void reuse_temporary(ir_register_t reg, ir_state_t* state) {
+    if (reg.kind != RegType_Temporary && reg.kind != RegType_Lvalue) return;
+    if (!map_find(state->used_temps, &reg.value)) return;
+    map_get_value(state->used_temps) = true;
+}
+
+static ir_t cleanup_temps(ir_t instr, bool no_dest, ir_state_t* state) {
+    (no_dest ? free_temporary : reuse_temporary)(instr.operands[0], state);
+    free_temporary(instr.operands[1], state);
+    free_temporary(instr.operands[2], state);
+    return instr;
+}
+
+static ir_register_t lvalue(ir_register_t reg) {
+    if (reg.kind != RegType_Temporary) return reg;
+    reg.kind = RegType_Lvalue;
+    return reg;
+}
+
+static ir_t as_lvalue(ir_t instr) {
+    if (instr.operands[0].kind != RegType_Void) return instr;
+    instr.operands[0].kind = RegType_Lvalue;
+    instr.operands[0].value = -1;
+    return instr;
+}
+
 static ir_register_t get_register(ir_t instr, jitc_type_t* type, ir_state_t* state) {
-    ir_register_t reg = { RegType_Temporary, type, state->tmpreg_counter };
-    if (instr.opcode == IR_reg || instr.operands[0].kind != RegType_Void) reg = instr.operands[0];
+    ir_register_t reg;
+    if (instr.opcode == IR_reg || (instr.operands[0].kind != RegType_Void
+        && !(instr.operands[0].kind == RegType_Lvalue && instr.operands[0].value == -1)
+    )) reg = instr.operands[0];
     else {
-        if (instr.operands[1].kind == RegType_Temporary) reg = instr.operands[1];
+        if (instr.operands[0].kind == RegType_Lvalue && instr.operands[0].value == -1) reg = instr.operands[0];
+        else if (instr.operands[1].kind == RegType_Temporary) reg = instr.operands[1];
         else if (instr.operands[2].kind == RegType_Temporary) reg = instr.operands[2];
-        else state->tmpreg_counter++;
+        else reg = new_temporary(type, state);
         instr.operands[0] = reg;
-        list_add(state->ir) = instr;
+        if (instr.operands[0].kind == RegType_Lvalue && instr.operands[0].value == -1)
+            instr.operands[0] = reg = lvalue(new_temporary(type, state));
+        list_add(state->ir) = cleanup_temps(instr, false, state);
     }
     reg.type = type;
     return reg;
@@ -297,34 +349,41 @@ static ir_t instruction2(ir_opcode_t opcode, ir_t instr1, ir_t instr2, jitc_type
 
 static ir_t instruction3(ir_opcode_t opcode, ir_t instr1, ir_t instr2, ir_t instr3, jitc_type_t* type, ir_state_t* state) {
     ir_t instr = (ir_t){ opcode, type, { get_register(instr1, type, state), get_register(instr2, type, state), get_register(instr3, type, state) }};
-    list_add(state->ir) = instr;
+    list_add(state->ir) = cleanup_temps(instr, true, state);
     return instr;
 }
 
 static ir_t store_shift(ir_t instr, ir_state_t* state) {
     instr.operands[0] = instr.operands[1];
     instr.operands[1] = instr.operands[2];
-    list_add(state->ir) = instr;
+    list_add(state->ir) = cleanup_temps(instr, false, state);
     return instr;
 }
 
 static ir_t store_copy(ir_t instr, ir_state_t* state) {
     instr.operands[0] = instr.operands[1];
-    list_add(state->ir) = instr;
+    list_add(state->ir) = cleanup_temps(instr, false, state);
+    return instr;
+}
+
+static ir_t store_copy_tmp(ir_t instr, ir_state_t* state) {
+    if (instr.operands[1].kind == RegType_Temporary) instr.operands[0] = instr.operands[1];
+    else instr.operands[0] = new_temporary(instr.operands[1].type, state);
+    list_add(state->ir) = cleanup_temps(instr, false, state);
     return instr;
 }
 
 static ir_t emit_ir(ir_t instr, ir_state_t* state) {
     if (instr.opcode == IR_nop || instr.opcode == IR_reg) return instr;
     if (instr.operands[0].kind != RegType_Void) return instr;
-    list_add(state->ir) = instr;
+    list_add(state->ir) = cleanup_temps(instr, false, state);
     return instr;
 }
 
 static ir_t assign(ir_t instr, ir_register_t reg, ir_state_t* state) {
     if (instr.opcode == IR_reg) return store_shift(instruction2(IR_mov, (ir_t){ IR_reg, instr.type, { reg }}, instr, instr.type, state), state);
     instr.operands[0] = reg;
-    list_add(state->ir) = instr;
+    list_add(state->ir) = cleanup_temps(instr, false, state);
     return instr;
 }
 
@@ -341,22 +400,21 @@ static ir_t assemble(jitc_context_t* context, jitc_ast_t* ast, ir_state_t* state
             case Unary_AddressOf:          return instruction1(IR_addrof, assemble(context, ast->unary.inner, state, (shortcircuit_state_t){}), ast->exprtype, state);
             case Unary_Dereference:        return instruction1(IR_load, assemble(context, ast->unary.inner, state, (shortcircuit_state_t){}), ast->exprtype, state);
             case Unary_PrefixIncrement:
-            case Unary_PtrPrefixIncrement: return instruction1(IR_preinc, assemble(context, ast->unary.inner, state, (shortcircuit_state_t){}), ast->exprtype, state);
+            case Unary_PtrPrefixIncrement: return instruction1(IR_preinc, as_lvalue(assemble(context, ast->unary.inner, state, (shortcircuit_state_t){})), ast->exprtype, state);
             case Unary_PrefixDecrement:
-            case Unary_PtrPrefixDecrement: return instruction1(IR_predec, assemble(context, ast->unary.inner, state, (shortcircuit_state_t){}), ast->exprtype, state);
+            case Unary_PtrPrefixDecrement: return instruction1(IR_predec, as_lvalue(assemble(context, ast->unary.inner, state, (shortcircuit_state_t){})), ast->exprtype, state);
             case Unary_SuffixIncrement:
-            case Unary_PtrSuffixIncrement: return instruction1(IR_sufinc, assemble(context, ast->unary.inner, state, (shortcircuit_state_t){}), ast->exprtype, state);
+            case Unary_PtrSuffixIncrement: return instruction1(IR_sufinc, as_lvalue(assemble(context, ast->unary.inner, state, (shortcircuit_state_t){})), ast->exprtype, state);
             case Unary_SuffixDecrement:
-            case Unary_PtrSuffixDecrement: return instruction1(IR_sufdec, assemble(context, ast->unary.inner, state, (shortcircuit_state_t){}), ast->exprtype, state);
+            case Unary_PtrSuffixDecrement: return instruction1(IR_sufdec, as_lvalue(assemble(context, ast->unary.inner, state, (shortcircuit_state_t){})), ast->exprtype, state);
             default: break;
         } break;
         case AST_Binary: {
             if (ast->binary.operation == Binary_Cast) {
-                ir_t dest = (ir_t){ IR_reg, ast->exprtype, { RegType_Temporary, ast->exprtype, state->label_counter++ }};
                 jitc_type_t* target = ast->binary.right->type.type->kind == Type_Void
                     ? ast->binary.left->exprtype
                     : ast->binary.right->type.type;
-                return store_shift(instruction2(IR_conv, dest, assemble(context, ast->binary.left, state, (shortcircuit_state_t){}), target, state), state);
+                return store_copy_tmp(instruction1(IR_conv, assemble(context, ast->binary.left, state, (shortcircuit_state_t){}), target, state), state);
             }
             else if (ast->binary.operation == Binary_FunctionCall) {
                 size_t num_args = list_size(ast->binary.right->list.inner);
@@ -387,7 +445,7 @@ static ir_t assemble(jitc_context_t* context, jitc_ast_t* ast, ir_state_t* state
                 }
                 switch (ast->binary.operation) {
                     case Binary_Assignment:
-                    case Binary_AssignConst:          return store_shift(instruction2(IR_store, left, right, ast->exprtype, state), state);
+                    case Binary_AssignConst:          return store_shift(instruction2(IR_store, as_lvalue(left), right, ast->exprtype, state), state);
                     case Binary_PtrAddition:
                     case Binary_Addition:             return instruction2(IR_add, left, right, ast->exprtype, state);
                     case Binary_PtrSubtraction:
@@ -408,23 +466,23 @@ static ir_t assemble(jitc_context_t* context, jitc_ast_t* ast, ir_state_t* state
                     case Binary_GreaterThan:          return instruction2(IR_grt, left, right, ast->exprtype, state);
                     case Binary_GreaterThanOrEqualTo: return instruction2(IR_gte, left, right, ast->exprtype, state);
                     case Binary_AssignPtrAddition:
-                    case Binary_AssignAddition:       return store_copy(instruction2(IR_add, left, right, ast->exprtype, state), state);
+                    case Binary_AssignAddition:       return store_copy(instruction2(IR_add, as_lvalue(left), right, ast->exprtype, state), state);
                     case Binary_AssignPtrSubtraction:
                     case Binary_AssignPtrDiff:
-                    case Binary_AssignSubtraction:    return store_copy(instruction2(IR_sub, left, right, ast->exprtype, state), state);
-                    case Binary_AssignMultiplication: return store_copy(instruction2(IR_mul, left, right, ast->exprtype, state), state);
-                    case Binary_AssignDivision:       return store_copy(instruction2(IR_div, left, right, ast->exprtype, state), state);
-                    case Binary_AssignModulo:         return store_copy(instruction2(IR_mod, left, right, ast->exprtype, state), state);
-                    case Binary_AssignBitshiftLeft:   return store_copy(instruction2(IR_shl, left, right, ast->exprtype, state), state);
-                    case Binary_AssignBitshiftRight:  return store_copy(instruction2(IR_shr, left, right, ast->exprtype, state), state);
-                    case Binary_AssignAnd:            return store_copy(instruction2(IR_and, left, right, ast->exprtype, state), state);
-                    case Binary_AssignOr:             return store_copy(instruction2(IR_or,  left, right, ast->exprtype, state), state);
-                    case Binary_AssignXor:            return store_copy(instruction2(IR_xor, left, right, ast->exprtype, state), state);
+                    case Binary_AssignSubtraction:    return store_copy(instruction2(IR_sub, as_lvalue(left), right, ast->exprtype, state), state);
+                    case Binary_AssignMultiplication: return store_copy(instruction2(IR_mul, as_lvalue(left), right, ast->exprtype, state), state);
+                    case Binary_AssignDivision:       return store_copy(instruction2(IR_div, as_lvalue(left), right, ast->exprtype, state), state);
+                    case Binary_AssignModulo:         return store_copy(instruction2(IR_mod, as_lvalue(left), right, ast->exprtype, state), state);
+                    case Binary_AssignBitshiftLeft:   return store_copy(instruction2(IR_shl, as_lvalue(left), right, ast->exprtype, state), state);
+                    case Binary_AssignBitshiftRight:  return store_copy(instruction2(IR_shr, as_lvalue(left), right, ast->exprtype, state), state);
+                    case Binary_AssignAnd:            return store_copy(instruction2(IR_and, as_lvalue(left), right, ast->exprtype, state), state);
+                    case Binary_AssignOr:             return store_copy(instruction2(IR_or,  as_lvalue(left), right, ast->exprtype, state), state);
+                    case Binary_AssignXor:            return store_copy(instruction2(IR_xor, as_lvalue(left), right, ast->exprtype, state), state);
                     case Binary_LogicAnd:
                     case Binary_LogicOr: {
                         int prev_label = sc.dest_label;
                         sc.dest_label = sc.curr_op == ast->binary.operation ? sc.dest_label : state->label_counter++;
-                        sc.dest_reg = sc.dest_label == prev_label ? sc.dest_reg : state->tmpreg_counter++;
+                        sc.dest_reg = sc.dest_label == prev_label ? sc.dest_reg : new_temporary(ast->exprtype, state).value;
                         sc.curr_op = ast->binary.operation;
                         ir_register_t reg = { RegType_Temporary, ast->exprtype, sc.dest_reg };
                         ir_t instr = assemble(context, ast->binary.left, state, sc);
@@ -443,18 +501,15 @@ static ir_t assemble(jitc_context_t* context, jitc_ast_t* ast, ir_state_t* state
             }
         } break;
         case AST_Ternary: {
-            ir_t reg = (ir_t){ IR_reg, ast->exprtype, { RegType_Temporary, ast->exprtype, state->tmpreg_counter++ }};
-            int tmpreg = state->tmpreg_counter;
+            ir_t reg = (ir_t){ IR_reg, ast->exprtype, { new_temporary(ast->exprtype, state) }};
             ir_t instr = assemble(context, ast->ternary.when, state, (shortcircuit_state_t){});
             instr = instruction1(IR_bool, instr, jitc_typecache_unsigned(context, jitc_typecache_primitive(context, Type_Int8)), state);
             int otherwise = state->label_counter++; int end = state->label_counter++;
             instruction3(IR_br, instr, IMM(0), IMM(otherwise), INTEGER, state);
             store_shift(instruction2(IR_mov, reg, assemble(context, ast->ternary.then, state, (shortcircuit_state_t){}), ast->exprtype, state), state);
             store_shift(instruction1(IR_jmp, IMM(end), INTEGER, state), state);
-            state->tmpreg_counter = tmpreg;
             store_shift(instruction1(IR_label, IMM(otherwise), INTEGER, state), state);
             store_shift(instruction2(IR_mov, reg, assemble(context, ast->ternary.otherwise, state, (shortcircuit_state_t){}), ast->exprtype, state), state);
-            state->tmpreg_counter = tmpreg;
             store_shift(instruction1(IR_label, IMM(end), INTEGER, state), state);
             return reg;
         } break;
@@ -484,7 +539,6 @@ static ir_t assemble(jitc_context_t* context, jitc_ast_t* ast, ir_state_t* state
         case AST_Scope:
             for (size_t i = 0; i < list_size(ast->list.inner); i++) {
                 emit_ir(assemble(context, list_get(ast->list.inner, i), state, (shortcircuit_state_t){}), state);
-                state->tmpreg_counter = 0;
             }
             break;
         case AST_WhileLoop: {
@@ -546,7 +600,9 @@ static ir_t assemble(jitc_context_t* context, jitc_ast_t* ast, ir_state_t* state
             else return VAR(var->var.index, ast->exprtype);
         } break;
         case AST_WalkStruct: {
-            ir_t ir = emit_ir(assemble(context, ast->walk_struct.struct_ptr, state, (shortcircuit_state_t){}), state);
+            ir_t ir = assemble(context, ast->walk_struct.struct_ptr, state, (shortcircuit_state_t){});
+            if (ir.operands[0].kind == RegType_Void) ir = assign(ir, lvalue(new_temporary(ast->exprtype, state)), state);
+            else emit_ir(ir, state);
             ir_register_t reg = ir.operands[0];
             reg.offset += ast->walk_struct.offset;
             return (ir_t){ IR_reg, ast->exprtype, { reg }};
@@ -616,6 +672,7 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             smartptr(map(char*, int)) gotos = map_new(compare_string, char*, int);
             smartptr(stack(int)) break_stack = stack_new(int);
             smartptr(stack(int)) continue_stack = stack_new(int);
+            smartptr(map(uint64_t, bool)) used_temps = map_new(compare_int64, uint64_t, bool);
             bytewriter_t* writer = bytewriter_new();
             bool is_return = false;
             for (size_t i = 0; i < map_size(global_scope->variables); i++) {
@@ -669,16 +726,15 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
             
             ir_state_t state;
             state.ir = list_new(ir_t);
-            state.tmpreg_counter = 0;
             state.label_counter = 1;
             state.variable_map = (void*)variable_map;
             state.gotos = (void*)gotos;
             state.break_stack = (void*)break_stack;
             state.continue_stack = (void*)continue_stack;
+            state.used_temps = (void*)used_temps;
             for (size_t i = 0; i < list_size(ast->func.body->list.inner); i++) {
                 jitc_ast_t* node = list_get(ast->func.body->list.inner, i);
                 emit_ir(assemble(context, node, &state, (shortcircuit_state_t){}), &state);
-                state.tmpreg_counter = 0;
             }
             
             for (size_t i = 0; i < list_size(state.ir); i++) {
@@ -728,7 +784,8 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
                     switch (ir->operands[j].kind) {
                         case RegType_Void: printf("void"); break;
                         case RegType_Variable: printf("v%lu", ir->operands[j].value); break;
-                        case RegType_Temporary: printf("t%lu", ir->operands[j].value); break;
+                        case RegType_Temporary: printf("r%lu", ir->operands[j].value); break;
+                        case RegType_Lvalue: printf("l%lu", ir->operands[j].value); break;
                         case RegType_Argument: printf("a%lu", ir->operands[j].value); break;
                         case RegType_Return: printf("ret"); break;
                         case RegType_Global: printf("%%0x%lx", ir->operands[j].value); break;
