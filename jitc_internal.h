@@ -207,6 +207,7 @@ struct jitc_type_t {
         } placeholder;
         struct {
             jitc_type_t* base;
+            jitc_token_t* source;
             const char** names;
             size_t num_names;
         } templ;
@@ -527,7 +528,7 @@ jitc_type_t* jitc_typecache_structref(jitc_context_t* context, const char* name,
 jitc_type_t* jitc_typecache_unionref(jitc_context_t* context, const char* name, list_t* template_list);
 jitc_type_t* jitc_typecache_enumref(jitc_context_t* context, const char* name);
 jitc_type_t* jitc_typecache_placeholder(jitc_context_t* context, const char* name);
-jitc_type_t* jitc_typecache_template(jitc_context_t* context, jitc_type_t* base, list_t* names);
+jitc_type_t* jitc_typecache_template(jitc_context_t* context, jitc_type_t* base, list_t* names, jitc_token_t* source);
 jitc_type_t* jitc_typecache_fill_template(jitc_context_t* context, jitc_type_t* base, map_t* mappings);
 jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name);
 jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from);
