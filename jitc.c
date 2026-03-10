@@ -160,7 +160,7 @@ static jitc_type_t jitc_copy_type(jitc_type_t* type) {
     }
     if (copy.kind == Type_Template) {
         copy.templ.names = malloc(sizeof(char*) * copy.templ.num_names);
-        memcpy(copy.templ.names, type->templ.names, sizeof(char*) * copy.func.num_params);
+        memcpy(copy.templ.names, type->templ.names, sizeof(char*) * copy.templ.num_names);
     }
     if ((copy.kind == Type_StructRef || copy.kind == Type_UnionRef) && copy.ref.templ_types) {
         copy.ref.templ_types = malloc(sizeof(jitc_type_t*) * copy.ref.templ_num_types);
@@ -315,13 +315,14 @@ jitc_type_t* jitc_typecache_placeholder(jitc_context_t* context, const char* nam
     return jitc_register_type(context, &placeholder, false);
 }
 
-jitc_type_t* jitc_typecache_template(jitc_context_t* context, jitc_type_t* base, list_t* _names) {
+jitc_type_t* jitc_typecache_template(jitc_context_t* context, jitc_type_t* base, list_t* _names, jitc_token_t* source) {
     list(char*)* names = _names;
     jitc_type_t templ = {};
     templ.kind = Type_Template;
     templ.templ.base = base;
     templ.templ.num_names = list_size(names);
     templ.templ.names = malloc(sizeof(char*) * templ.templ.num_names);
+    templ.templ.source = source;
     templ.alignment = base->alignment;
     templ.size = base->size;
     for (int i = 0; i < templ.templ.num_names; i++) {
@@ -329,6 +330,8 @@ jitc_type_t* jitc_typecache_template(jitc_context_t* context, jitc_type_t* base,
     }
     return jitc_register_type(context, &templ, true);
 }
+
+#define throw_impl(...) jitc_error_set(context, jitc_error_parser(base->templ.source, __VA_ARGS__))
 
 jitc_type_t* jitc_typecache_fill_template(jitc_context_t* context, jitc_type_t* base, map_t* _mappings) {
     map(char*, jitc_type_t*)* mappings = _mappings;
@@ -340,22 +343,40 @@ jitc_type_t* jitc_typecache_fill_template(jitc_context_t* context, jitc_type_t* 
         return jitc_typecache_fill_template(context, base->templ.base, mappings);
     jitc_type_t new_type = jitc_copy_type(base);
     if (new_type.kind == Type_Struct || new_type.kind == Type_Union)
-        for (int i = 0; i < new_type.str.num_fields; i++)
-            new_type.str.fields[i] = jitc_typecache_named(context, jitc_typecache_fill_template(context, new_type.str.fields[i], mappings), new_type.str.fields[i]->name);
+        for (int i = 0; i < new_type.str.num_fields; i++) {
+            jitc_type_t* field = try(jitc_typecache_fill_template(context, new_type.str.fields[i], mappings));
+            if (!jitc_validate_type(field, TypePolicy_NoUndefTags)) field = jitc_get_tagged_type(context, field) ?: field;
+            if (!jitc_validate_type(field, TypePolicy_NoIncomplete)) throw("Field '%s' has incomplete type", new_type.str.fields[i]);
+            if (field->kind == Type_Function) throw("Field '%s' is a function", new_type.str.fields[i]->name);
+            new_type.str.fields[i] = jitc_typecache_named(context, field, new_type.str.fields[i]->name);
+        }
     if ((new_type.kind == Type_StructRef || new_type.kind == Type_UnionRef) && new_type.ref.templ_types)
         for (int i = 0; i < new_type.ref.templ_num_types; i++)
-            new_type.ref.templ_types[i] = jitc_typecache_fill_template(context, new_type.ref.templ_types[i], mappings);
-    if (new_type.kind == Type_Pointer || new_type.kind == Type_Array || new_type.kind == Type_Enum)
-        new_type.ptr.base = jitc_typecache_fill_template(context, new_type.ptr.base, mappings);
+            new_type.ref.templ_types[i] = try(jitc_typecache_fill_template(context, new_type.ref.templ_types[i], mappings));
+    if (new_type.kind == Type_Pointer || new_type.kind == Type_Array || new_type.kind == Type_Enum) {
+        new_type.ptr.base = try(jitc_typecache_fill_template(context, new_type.ptr.base, mappings));
+        if (new_type.kind == Type_Enum && new_type.ptr.base->kind > Type_Int64 && new_type.ptr.base->kind != Type_Enum) throw("Enum base type must be an integer");
+        if (new_type.kind == Type_Array && new_type.ptr.base->kind == Type_Function) throw("Arrays cannot contain functions");
+    }
     if (new_type.kind == Type_Function) {
-        new_type.func.ret = jitc_typecache_fill_template(context, new_type.func.ret, mappings);
-        for (int i = 0; i < new_type.func.num_params; i++)
-            new_type.func.params[i] = jitc_typecache_named(context, jitc_typecache_fill_template(context, new_type.func.params[i], mappings), new_type.func.params[i]->name);
+        new_type.func.ret = try(jitc_typecache_fill_template(context, new_type.func.ret, mappings));
+        if (new_type.func.ret->kind == Type_Array) throw("Function cannot return an array");
+        if (new_type.func.ret->kind == Type_Function) throw("Function cannot return a function");
+        if (!jitc_validate_type(new_type.func.ret, TypePolicy_NoUndefTags)) new_type.func.ret = jitc_get_tagged_type(context, new_type.func.ret) ?: new_type.func.ret;
+        if (!jitc_validate_type(new_type.func.ret, TypePolicy_NoIncomplete & ~TypePolicy_NoVoid)) throw("Function return has incomplete type");
+        for (int i = 0; i < new_type.func.num_params; i++) {
+            jitc_type_t* param = jitc_typecache_decay(context, try(jitc_typecache_fill_template(context, new_type.func.params[i], mappings)));
+            if (!jitc_validate_type(param, TypePolicy_NoUndefTags)) param = jitc_get_tagged_type(context, param) ?: param;
+            if (!jitc_validate_type(param, TypePolicy_NoIncomplete)) throw("Function parameter '%s' has incomplete type", new_type.func.params[i]->name);
+            new_type.func.params[i] = jitc_typecache_named(context, param, new_type.func.params[i]->name);
+        }
     }
     new_type.hash = 0;
     jitc_update_struct(&new_type);
     return jitc_register_type(context, &new_type, true);
 }
+
+#undef throw_impl
 
 jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, const char* name) {
     jitc_type_t type = jitc_copy_type(base);
@@ -365,6 +386,7 @@ jitc_type_t* jitc_typecache_named(jitc_context_t* context, jitc_type_t* base, co
 }
 
 jitc_type_t* jitc_typecache_decay(jitc_context_t* context, jitc_type_t* from) {
+    if (from->kind == Type_Enum) return from->ptr.base;
     if (from->kind != Type_Array && from->kind != Type_Function) return from;
     jitc_type_t type = {};
     type.kind = Type_Pointer;

@@ -213,6 +213,7 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* _tokens, jit
         switch (item->id) {
             case DeclID_Array: {
                 if (!jitc_validate_type(*type, TypePolicy_NoFunction)) throw(item->starting_token, "Array cannot contain a function");
+                if (!jitc_validate_type(*type, TypePolicy_NoUndefTags)) *type = jitc_get_tagged_type(context, *type) ?: *type;
                 if (!jitc_validate_type(*type, TypePolicy_NoIncomplete)) throw(item->starting_token, "Array with incomplete type");
                 *type = jitc_typecache_array(context, *type, item->array_size);
             } break;
@@ -221,6 +222,8 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* _tokens, jit
                 smartptr(list(jitc_type_t*)) list = list_new(jitc_type_t*);
                 smartptr(queue(jitc_token_t)) queue = (void*)item->tokens;
                 if (!jitc_validate_type(*type, TypePolicy_NoDerived)) throw(item->starting_token, "Function cannot return an array or function");
+                if (!jitc_validate_type(*type, TypePolicy_NoUndefTags)) *type = jitc_get_tagged_type(context, *type) ?: *type;
+                if (!jitc_validate_type(*type, TypePolicy_NoIncomplete & ~TypePolicy_NoVoid)) throw(item->starting_token, "Function returns an incomplete type");
                 while (queue_size(queue) > 1) {
                     comma = NULL;
                     token = &queue_peek(queue);
@@ -236,6 +239,8 @@ bool jitc_parse_type_declarations(jitc_context_t* context, queue_t* _tokens, jit
                         if (list_size(list) > 0) throw(token, "'void' must be the only parameter");
                         break;
                     }
+                    if (!jitc_validate_type(param_type, TypePolicy_NoUndefTags)) param_type = jitc_get_tagged_type(context, param_type) ?: param_type;
+                    if (!jitc_validate_type(param_type, TypePolicy_NoIncomplete)) throw(token, "Function parameter '%s' has incomplete type", param_type->name);
                     list_add(list) = param_type;
                     comma = jitc_token_expect(queue, TOKEN_COMMA);
                 }
@@ -317,7 +322,8 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
         }
         else if ((token = jitc_token_expect(tokens, TOKEN_struct)) || (token = jitc_token_expect(tokens, TOKEN_union))) {
             smartptr(list(char*)) template_names = NULL;
-            if (jitc_token_expect(tokens, TOKEN_LESS_THAN)) {
+            jitc_token_t* template_start = NULL;
+            if ((template_start = jitc_token_expect(tokens, TOKEN_LESS_THAN))) {
                 template_names = list_new(char*);
                 if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) while (true) {
                     jitc_token_t* template_name = jitc_token_expect(tokens, TOKEN_IDENTIFIER);
@@ -363,7 +369,7 @@ jitc_type_t* jitc_parse_base_type(jitc_context_t* context, queue_t* _tokens, jit
                     }
                 }
                 type = (token->type == TOKEN_struct ? jitc_typecache_struct : jitc_typecache_union)(context, fields, token);
-                if (template_names) type = jitc_typecache_template(context, type, template_names);
+                if (template_names) type = jitc_typecache_template(context, type, template_names, template_start);
                 if (name_token) {
                     const char* name = token->type == TOKEN_struct ? "Struct" : "Union";
                     jitc_pop_scope(context);
@@ -1736,7 +1742,9 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
     if (jitc_peek_type(context, tokens) || (token = jitc_token_expect(tokens, TOKEN_LESS_THAN))) {
         if (!(allowed & ParseType_Declaration)) throw(token ?: NEXT_TOKEN, "Declaration not allowed here");
         smartptr(list(char*)) template_list = NULL;
+        jitc_token_t* template_start = NULL;
         if (token) {
+            template_start = token;
             template_list = list_new(char*);
             jitc_push_scope(context);
             if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) while (true) {
@@ -1778,7 +1786,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 if (decltype == Decltype_Typedef) // can theoretically be enabled, but structs are an issue
                     throw(NEXT_TOKEN, "Templated declaration cannot be typedef");
                 const char* name = type->name;
-                type = jitc_typecache_template(context, type, template_list);
+                type = jitc_typecache_template(context, type, template_list, template_start);
                 type = jitc_typecache_named(context, type, name);
             }
             type = jitc_to_method(context, type);

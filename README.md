@@ -21,6 +21,8 @@ makes interop near plug and play.
 - GNU ternary syntax (`x ?: y`)
 - Suffix pointer syntax (`void()*` instead of `void(*)()`)
 - Zig's `defer` and GNU `__attribute__((cleanup))`
+- Deferred function parameters (`func(malloc(16) defer free(it))`)
+- `delete` function
 - Vectors, matrices, quaternions (also support swizzles)
 - Runtime type reflection
 - Closures
@@ -38,6 +40,8 @@ Syntactically and semantically, it's nearly identical to C, but it adds extra fe
 - Redefinition of functions and global variables
 - `hotswap` and `preserve`
 - `defer` and `cleanup`*
+- `defer` in function parameters*
+- `delete` function (explicit RAII)*
 - Single-expression functions
 - Anonymous functions (lambdas)
 - Closures*
