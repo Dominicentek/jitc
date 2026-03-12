@@ -663,8 +663,7 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
                 node->walk_struct.struct_ptr = deref;
             }
             if (!jitc_validate_type(type, TypePolicy_NoUndefTags)) {
-                jitc_type_t* resolved = jitc_get_tagged_type(context, type);
-                if (!resolved) throw(node->token, "Cannot access an incomplete struct");
+                jitc_type_t* resolved = jitc_get_tagged_type(context, type) ?: type;
                 type = node->walk_struct.struct_ptr->exprtype = resolved;
             }
             if (is_struct(type) && jitc_walk_struct(type, node->walk_struct.field_name, &node->exprtype, &node->walk_struct.offset)) {
