@@ -90,7 +90,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     for (size_t i = 0; i < num_args; i++) {
         args[i + 1] = classify(arg_types[i], &int_params, &float_params, &stack_params);
     }
-    
+
     // preserve registers
     int num_preserved_regs = 0;
     for (size_t i = num_args; i < stack_size(opstack); i++) {
@@ -226,6 +226,8 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
         if (!isflt(item->kind) && value_reg != r10 && value_reg != r11) continue;
         emit(writer, mov, 2, reg(value_reg, kind, false), ptr(rbp, -stack_storage_size - ++num_preserved_regs * 8, kind, false));
     }
+
+    free(arg_types);
 }
 
 static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t stack_size) {

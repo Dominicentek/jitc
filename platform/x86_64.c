@@ -257,7 +257,14 @@ static instr_t instructions[] = {
 static stack(stack_item_t)* opstack = NULL;
 
 static int opstack_int_index = 0, opstack_float_index = 0;
+static size_t rvalue_stack_ptr = 0;
+static size_t rvalue_stack_offset = 0;
 static size_t stack_bytes = 0;
+
+static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_type_t** arg_types, size_t num_args);
+static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t stack_size);
+static void jitc_asm_ret(bytewriter_t* writer);
+static void jitc_asm_func_end(bytewriter_t* writer);
 
 static bool isflt(jitc_type_kind_t kind) {
     return kind == Type_Float32 || kind == Type_Float64;
@@ -295,10 +302,7 @@ static stack_item_t* push(bytewriter_t* writer, stack_item_type_t type, jitc_typ
         int* index = &opstack_int_index;
         if (type == StackItem_rvalue && isflt(item->kind)) index = &opstack_float_index;
         if (*index < sizeof(stack_regs)) item->value = *index | (1L << 63);
-        else {
-            stack_sub(writer, 8);
-            item->value = stack_bytes;
-        }
+        else item->value = ++rvalue_stack_ptr;
         (*index)++;
     }
 #if JITC_DEBUG || JITC_DEBUG_CODEGEN_STACK
@@ -327,7 +331,7 @@ static stack_item_t pop(bytewriter_t* writer) {
     if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
         if (item->type == StackItem_rvalue && isflt(item->kind)) opstack_float_index--;
         else opstack_int_index--;
-        if (!(item->value & (1L << 63))) stack_free(writer, 8);
+        if (!(item->value & (1L << 63))) rvalue_stack_ptr--;
         if (item->extra_storage != 0) stack_free(writer, item->extra_storage);
     }
 #if JITC_DEBUG || JITC_DEBUG_CODEGEN_STACK
@@ -372,8 +376,8 @@ static operand_t op(stack_item_t* item) {
             }
             else {
                 op.type = OpType_ptrptr;
-                op.reg = rsp;
-                op.disp = stack_bytes - item->value + item->offset;
+                op.reg = rbp;
+                op.disp = -(rvalue_stack_offset + item->value * 8) + item->offset;
             }
             return op;
         }
@@ -385,8 +389,8 @@ static operand_t op(stack_item_t* item) {
             }
             else {
                 op.type = OpType_ptr;
-                op.reg = rsp;
-                op.disp = stack_bytes - item->value;
+                op.reg = rbp;
+                op.disp = -(rvalue_stack_offset + item->value * 8);
             }
             return op;
         }
@@ -1289,4 +1293,211 @@ static void jitc_asm_label(bytewriter_t* writer, const char* label_name) { PRINT
 
 static void jitc_asm_int(bytewriter_t* writer) { PRINT_FUNC
     emit(writer, int3, 0);
+}
+
+static void stacksize_rvalue(stack_t* _stack, size_t* num_int_vars, size_t* num_float_vars) {
+    stack(stack_item_t)* stack = _stack;
+    stack_item_t* item = &stack_peek(stack);
+    if (item->type != StackItem_rvalue && item->type != StackItem_lvalue_abs) {
+        item->type = StackItem_rvalue;
+        if (isflt(item->kind)) *num_float_vars += 1;
+        else *num_int_vars += 1;
+    }
+}
+
+static void stacksize_push(stack_t* _stack, size_t* num_int_vars, size_t* num_float_vars, stack_item_type_t type, bool is_float) {
+    stack(stack_item_t)* stack = _stack;
+    stack_item_t* item = &stack_push(stack);
+    item->type = type;
+    item->kind = is_float ? Type_Float32 : Type_Int32;
+    if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
+        if (isflt(item->kind)) *num_float_vars += 1;
+        else *num_int_vars += 1;
+    }
+}
+
+static void stacksize_pop(stack_t* _stack, size_t* num_int_vars, size_t* num_float_vars) {
+    stack(stack_item_t)* stack = _stack;
+    stack_item_t* item = &stack_pop(stack);
+    if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
+        if (isflt(item->kind)) *num_float_vars -= 1;
+        else *num_int_vars -= 1;
+    }
+}
+
+static void jitc_asm_emit(bytewriter_t* writer, list_t* _ir) {
+    list(jitc_ir_t)* ir = _ir;
+    size_t max_int_vars = 0, max_float_vars = 0;
+    size_t num_int_vars = 0, num_float_vars = 0;
+    smartptr(stack(stack_item_t)) stack = stack_new(stack_item_t);
+    for (size_t i = 0; i < list_size(ir); i++) {
+        jitc_ir_t* instr = &list_get(ir, i);
+        switch (instr->opcode) {
+            case IR_rval:
+            case IR_neg:
+            case IR_sc_end:
+                stacksize_rvalue(stack, &num_int_vars, &num_float_vars);
+                break;
+            case IR_load:
+            case IR_init:
+            case IR_not:
+            case IR_inc:
+            case IR_zero:
+            case IR_addrof:
+            case IR_swp:
+            case IR_sc_begin:
+            case IR_type:
+            case IR_offset:
+            case IR_normalize:
+            case IR_if:
+            case IR_else:
+            case IR_end:
+            case IR_goto_start:
+            case IR_goto_end:
+            case IR_goto:
+            case IR_label:
+            case IR_int:
+            case IR_func:
+            case IR_func_end:
+                break;
+            case IR_cvt:
+                stacksize_pop(stack, &num_int_vars, &num_float_vars);
+                stacksize_push(stack, &num_int_vars, &num_float_vars, StackItem_rvalue, isflt(instr->operands[0].i));
+                break;
+            case IR_pushi:
+                stacksize_push(stack, &num_int_vars, &num_float_vars, StackItem_literal, false);
+                break;
+            case IR_lstack:
+                stacksize_push(stack, &num_int_vars, &num_float_vars, StackItem_lvalue, isflt(instr->operands[1].i));
+                break;
+            case IR_laddr:
+                stacksize_push(stack, &num_int_vars, &num_float_vars, StackItem_lvalue_abs, isflt(instr->operands[1].i));
+                break;
+            case IR_stackalloc:
+                stacksize_push(stack, &num_int_vars, &num_float_vars, StackItem_lvalue_abs, false);
+                break;
+            case IR_pushf:
+            case IR_pushd:
+                stacksize_push(stack, &num_int_vars, &num_float_vars, StackItem_literal, true);
+                break;
+            case IR_sadd:
+            case IR_ssub:
+            case IR_smul:
+            case IR_sdiv:
+                if (stack_peek(stack).type == StackItem_literal && isflt(stack_peek(stack).kind))
+            case IR_land:
+            case IR_lor:
+                    stacksize_rvalue(stack, &num_int_vars, &num_float_vars);
+            case IR_pop:
+            case IR_store:
+            case IR_copy:
+            case IR_add:
+            case IR_sub:
+            case IR_mul:
+            case IR_div:
+            case IR_mod:
+            case IR_and:
+            case IR_or:
+            case IR_xor:
+            case IR_shl:
+            case IR_shr:
+            case IR_smod:
+            case IR_sand:
+            case IR_sor:
+            case IR_sxor:
+            case IR_sshl:
+            case IR_sshr:
+            case IR_eql:
+            case IR_neq:
+            case IR_lst:
+            case IR_lte:
+            case IR_grt:
+            case IR_gte:
+            case IR_then:
+            case IR_ret:
+                stacksize_pop(stack, &num_int_vars, &num_float_vars);
+                break;
+            case IR_call:
+                for (size_t i = 0; i < instr->operands[2].i; i++)
+                    stacksize_pop(stack, &num_int_vars, &num_float_vars);
+                stacksize_pop(stack, &num_int_vars, &num_float_vars);
+                stacksize_push(stack, &num_int_vars, &num_float_vars, StackItem_rvalue, isflt(((jitc_type_t*)instr->operands[0].p)->func.ret->kind));
+                break;
+        }
+        if (num_int_vars > max_int_vars) max_int_vars = num_int_vars;
+        if (num_float_vars > max_float_vars) max_float_vars = num_float_vars;
+    }
+    if (max_int_vars < 7) max_int_vars = 7;
+    if (max_float_vars < 7) max_float_vars = 7;
+    size_t rvalue_stack_size = (max_int_vars - 7) + (max_float_vars - 7);
+    for (size_t i = 0; i < list_size(ir); i++) {
+        jitc_ir_t* instr = &list_get(ir, i);
+        switch (instr->opcode) {
+            case IR_rval: jitc_asm_rval(writer); break;
+            case IR_pushi: jitc_asm_pushi(writer, instr->operands[0].i, instr->operands[1].i, instr->operands[2].i); break;
+            case IR_pushf: jitc_asm_pushf(writer, instr->operands[0].f); break;
+            case IR_pushd: jitc_asm_pushd(writer, instr->operands[0].d); break;
+            case IR_pop: jitc_asm_pop(writer); break;
+            case IR_load: jitc_asm_load(writer, instr->operands[0].i, instr->operands[1].i); break;
+            case IR_laddr: jitc_asm_laddr(writer, instr->operands[0].p, instr->operands[1].i, instr->operands[2].i); break;
+            case IR_lstack: jitc_asm_lstack(writer, instr->operands[0].i, instr->operands[1].i, instr->operands[2].i); break;
+            case IR_store: jitc_asm_store(writer); break;
+            case IR_copy: jitc_asm_copy(writer, instr->operands[0].i, instr->operands[1].i); break;
+            case IR_init: jitc_asm_init(writer, instr->operands[0].i, instr->operands[1].i); break;
+            case IR_add: jitc_asm_add(writer); break;
+            case IR_sub: jitc_asm_sub(writer); break;
+            case IR_mul: jitc_asm_mul(writer); break;
+            case IR_div: jitc_asm_div(writer); break;
+            case IR_mod: jitc_asm_mod(writer); break;
+            case IR_and: jitc_asm_and(writer); break;
+            case IR_or: jitc_asm_or(writer); break;
+            case IR_xor: jitc_asm_xor(writer); break;
+            case IR_shl: jitc_asm_shl(writer); break;
+            case IR_shr: jitc_asm_shr(writer); break;
+            case IR_sadd: jitc_asm_sadd(writer); break;
+            case IR_ssub: jitc_asm_ssub(writer); break;
+            case IR_smul: jitc_asm_smul(writer); break;
+            case IR_sdiv: jitc_asm_sdiv(writer); break;
+            case IR_smod: jitc_asm_smod(writer); break;
+            case IR_sand: jitc_asm_sand(writer); break;
+            case IR_sor: jitc_asm_sor(writer); break;
+            case IR_sxor: jitc_asm_sxor(writer); break;
+            case IR_sshl: jitc_asm_sshl(writer); break;
+            case IR_sshr: jitc_asm_sshr(writer); break;
+            case IR_not: jitc_asm_not(writer); break;
+            case IR_neg: jitc_asm_neg(writer); break;
+            case IR_inc: jitc_asm_inc(writer, instr->operands[0].i, instr->operands[1].i); break;
+            case IR_zero: jitc_asm_zero(writer); break;
+            case IR_addrof: jitc_asm_addrof(writer); break;
+            case IR_eql: jitc_asm_eql(writer); break;
+            case IR_neq: jitc_asm_neq(writer); break;
+            case IR_lst: jitc_asm_lst(writer); break;
+            case IR_lte: jitc_asm_lte(writer); break;
+            case IR_grt: jitc_asm_grt(writer); break;
+            case IR_gte: jitc_asm_gte(writer); break;
+            case IR_swp: jitc_asm_swp(writer); break;
+            case IR_sc_begin: jitc_asm_sc_begin(writer); break;
+            case IR_land: jitc_asm_land(writer); break;
+            case IR_lor: jitc_asm_lor(writer); break;
+            case IR_sc_end: jitc_asm_sc_end(writer); break;
+            case IR_cvt: jitc_asm_cvt(writer, instr->operands[0].i, instr->operands[1].i); break;
+            case IR_type: jitc_asm_type(writer, instr->operands[0].i, instr->operands[1].i); break;
+            case IR_stackalloc: jitc_asm_stackalloc(writer, instr->operands[0].i); break;
+            case IR_offset: jitc_asm_offset(writer, instr->operands[0].i); break;
+            case IR_normalize: jitc_asm_normalize(writer, instr->operands[0].i); break;
+            case IR_if: jitc_asm_if(writer, instr->operands[0].i); break;
+            case IR_then: jitc_asm_then(writer); break;
+            case IR_else: jitc_asm_else(writer); break;
+            case IR_end: jitc_asm_end(writer); break;
+            case IR_goto_start: jitc_asm_goto_start(writer); break;
+            case IR_goto_end: jitc_asm_goto_end(writer); break;
+            case IR_goto: jitc_asm_goto(writer, instr->operands[0].p); break;
+            case IR_label: jitc_asm_label(writer, instr->operands[0].p); break;
+            case IR_int: jitc_asm_int(writer); break;
+            case IR_call: jitc_asm_call(writer, instr->operands[0].p, instr->operands[1].p, instr->operands[2].i); break;
+            case IR_func: jitc_asm_func(writer, instr->operands[0].p, (rvalue_stack_offset = instr->operands[1].i) + rvalue_stack_size * 8); break;
+            case IR_ret: jitc_asm_ret(writer); break;
+            case IR_func_end: jitc_asm_func_end(writer); break;
+        }
+    }
 }

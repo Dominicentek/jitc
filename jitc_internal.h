@@ -143,6 +143,73 @@ typedef struct jitc_token_t jitc_token_t;
     ITEM(TaskState_Visiting) \
     ITEM(TaskState_Visited) \
 
+#define jitc_ir_opcode_t(ITEM) \
+    ITEM(IR_rval) \
+    ITEM(IR_pushi) \
+    ITEM(IR_pushf) \
+    ITEM(IR_pushd) \
+    ITEM(IR_pop) \
+    ITEM(IR_load) \
+    ITEM(IR_laddr) \
+    ITEM(IR_lstack) \
+    ITEM(IR_store) \
+    ITEM(IR_copy) \
+    ITEM(IR_init) \
+    ITEM(IR_add) \
+    ITEM(IR_sub) \
+    ITEM(IR_mul) \
+    ITEM(IR_div) \
+    ITEM(IR_mod) \
+    ITEM(IR_and) \
+    ITEM(IR_or) \
+    ITEM(IR_xor) \
+    ITEM(IR_shl) \
+    ITEM(IR_shr) \
+    ITEM(IR_sadd) \
+    ITEM(IR_ssub) \
+    ITEM(IR_smul) \
+    ITEM(IR_sdiv) \
+    ITEM(IR_smod) \
+    ITEM(IR_sand) \
+    ITEM(IR_sor) \
+    ITEM(IR_sxor) \
+    ITEM(IR_sshl) \
+    ITEM(IR_sshr) \
+    ITEM(IR_not) \
+    ITEM(IR_neg) \
+    ITEM(IR_inc) \
+    ITEM(IR_zero) \
+    ITEM(IR_addrof) \
+    ITEM(IR_eql) \
+    ITEM(IR_neq) \
+    ITEM(IR_lst) \
+    ITEM(IR_lte) \
+    ITEM(IR_grt) \
+    ITEM(IR_gte) \
+    ITEM(IR_swp) \
+    ITEM(IR_sc_begin) \
+    ITEM(IR_land) \
+    ITEM(IR_lor) \
+    ITEM(IR_sc_end) \
+    ITEM(IR_cvt) \
+    ITEM(IR_type) \
+    ITEM(IR_stackalloc) \
+    ITEM(IR_offset) \
+    ITEM(IR_normalize) \
+    ITEM(IR_if) \
+    ITEM(IR_then) \
+    ITEM(IR_else) \
+    ITEM(IR_end) \
+    ITEM(IR_goto_start) \
+    ITEM(IR_goto_end) \
+    ITEM(IR_goto) \
+    ITEM(IR_label) \
+    ITEM(IR_int) \
+    ITEM(IR_call) \
+    ITEM(IR_func) \
+    ITEM(IR_ret) \
+    ITEM(IR_func_end) \
+
 #define CHOOSE(a, b, ...) b
 #define ENUM_ITEM(x, ...) x CHOOSE(__VA_OPT__(,) ENUM_ASSIGN, COMMA)(__VA_ARGS__)
 #define STRING_ITEM(x, ...) CHOOSE(__VA_OPT__(,) ARR_DESIGNATOR, DISCARD)(__VA_ARGS__) #x,
@@ -167,6 +234,7 @@ ENUM(jitc_binary_op_t)
 ENUM(jitc_type_policy_t)
 ENUM(jitc_parse_type_t)
 ENUM(jitc_task_state_t)
+ENUM(jitc_ir_opcode_t)
 
 typedef struct jitc_type_t jitc_type_t;
 struct jitc_type_t {
@@ -325,6 +393,17 @@ struct jitc_ast_t {
         } init;
     };
 };
+
+typedef struct {
+    jitc_ir_opcode_t opcode;
+    union {
+        struct {} s;
+        uint64_t i;
+        float f;
+        double d;
+        void* p;
+    } operands[3];
+} jitc_ir_t;
 
 typedef struct {
     void* ptr;
