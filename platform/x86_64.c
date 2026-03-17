@@ -877,8 +877,10 @@ static void jitc_asm_load(bytewriter_t* writer, jitc_type_kind_t kind, bool is_u
 
 static void jitc_asm_laddr(bytewriter_t* writer, jitc_variable_t* var, jitc_type_kind_t kind, bool is_unsigned) { PRINT_FUNC
     operand_t op1 = op(push(writer, StackItem_lvalue_abs, kind, is_unsigned));
-    emit(writer, mov, 2, unptr(op1), imm((uint64_t)&var->ptr, Type_Pointer, true));
-    emit(writer, mov, 2, unptr(op1), op1);
+    operand_t res = unptr(op1);
+    op1.kind = res.kind; op1.is_unsigned = res.is_unsigned;
+    emit(writer, mov, 2, res, imm((uint64_t)&var->ptr, Type_Pointer, true));
+    emit(writer, mov, 2, res, op1);
 }
 
 static void jitc_asm_lstack(bytewriter_t* writer, int32_t offset, jitc_type_kind_t kind, bool is_unsigned) { PRINT_FUNC
@@ -1118,12 +1120,12 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
         if (op1.kind == Type_Float32) emit(writer, mov, 2, res, op1);
         else if (op1.kind == Type_Float64) emit(writer, cvt, 2, res, op1);
         else if (op1.kind == Type_Int64 && op1.is_unsigned) {
-            operand_t itmp = reg(rax, Type_Int64, true);
-            operand_t ftmp = reg(xmm15, Type_Float64, true);
+            operand_t itmp = reg(rax, Type_Int32, true);
+            operand_t ftmp = reg(xmm15, Type_Float32, true);
             emit(writer, mov, 2, itmp, op1);
             emit(writer, cvt, 2, res, itmp);
             emit(writer, sar, 2, itmp, imm(63, Type_Int8, true));
-            emit(writer, and, 2, itmp, imm(0x5F800000, Type_Float32, true));
+            emit(writer, and, 2, itmp, imm(0x5F800000, Type_Int32, true));
             emit(writer, mov, 2, ftmp, itmp);
             emit(writer, add, 2, res, ftmp);
         }
@@ -1144,7 +1146,7 @@ static void jitc_asm_cvt(bytewriter_t* writer, jitc_type_kind_t kind, bool is_un
             emit(writer, mov, 2, itmp, op1);
             emit(writer, cvt, 2, res, itmp);
             emit(writer, sar, 2, itmp, imm(63, Type_Int8, true));
-            emit(writer, and, 2, itmp, imm(0x43F0000000000000, Type_Float64, true));
+            emit(writer, and, 2, itmp, imm(0x43F0000000000000, Type_Int64, true));
             emit(writer, mov, 2, ftmp, itmp);
             emit(writer, add, 2, res, ftmp);
         }
