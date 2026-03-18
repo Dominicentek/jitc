@@ -1102,8 +1102,8 @@ static void jitc_asm_lor(bytewriter_t* writer) { PRINT_FUNC
 }
 
 static void jitc_asm_sc_end(bytewriter_t* writer) { PRINT_FUNC
-    pop_shortcircuit(writer);
     jitc_asm_rval(writer);
+    pop_shortcircuit(writer);
     stack_item_t item = pop(writer);
     stack_item_t* res = push(writer, StackItem_rvalue, Type_Int8, true);
     emit(writer, cmp, 2, op(&item), imm(0, item.kind, item.is_unsigned));
@@ -1200,7 +1200,7 @@ static void jitc_asm_offset(bytewriter_t* writer, int32_t off) { PRINT_FUNC
 }
 
 static void jitc_asm_normalize(bytewriter_t* writer, int32_t size) { PRINT_FUNC
-    if (peek(0)->type == StackItem_literal || peek(0)->type == StackItem_lvalue) jitc_asm_rval(writer);
+    jitc_asm_rval(writer);
     if (size == 0) return;
     mnemonic_t mnemonic = size < 0 ? shr : shl;
     size = abs(size);
@@ -1338,6 +1338,7 @@ static void jitc_asm_emit(bytewriter_t* writer, list_t* _ir) {
             case IR_rval:
             case IR_neg:
             case IR_sc_end:
+            case IR_normalize:
                 stacksize_rvalue(stack, &num_int_vars, &num_float_vars);
                 break;
             case IR_load:
@@ -1350,7 +1351,6 @@ static void jitc_asm_emit(bytewriter_t* writer, list_t* _ir) {
             case IR_sc_begin:
             case IR_type:
             case IR_offset:
-            case IR_normalize:
             case IR_if:
             case IR_else:
             case IR_end:
