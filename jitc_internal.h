@@ -13,6 +13,7 @@ typedef struct jitc_token_t jitc_token_t;
     ITEM(Decltype_Extern) \
     ITEM(Decltype_Typedef) \
     ITEM(Decltype_EnumItem) \
+    ITEM(Decltype_Argument) \
     ITEM(Decltype_Template, 1 << 3) \
 
 #define jitc_preserve_t(ITEM) \
@@ -300,6 +301,7 @@ typedef struct {
     jitc_decltype_t decltype;
     jitc_preserve_t preserve_policy;
     bool initial;
+    uint32_t scope_id;
     union {
         void* ptr;
         uint64_t enum_value;
@@ -417,6 +419,7 @@ typedef struct {
     map(char*, jitc_type_t*)* unions;
     map(char*, jitc_type_t*)* enums;
     bool func;
+    uint32_t scope_id;
 } jitc_scope_t;
 
 typedef struct {
@@ -622,6 +625,8 @@ jitc_type_t* jitc_mangle_template(jitc_context_t* context, jitc_type_t* type, ma
 jitc_type_t* jitc_get_tagged_type_notype(jitc_context_t* context, jitc_type_kind_t kind, const char* name);
 jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_t* type);
 jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name);
+const char* jitc_scoped_name_curr(jitc_context_t* context, const char* name);
+const char* jitc_scoped_name(jitc_context_t* context, const char* name, uint32_t scope);
 
 jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, const char* name, list_t* templ_list, map_t** template_map);
 bool jitc_walk_struct(jitc_type_t* str, const char* name, jitc_type_t** field_type, size_t* offset);

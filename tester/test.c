@@ -14,7 +14,6 @@ struct {
     { "tests/control-flow/011-fallthrough.c", "switch not implemented yet" },
     { "tests/control-flow/012-default.c", "switch not implemented yet" },
     { "tests/functions/007-varargs.c", "varargs not implemented yet"},
-    { "tests/variables/005-shadow.c", "variable shadowing not implemented yet" },
 };
 
 static int sort_string(const void* a, const void* b) {

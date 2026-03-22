@@ -1317,7 +1317,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
             if (!jitc_token_expect(tokens, TOKEN_GREATER_THAN)) throw(NEXT_TOKEN, "Expected '>'");
         }
         node = mknode(AST_Variable, token);
-        node->variable.name = token->value.string;
+        node->variable.name = jitc_scoped_name(context, token->value.string, variable->scope_id);
         node->variable.templ_map = move(template_map);
     }
     else if ((token = jitc_token_expect(tokens, TOKEN_true))) {
@@ -1381,7 +1381,7 @@ jitc_ast_t* jitc_parse_expression_operand(jitc_context_t* context, queue_t* _tok
                 if (!jitc_token_expect(tokens, TOKEN_PARENTHESIS_CLOSE)) throw(NEXT_TOKEN, "Expected ')'");
                 break;
             }
-            if (!jitc_declare_variable(context, param, Decltype_None, NULL, 0, 0))
+            if (!jitc_declare_variable(context, param, Decltype_Argument, NULL, 0, 0))
                 throw(token, "Duplicate parameter '%s'", param->name);
             list_add(params) = param;
             if (jitc_token_expect(tokens, TOKEN_COMMA)) continue;
@@ -1793,6 +1793,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                 type = jitc_typecache_template(context, type, template_list, template_start);
                 type = jitc_typecache_named(context, type, name);
             }
+            type = jitc_typecache_named(context, type, jitc_scoped_name_curr(context, type->name));
             type = jitc_to_method(context, type);
             if (node) {
                 node->decl.type = type;
@@ -1849,7 +1850,7 @@ jitc_ast_t* jitc_parse_statement(jitc_context_t* context, queue_t* _tokens, jitc
                     jitc_push_scope(context);
                     jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, NULL, Preserve_IfConst, 0);
                     for (size_t i = 0; i < type->func.num_params; i++) {
-                        jitc_declare_variable(context, type->func.params[i], Decltype_None, NULL, Preserve_IfConst, 0);
+                        jitc_declare_variable(context, type->func.params[i], Decltype_Argument, NULL, Preserve_IfConst, 0);
                     }
                     if (token->type == TOKEN_ARROW) {
                         if (type->func.ret->kind == Type_Void) list_add(body->list.inner) = try(jitc_parse_expression(context, tokens, EXPR_WITH_COMMAS, NULL));
@@ -1953,7 +1954,7 @@ jitc_ast_t* jitc_parse_ast(jitc_context_t* context, queue_t* _tokens) {
         jitc_push_scope(context);
         jitc_declare_variable(context, jitc_typecache_named(context, type->func.ret, "return"), Decltype_None, NULL, Preserve_IfConst, 0);
         for (size_t i = 0; i < type->func.num_params; i++) {
-            jitc_declare_variable(context, type->func.params[i], Decltype_None, NULL, Preserve_IfConst, 0);
+            jitc_declare_variable(context, type->func.params[i], Decltype_Argument, NULL, Preserve_IfConst, 0);
         }
         for (size_t i = 0; i < map_size(template_map); i++) {
             map_index(template_map, i);

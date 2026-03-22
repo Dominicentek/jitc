@@ -425,7 +425,12 @@ jitc_type_t* jitc_to_method(jitc_context_t* context, jitc_type_t* type) {
 
 bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decltype_t decltype, const char* extern_symbol, jitc_preserve_t preserve_policy, uint64_t value) {
     if (!type->name) return true;
-    jitc_variable_t* prev = jitc_get_variable(context, type->name);
+    if (*type->name == '$') type = jitc_typecache_named(context, type, type->name + 9);
+    jitc_scope_t* scope = &list_get(context->scopes, decltype == Decltype_Static ? 0 : list_size(context->scopes) - 1);
+    jitc_variable_t* prev = NULL;
+    if (map_find(scope->variables, &type->name)) prev = map_get_value(scope->variables);
+    uint32_t scope_id = decltype == Decltype_Argument ? 0 : scope->scope_id;
+    if (decltype == Decltype_Argument) decltype = Decltype_None;
     if (prev) {
         if (list_size(context->scopes) > 1) return false;
         if (!jitc_typecmp(context, prev->type, type)) return false;
@@ -456,9 +461,6 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
         prev->preserve_policy = policy_ifconst ? Preserve_IfConst : preserve_policy;
         return true;
     }
-    jitc_scope_t* scope = NULL;
-    if (decltype == Decltype_Static) scope = &list_get(context->scopes, 0);
-    else scope = &list_get(context->scopes, list_size(context->scopes) - 1);
     bool global = scope == &list_get(context->scopes, 0);
     map_add(scope->variables) = (char*)type->name;
     map_commit(scope->variables);
@@ -469,6 +471,7 @@ bool jitc_declare_variable(jitc_context_t* context, jitc_type_t* type, jitc_decl
     var->enum_value = value;
     var->preserve_policy = preserve_policy;
     var->initial = true;
+    var->scope_id = scope_id;
     map_get_value(scope->variables) = var;
     return true;
 }
@@ -492,6 +495,7 @@ bool jitc_declare_tagged_type(jitc_context_t* context, jitc_type_t* type, const 
 
 jitc_variable_t* jitc_get_variable(jitc_context_t* context, const char* name) {
     if (!name) return NULL;
+    if (*name == '$') name += 9;
     bool outside_of_function = false;
     for (size_t i = list_size(context->scopes) - 1; i < list_size(context->scopes) /* rely on underflow */; i--) {
         if (i != 0 && outside_of_function) continue;
@@ -534,12 +538,14 @@ jitc_type_t* jitc_get_tagged_type(jitc_context_t* context, jitc_type_t* type) {
 }
 
 void jitc_push_scope(jitc_context_t* context) {
+    static uint32_t id = 0;
     jitc_scope_t* scope = &list_add(context->scopes);
     scope->variables = map_new(compare_string, char*, jitc_variable_t);
     scope->structs = map_new(compare_string, char*, jitc_type_t*);
     scope->unions = map_new(compare_string, char*, jitc_type_t*);
     scope->enums = map_new(compare_string, char*, jitc_type_t*);
     scope->func = false;
+    scope->scope_id = list_size(context->scopes) == 1 ? 0 : ++id;
 }
 
 void jitc_push_function(jitc_context_t* context) {
@@ -774,6 +780,18 @@ void jitc_link(jitc_context_t* context) {
 
 jitc_variable_t* jitc_get_or_static(jitc_context_t* context, const char* name) {
     return jitc_get_symbol(context, name, false);
+}
+
+const char* jitc_scoped_name_curr(jitc_context_t* context, const char* name) {
+    return jitc_scoped_name(context, name, list_get(context->scopes, list_size(context->scopes) - 1).scope_id);
+}
+
+const char* jitc_scoped_name(jitc_context_t* context, const char* name, uint32_t scope) {
+    if (!name) return NULL;
+    if (scope == 0) return name;
+    char new_name[strlen(name) + 10];
+    snprintf(new_name, sizeof(new_name), "$%08x%s", scope, name);
+    return jitc_append_string(context, new_name);
 }
 
 jitc_variable_t* jitc_get_method(jitc_context_t* context, jitc_type_t* base, const char* name, list_t* _templ_list, map_t** template_map) {
