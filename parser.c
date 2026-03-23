@@ -1123,10 +1123,10 @@ static int jitc_init_append(list_t* _elements, jitc_type_t* type, int base_offse
     else {
         element = list_size(elements);
         init_element_t* el = &list_add(elements);
-        el->type = type;
+        el->type = el->aggregate = type;
         el->offset = base_offset;
     }
-    list_get(elements, element).aggregate = set_aggregate ? type : list_get(elements, element).type;
+    list_get(elements, element).aggregate = set_aggregate ? type : list_get(elements, element).aggregate;
     return element;
 }
 
@@ -1209,7 +1209,7 @@ jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* _tokens, ji
             smartptr(jitc_ast_t) inner = try(jitc_parse_initializer(context, tokens, token, element ? element->aggregate : NULL, NULL, constant_only));
             if (element) for (size_t i = 0; i < list_size(inner->init.offsets); i++) {
                 list_add(node->init.items) = list_get(inner->init.items, 0);
-                list_add(node->init.offsets) = list_get(inner->init.offsets, i) + element->offset;
+                list_add(node->init.offsets) = list_get(inner->init.offsets, i) + element->offset + element->aggregate->size * (curr_item / list_size(elements));
                 list_remove(inner->init.items, 0);
             }
             curr_item += element ? jitc_init_num_elements(element->aggregate) : 0;
