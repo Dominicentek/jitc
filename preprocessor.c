@@ -17,6 +17,7 @@ typedef enum {
     MacroType_DATE,
     MacroType_TIME,
     MacroType_ID,
+    MacroType_STR,
 } macro_type_t;
 
 typedef struct {
@@ -97,6 +98,7 @@ static void predefine(map_t* macros) {
     new_macro(macros, "__DATE__", MacroType_DATE);
     new_macro(macros, "__TIME__", MacroType_TIME);
     new_macro(macros, "__ID__", MacroType_ID);
+    new_macro(macros, "__STR__", MacroType_STR);
 }
 
 static jitc_token_t* advance(token_stream_t* tokens, int* curr_line) {
@@ -441,7 +443,25 @@ static bool process_identifier(jitc_context_t* context, token_stream_t* dest, to
                 list_add(dest->tokens) = id_token;
             }
             else list_add(dest->tokens) = *token;
-        }
+        } break;
+        case MacroType_STR: {
+            if (next_token(TOKEN_PARENTHESIS_OPEN)) {
+                smartptr(string_t) str = str_new();
+                while (tokens->ptr < list_size(tokens->tokens)) {
+                    if (str_length(str) == 0) {
+                        jitc_token_t* tok = &list_get(tokens->tokens, tokens->ptr++);
+                        if (tok->type == TOKEN_IDENTIFIER || tok->type == TOKEN_STRING) str_append(str, tok->value.string);
+                        else if (tok->type == TOKEN_INTEGER) str_appendf(str, "%lu", tok->value.integer);
+                        else if (tok->type == TOKEN_FLOAT) str_appendf(str, "%g", tok->value.floating);
+                        else if (tok->type == TOKEN_END_OF_FILE) str_append(str, "eof");
+                        else str_append(str, token_table[tok->type]);
+                    }
+                    else if (next_token(TOKEN_PARENTHESIS_CLOSE)) break;
+                }
+                list_add(dest->tokens) = string_token(jitc_append_string(context, str_data(str)));
+            }
+            else list_add(dest->tokens) = *token;
+        } break;
     }
     return true;
 }
@@ -508,7 +528,10 @@ queue_t* jitc_preprocess(jitc_context_t* context, queue_t* _token_queue, map_t* 
                     else advance(&stream, &curr_line);
                     if (macro) macro->args = (void*)move(list);
                 }
-                while ((token = advance(&stream, &curr_line))) if (macro) list_add(macro->tokens) = *token;
+                while ((token = advance(&stream, &curr_line))) if (macro) {
+                    if (token->type == TOKEN_HASHTAG) throw(token, "Stringification/pasting syntax is unsupported. Please use __STR__ or __ID__ instead.");
+                    list_add(macro->tokens) = *token;
+                }
             }
             else if (is_identifier(token, "undef")) {
                 token = expect_and(advance(&stream, &curr_line), this->type == TOKEN_IDENTIFIER, "Expected identifier");
