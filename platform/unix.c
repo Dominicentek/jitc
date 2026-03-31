@@ -15,7 +15,7 @@ static void protect_rx(void* ptr, size_t size) {
     mprotect(ptr, size, PROT_READ | PROT_EXEC | JITC_DEBUG_WRITE);
 }
 
-static size_t page_size() {
+static size_t pagesize() {
     return getpagesize();
 }
 

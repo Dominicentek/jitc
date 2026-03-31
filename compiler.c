@@ -52,7 +52,7 @@ static void* make_executable(jitc_context_t* context, void* ptr, size_t size) {
             return chunk;
         }
     }
-    size_t page_size = getpagesize();
+    size_t page_size = pagesize();
     size_t num_pages = (chunk_size + page_size - 1) / page_size;
     void* chunk = alloc_page(num_pages * page_size);
     memcpy(chunk, ptr, size);
@@ -67,7 +67,7 @@ static void* make_executable(jitc_context_t* context, void* ptr, size_t size) {
 void jitc_delete_memchunks(jitc_context_t* context) {
     for (size_t i = 0; i < list_size(context->memchunks); i++) {
         jitc_memchunk_t* memchunk = &list_get(context->memchunks, i);
-        munmap(memchunk->ptr, memchunk->capacity);
+        free_page(memchunk->ptr, memchunk->capacity);
     }
     list_delete(context->memchunks);
 }

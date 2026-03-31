@@ -732,7 +732,10 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Unary_ArithNegate:
                 node->unary.inner = try(jitc_process_ast(context, node->unary.inner, &node->exprtype));
                 if (!is_number(node->exprtype)) throw(node->token, "Operand must be a numeric type");
-                if (node->unary.operation == Unary_ArithPlus) replace(node) = node->unary.inner;
+                if (node->unary.operation == Unary_ArithPlus) {
+                    jitc_ast_t* inner = node->unary.inner;
+                    replace(node) = inner;
+                }
                 else {
                     if (node->unary.inner->node_type == AST_Integer) {
                         jitc_ast_t* inner = node->unary.inner;
@@ -1002,7 +1005,11 @@ jitc_ast_t* jitc_process_ast(jitc_context_t* context, jitc_ast_t* ast, jitc_type
             case Binary_Comma:
                 node->binary.left = try(jitc_process_ast(context, node->binary.left, NULL));
                 node->binary.right = try(jitc_process_ast(context, node->binary.right, &node->exprtype));
-                if (is_constant(node->binary.left)) replace(node) = node->binary.right;
+                if (is_constant(node->binary.left)) {
+                    jitc_ast_t* right = node->binary.right;
+                    jitc_destroy_ast(node->binary.left);
+                    replace(node) = right;
+                }
                 break;
             default: break;
         } break;
@@ -1192,7 +1199,7 @@ jitc_ast_t* jitc_parse_initializer(jitc_context_t* context, queue_t* _tokens, ji
                 smartptr(jitc_ast_t) index = try(jitc_parse_expression(context, tokens, EXPR_NO_COMMAS, NULL));
                 if (!jitc_token_expect(tokens, TOKEN_BRACKET_CLOSE)) throw(token, "Expected ']'");
                 if (index->node_type != AST_Integer) throw(index->token, "Expected integer literal");
-                if (!index->integer.is_unsigned && (index->integer.value & (1L << 63))) throw(index->token, "Negative index");
+                if (!index->integer.is_unsigned && (index->integer.value & MSB64)) throw(index->token, "Negative index");
                 if (index->integer.value >= type->arr.size) throw(index->token, "Array designator exceeds array size");
                 designator_offset += jitc_init_designate_array(designator_type, index->integer.value);
             }

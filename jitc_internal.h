@@ -237,6 +237,12 @@ ENUM(jitc_parse_type_t)
 ENUM(jitc_task_state_t)
 ENUM(jitc_ir_opcode_t)
 
+#ifdef _WIN32
+#define MSB64 (1ULL << 63)
+#else
+#define MSB64 (1UL << 63)
+#endif
+
 typedef struct jitc_type_t jitc_type_t;
 struct jitc_type_t {
     jitc_type_kind_t kind;

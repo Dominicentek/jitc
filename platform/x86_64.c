@@ -273,8 +273,8 @@ static bool isflt(jitc_type_kind_t kind) {
 static bool isswp(stack_item_t* op1, stack_item_t* op2) {
     if (op1->type != StackItem_rvalue && op1->type != StackItem_lvalue_abs) return false;
     if (op2->type != StackItem_rvalue && op2->type != StackItem_lvalue_abs) return false;
-    int val1 = op1->value & ~(1L << 63);
-    int val2 = op2->value & ~(1L << 63);
+    int val1 = op1->value & ~MSB64;
+    int val2 = op2->value & ~MSB64;
     return val2 < val1;
 }
 
@@ -301,7 +301,7 @@ static stack_item_t* push(bytewriter_t* writer, stack_item_type_t type, jitc_typ
     if (type == StackItem_rvalue || type == StackItem_lvalue_abs) {
         int* index = &opstack_int_index;
         if (type == StackItem_rvalue && isflt(item->kind)) index = &opstack_float_index;
-        if (*index < sizeof(stack_regs)) item->value = *index | (1L << 63);
+        if (*index < sizeof(stack_regs)) item->value = *index | MSB64;
         else item->value = ++rvalue_stack_ptr;
         (*index)++;
     }
@@ -331,7 +331,7 @@ static stack_item_t pop(bytewriter_t* writer) {
     if (item->type == StackItem_rvalue || item->type == StackItem_lvalue_abs) {
         if (item->type == StackItem_rvalue && isflt(item->kind)) opstack_float_index--;
         else opstack_int_index--;
-        if (!(item->value & (1L << 63))) rvalue_stack_ptr--;
+        if (!(item->value & MSB64)) rvalue_stack_ptr--;
         if (item->extra_storage != 0) stack_free(writer, item->extra_storage);
     }
 #if JITC_DEBUG || JITC_DEBUG_CODEGEN_STACK
@@ -369,9 +369,9 @@ static operand_t op(stack_item_t* item) {
         };
         case StackItem_lvalue_abs: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
-            if (item->value & (1L << 63)) {
+            if (item->value & MSB64) {
                 op.type = OpType_ptr;
-                op.reg = stack_regs[item->value & ~(1L << 63)];
+                op.reg = stack_regs[item->value & ~MSB64];
                 op.disp = item->offset;
             }
             else {
@@ -383,9 +383,9 @@ static operand_t op(stack_item_t* item) {
         }
         case StackItem_rvalue: {
             operand_t op = (operand_t){ .kind = item->kind, .is_unsigned = item->is_unsigned };
-            if (item->value & (1L << 63)) {
+            if (item->value & MSB64) {
                 op.type = OpType_reg;
-                op.reg = (isflt(item->kind) ? stack_xmms : stack_regs)[item->value & ~(1L << 63)];
+                op.reg = (isflt(item->kind) ? stack_xmms : stack_regs)[item->value & ~MSB64];
             }
             else {
                 op.type = OpType_ptr;
@@ -451,7 +451,7 @@ static void emit_instruction(bytewriter_t* writer, instr_t* instr, reg_t reg1, r
     encode_instruction(writer, instr->opcode, reg1, reg2, mode, instr->modrm_fixed_bits, instr->flags | extra_flags);
 }
 
-static bool legalize(legalization_t* legalization, operand_t op, instr_constraints_t constraints, bool last_operand) {
+static bool legalize(mnemonic_t mnemonic, legalization_t* legalization, operand_t op, instr_constraints_t constraints, bool last_operand) {
 #define step() legalization->steps[legalization->cost++]
     instr_constraints_t size_mask = (instr_constraints_t[]){ C__S8, C_S16, C_S32, C_S64, C_S32, C_S64, C_S64 }[op.kind];
     if (!(constraints & size_mask)) return legalization->cost = 0;
@@ -465,9 +465,8 @@ static bool legalize(legalization_t* legalization, operand_t op, instr_constrain
         else return legalization->cost = 0;
     }
     if (op.type == OpType_reg) {
-        /*if (isflt(op.kind) && (constraints & C_REG) && !(constraints & C_XMM) && !last_operand) step() = Legal_to_reg;
-        else if (!isflt(op.kind) && (constraints & C_XMM) && !(constraints & C_REG) && !last_operand) step() = Legal_to_xmm;
-        else*/ if (!(constraints & (isflt(op.kind) ? C_XMM : C_REG))) return legalization->cost = 0;
+        if ((mnemonic == opc_push || mnemonic == opc_pop) && isflt(op.kind)) step() = Legal_to_reg;
+        else if (!(constraints & (isflt(op.kind) ? C_XMM : C_REG))) return legalization->cost = 0;
     }
     if (op.type == OpType_ptrptr) step() = Legal_deref_mem;
     if (op.type == OpType_ptrptr || op.type == OpType_ptr) {
@@ -609,7 +608,7 @@ static void emit(bytewriter_t* writer, mnemonic_t mnemonic, int num_ops, ...) {
         // this effectively counts the number of operands
         if (strnlen((char*)instructions[i].constraints, 2) != num_ops) continue;
         for (int j = num_ops - 1; j >= 0; j--) {
-            if (!legalize(&candidates[i], ops[j], instructions[i].constraints[j], j == 0 && !(instructions[i].flags & no_writeback))) break;
+            if (!legalize(mnemonic, &candidates[i], ops[j], instructions[i].constraints[j], j == 0 && !(instructions[i].flags & no_writeback))) break;
             if (j != 0) candidates[i].steps[candidates[i].cost - 1] = Legal_next_op;
         }
         if (candidates[i].cost == 0) {

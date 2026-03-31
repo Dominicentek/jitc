@@ -12,7 +12,7 @@ static void protect_rx(void* ptr, size_t size) {
     VirtualProtect(ptr, size, PAGE_EXECUTE_READ, &old);
 }
 
-static size_t page_size() {
+static size_t pagesize() {
     SYSTEM_INFO info;
     GetSystemInfo(&info);
     return info.dwPageSize;
@@ -30,7 +30,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     stack_item_t func = pop(writer);
 
     // allocate stack
-    int stack_size = 0;
+    int stack_size = 0x20;
     int stack_offset[num_args];
     if (signature->func.ret->size) stack_size += signature->func.ret->size;
     for (size_t i = 0; i < num_args; i++) {
@@ -61,7 +61,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
                 ? (reg_t[]){ xmm0, xmm1, xmm2, xmm3 }
                 : (reg_t[]){ rcx, rdx, r8, r9 }
             )[i], arg.kind, arg.is_unsigned)
-            : ptr(rsp, stack_size - stack_offset[i] - arg_types[i]->size, Type_Int64, true);
+            : ptr(rsp, i * 8, arg.kind, arg.is_unsigned);
         emit(writer, arg_types[i]->size > 8 ? lea : mov, 2, dst, arg);
     }
 
@@ -100,7 +100,7 @@ static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t s
     emit(writer, opc_push, 1, reg(r15, Type_Int64, true));
     emit(writer, opc_push, 1, reg(rdi, Type_Int64, true));
     emit(writer, opc_push, 1, reg(rsi, Type_Int64, true));
-    for (int i = 8; i <= 15; i++) emit(writer, opc_push, 1, reg(i, Type_Float64, true));
+    //for (int i = 8; i <= 15; i++) emit(writer, opc_push, 1, reg(i, Type_Float64, true));
     emit(writer, opc_push, 1, reg(rbp, Type_Int64, true));
     emit(writer, mov, 2, reg(rbp, Type_Pointer, true), reg(rsp, Type_Pointer, true));
     stack_size += 8;
@@ -113,13 +113,13 @@ static void jitc_asm_func(bytewriter_t* writer, jitc_type_t* signature, size_t s
         jitc_type_t* param = signature->func.params[i];
         if (offset % param->alignment != 0) offset += param->alignment - (offset % param->alignment);
         if (!param->name) continue;
-        if (i < 4) emit(writer, mov, 2, ptr(rbp, -offset - param->size, param->kind, param->is_unsigned), (isflt(param->kind)
+        if (i < 4) emit(writer, mov, 2, ptr(rbp, -offset - param->size, param->kind, param->is_unsigned), reg((isflt(param->kind)
             ? (reg_t[]){ xmm0, xmm1, xmm2, xmm3 }
             : (reg_t[]){ rcx, rdx, r8, r9 }
-        )[i], param->kind, param->is_unsigned);
+        )[i], param->kind, param->is_unsigned));
         else emit(writer, mov, 2,
             ptr(rbp, -offset - param->size, param->kind, param->is_unsigned),
-            ptr(rbp, (i + 11) * 8, param->kind, param->is_unsigned)
+            ptr(rbp, (i + 9) * 8, param->kind, param->is_unsigned)
         );
         offset += param->size;
     }
@@ -138,7 +138,9 @@ static void jitc_asm_ret(bytewriter_t* writer) {
 static void jitc_asm_func_end(bytewriter_t* writer) {
     pop_return(writer);
     emit(writer, leave, 0);
-    for (int i = 15; i >= 8; i--) emit(writer, opc_pop, 1, reg(i, Type_Float64, true));
+    //for (int i = 15; i >= 8; i--) emit(writer, opc_pop, 1, reg(i, Type_Float64, true));
+    emit(writer, opc_pop, 1, reg(rsi, Type_Int64, true));
+    emit(writer, opc_pop, 1, reg(rdi, Type_Int64, true));
     emit(writer, opc_pop, 1, reg(r15, Type_Int64, true));
     emit(writer, opc_pop, 1, reg(r14, Type_Int64, true));
     emit(writer, opc_pop, 1, reg(r13, Type_Int64, true));

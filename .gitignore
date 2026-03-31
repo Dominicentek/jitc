@@ -1,6 +1,7 @@
 jitc-tests
-jitc-inspect
+jitc-tests.exe
 libjitc.so
+libjitc.dll
 libjitc.a
 obj
 *.txt

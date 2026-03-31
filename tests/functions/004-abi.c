@@ -1,3 +1,5 @@
+int printf(const char*, ...);
+
 int get_value(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j, float k, float l, float m, float n, float o, float p, float q, float r, float s, float t) {
     if (a != 1) return 1;
     if (b != 2) return 2;
