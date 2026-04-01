@@ -525,5 +525,4 @@ void jitc_compile(jitc_context_t* context, jitc_ast_t* ast) {
         } break;
         default: break;
     }
-    jitc_link(context);
 }

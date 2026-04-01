@@ -32,9 +32,14 @@ void jitc_gdb_backtrace(void* rip, void* rbp) {
     const char* name;
     while ((name = jitc_gdb_whereami(rip))) {
         printf("#%d: %s\n", index, name);
+#ifdef _WIN32
+        rip = ((void**)rbp)[8];
+#else
         rip = ((void**)rbp)[6];
+#endif
         rbp = ((void**)rbp)[0];
         index++;
     }
     printf("%d frames\n", index);
+    fflush(stdout);
 }

@@ -29,27 +29,40 @@ static void free_page(void* ptr, size_t size) {
 static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_type_t** arg_types, size_t num_args) {
     stack_item_t func = pop(writer);
 
+    // preserve registers
+    int num_preserved_regs = 0;
+    for (size_t i = num_args; i < stack_size(opstack); i++) {
+        stack_item_t* item = peek(i);
+        if (item->type != StackItem_rvalue && item->type != StackItem_lvalue_abs) continue;
+        if (!(item->value & MSB64)) continue;
+        int index = item->value & ~MSB64;
+        reg_t value_reg = (isflt(item->kind) ? stack_xmms : stack_regs)[index];
+        jitc_type_kind_t kind = isflt(item->kind) ? Type_Float64 : Type_Int64;
+        if (!isflt(item->kind) && value_reg != r10 && value_reg != r11) continue;
+        emit(writer, mov, 2, ptr(rbp, (10 + num_preserved_regs++) * 8, kind, false), reg(value_reg, kind, false));
+    }
+
     // allocate stack
-    int stack_size = 0x20;
+    int stack_used_bytes = 0x20;
     int stack_offset[num_args];
-    if (signature->func.ret->size) stack_size += signature->func.ret->size;
+    if (signature->func.ret->size) stack_used_bytes += signature->func.ret->size;
     for (size_t i = 0; i < num_args; i++) {
         if (arg_types[i]->size <= 8) continue;
         int align = arg_types[i]->alignment;
-        if (stack_size % align != 0) stack_size += align - (stack_size % align);
-        stack_offset[i] = stack_size;
-        stack_size += arg_types[i]->size;
+        if (stack_used_bytes % align != 0) stack_used_bytes += align - (stack_used_bytes % align);
+        stack_offset[i] = stack_used_bytes;
+        stack_used_bytes += arg_types[i]->size;
     }
     int reg_args = signature->func.ret->size > 8 ? 3 : 4;
-    if (num_args > reg_args) stack_size += (num_args - reg_args) * 8;
-    if (stack_size % 16 != 0) stack_size += 16 - (stack_size % 16);
-    if (stack_size != 0) stack_sub(writer, stack_size);
+    if (num_args > reg_args) stack_used_bytes += (num_args - reg_args) * 8;
+    if (stack_used_bytes % 16 != 0) stack_used_bytes += 16 - (stack_used_bytes % 16);
+    if (stack_used_bytes != 0) stack_sub(writer, stack_used_bytes);
 
     // copy shit onto stack
     for (size_t i = 0; i < num_args; i++) {
         if (arg_types[i]->size <= 8) continue;
         stack_item_t* item = peek(i - 1);
-        copy(writer, ptr(rsp, stack_offset[i] - stack_size, Type_Int64, true), op(item), arg_types[i]->size, arg_types[i]->alignment);
+        copy(writer, ptr(rsp, stack_offset[i] - stack_used_bytes, Type_Int64, true), op(item), arg_types[i]->size, arg_types[i]->alignment);
     }
 
     // copy args
@@ -68,7 +81,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     // call the function
     emit(writer, func.type == StackItem_lvalue_abs ? lea : mov, 2, reg(rax, Type_Int64, true), op(&func));
     emit(writer, call, 1, op(&func));
-    if (stack_size != 0) stack_free(writer, stack_size);
+    if (stack_used_bytes != 0) stack_free(writer, stack_used_bytes);
 
     // return value
     stack_item_t* ret;
@@ -76,7 +89,7 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
     if (ret_type->kind == Type_Struct || ret_type->kind == Type_Union) {
         ret = jitc_asm_stackalloc(writer, ret_type->size);
         if (ret_type->size <= 8) emit(writer, mov, 2, op(ret), reg(rax, Type_Int64, true));
-        else copy(writer, op(ret), ptr(rsp, -stack_size, Type_Int64, true), ret_type->size, ret_type->alignment);
+        else copy(writer, op(ret), ptr(rsp, -stack_used_bytes, Type_Int64, true), ret_type->size, ret_type->alignment);
     }
     else if (ret_type->kind != Type_Void) {
         ret = push(writer, StackItem_rvalue, signature->func.ret->kind, signature->func.ret->is_unsigned);
@@ -86,6 +99,19 @@ static void jitc_asm_call(bytewriter_t* writer, jitc_type_t* signature, jitc_typ
             emit(writer, mov, 2, op(ret), reg(rax, ret->kind, ret->is_unsigned));
     }
     else ret = pushi(writer, StackItem_literal, Type_Int32, false, 0);
+
+    // restore preserved registers
+    num_preserved_regs = 0;
+    for (size_t i = 1; i < stack_size(opstack); i++) {
+        stack_item_t* item = peek(i);
+        if (item->type != StackItem_rvalue && item->type != StackItem_lvalue_abs) continue;
+        if (!(item->value & MSB64)) continue;
+        int index = item->value & ~MSB64;
+        reg_t value_reg = (isflt(item->kind) ? stack_xmms : stack_regs)[index];
+        jitc_type_kind_t kind = isflt(item->kind) ? Type_Float64 : Type_Int64;
+        if (!isflt(item->kind) && value_reg != r10 && value_reg != r11) continue;
+        emit(writer, mov, 2, reg(value_reg, kind, false), ptr(rbp, (10 + num_preserved_regs++) * 8, kind, false));
+    }
 }
 
 static jitc_type_t* func_signature = NULL;

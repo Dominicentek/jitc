@@ -744,37 +744,24 @@ static jitc_variable_t* jitc_get_symbol(jitc_context_t* context, const char* nam
     return var;
 }
 
-static void jitc_link_error_stub() {
-    fprintf(stderr, "[JITC] Calling function with some symbols unresolved\n");
-    fflush(stderr);
-    abort();
-}
-
 void jitc_link(jitc_context_t* context) {
-    context->unresolved_symbol = NULL;
     jitc_scope_t* scope = &list_get(context->scopes, 0);
     for (size_t i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
         jitc_variable_t* var = map_get_value(scope->variables);
         if (var->decltype == Decltype_EnumItem || var->decltype == Decltype_Typedef || var->ptr) continue;
-        if (var->decltype != Decltype_Extern) {
-            context->unresolved_symbol = var->type->name;
-            continue;
-        }
+        if (var->decltype != Decltype_Extern) continue;
         const char* symbol_name = var->extern_symbol ?: var->type->name;
         jitc_variable_t* symbol = jitc_get_symbol(context, symbol_name, true);
         var->ptr = symbol ? symbol->ptr : dlsym(RTLD_DEFAULT, symbol_name);
-        if (!var->ptr) {
-            context->unresolved_symbol = var->type->name;
-            continue;
-        }
+        if (!var->ptr) fprintf(stderr, "[JITC] Couldn't resolve symbol '%s', resolving to NULL\n", symbol_name);
     }
     for (size_t i = 0; i < map_size(scope->variables); i++) {
         map_index(scope->variables, i);
         jitc_variable_t* var = map_get_value(scope->variables);
         if (var->decltype == Decltype_EnumItem || var->decltype == Decltype_Typedef || var->decltype == Decltype_Extern) continue;
         if (var->type->kind != Type_Function || !var->func) continue;
-        var->func->addr->curr_ptr = !context->unresolved_symbol ? var->func->addr->ptr : (void*)jitc_link_error_stub;
+        var->func->addr->curr_ptr = var->func->addr->ptr;
     }
 }
 
@@ -937,7 +924,6 @@ bool jitc_parse_file(jitc_context_t* context, const char* filename) {
 }
 
 void* jitc_get(jitc_context_t* context, const char* name) {
-    if (context->unresolved_symbol) return jitc_error_set(context, jitc_error_syntax(NULL, 0, 0, "Symbol '%s' isnt't resolved yet", context->unresolved_symbol)), NULL;
     jitc_variable_t* var = jitc_get_symbol(context, name, true);
     if (!var) return jitc_error_set(context, jitc_error_syntax(NULL, 0, 0, "Unable to resolve symbol '%s'", name)), NULL;
     return var->ptr;
@@ -1060,8 +1046,8 @@ bool jitc_build(jitc_context_t* context, jitc_build_callback_t callback) {
         for (size_t i = 0; i < list_size(ast->list.inner); i++) {
             jitc_compile(context, list_get(ast->list.inner, i));
         }
-        jitc_link(context);
     }
     if (callback) callback(NULL, list_size(tasks), list_size(tasks));
+    jitc_link(context);
     return true;
 }
