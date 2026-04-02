@@ -6,7 +6,11 @@
 #define EXIT_FAILURE 1
 #define EXIT_SUCCESS 0
 
+#ifdef _WIN32
+#define RAND_MAX (0x7FFF)
+#else
 #define RAND_MAX (0x7FFFFFFF)
+#endif
 
 int atoi(const char*);
 long atol(const char*);
